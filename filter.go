@@ -10,38 +10,38 @@ import (
 )
 
 func (s *Schema) SubstringMatch(q *Query, val string, i int) {
-	paramKey := fmt.Sprintf("%d_%d_%s", q.level, i, s.Name)
+	paramKey := q.nextParamKey(s.Name)
 
 	if s.IndexType == "fts" {
-		q.Query += fmt.Sprintf(" attrs->>'%s' ILIKE :%s", s.Name, paramKey)
+		q.Query += fmt.Sprintf("attrs->>'%s' ILIKE :%s", s.Name, paramKey)
 	} else {
 		if s.IsCaseIgnoreSubstr() {
-			q.Query += fmt.Sprintf(" LOWER(attrs->>'%s') LIKE LOWER(:%s)", s.Name, paramKey)
+			q.Query += fmt.Sprintf("LOWER(attrs->>'%s') LIKE LOWER(:%s)", s.Name, paramKey)
 		} else {
-			q.Query += fmt.Sprintf(" attrs->>'%s' LIKE :%s", s.Name, paramKey)
+			q.Query += fmt.Sprintf("attrs->>'%s' LIKE :%s", s.Name, paramKey)
 		}
 	}
 	q.Params[paramKey] = val
 }
 
 func (s *Schema) EqualityMatch(q *Query, val string) {
-	paramKey := fmt.Sprintf("%d_%s", q.level, s.Name)
+	paramKey := q.nextParamKey(s.Name)
 
 	if s.IndexType == "fts" {
 		// TODO Escapse %
-		q.Query += fmt.Sprintf(" attrs->>'%s' ILIKE :%s", s.Name, paramKey)
+		q.Query += fmt.Sprintf("attrs->>'%s' ILIKE :%s", s.Name, paramKey)
 	} else {
 		if s.IsCaseIgnore() {
 			if s.SingleValue {
-				q.Query += fmt.Sprintf(" LOWER(attrs->>'%s') = LOWER(:%s)", s.Name, paramKey)
+				q.Query += fmt.Sprintf("LOWER(attrs->>'%s') = LOWER(:%s)", s.Name, paramKey)
 			} else {
-				q.Query += fmt.Sprintf(" f_jsonb_array_lower(attrs->'%s') @> jsonb_build_array(LOWER(:%s))", s.Name, paramKey)
+				q.Query += fmt.Sprintf("f_jsonb_array_lower(attrs->'%s') @> jsonb_build_array(LOWER(:%s))", s.Name, paramKey)
 			}
 		} else {
 			if s.SingleValue {
-				q.Query += fmt.Sprintf(" attrs->>'%s' = :%s", s.Name, paramKey)
+				q.Query += fmt.Sprintf("attrs->>'%s' = :%s", s.Name, paramKey)
 			} else {
-				q.Query += fmt.Sprintf(" attrs->'%s' @> jsonb_build_array(CAST(:%s as TEXT))", s.Name, paramKey)
+				q.Query += fmt.Sprintf("attrs->'%s' @> jsonb_build_array(CAST(:%s as TEXT))", s.Name, paramKey)
 			}
 		}
 	}
@@ -49,44 +49,46 @@ func (s *Schema) EqualityMatch(q *Query, val string) {
 }
 
 func (s *Schema) GreaterOrEqualMatch(q *Query, val string) {
-	paramKey := fmt.Sprintf("%d_%s", q.level, s.Name)
+	paramKey := q.nextParamKey(s.Name)
 
-	q.Query += fmt.Sprintf(" (attrs->>'%s')::numeric >= :%s", s.Name, paramKey)
+	q.Query += fmt.Sprintf("(attrs->>'%s')::numeric >= :%s", s.Name, paramKey)
 	q.Params[paramKey] = val
 }
 
 func (s *Schema) LessOrEqualMatch(q *Query, val string) {
-	paramKey := fmt.Sprintf("%d_%s", q.level, s.Name)
+	paramKey := q.nextParamKey(s.Name)
 
-	q.Query += fmt.Sprintf(" (attrs->>'%s')::numeric <= :%s", s.Name, paramKey)
+	q.Query += fmt.Sprintf("(attrs->>'%s')::numeric <= :%s", s.Name, paramKey)
 	q.Params[paramKey] = val
 }
 
 func (s *Schema) PresentMatch(q *Query) {
 	if s.IndexType == "jsonb_ops" {
-		q.Query += fmt.Sprintf(" attrs ? '%s'", s.Name)
+		q.Query += fmt.Sprintf("attrs ? '%s'", s.Name)
 	} else {
-		q.Query += fmt.Sprintf(" (attrs->>'%s') IS NOT NULL", s.Name)
+		q.Query += fmt.Sprintf("(attrs->>'%s') IS NOT NULL", s.Name)
 	}
 }
 
 func (s *Schema) ApproxMatch(q *Query, val string) {
-	paramKey := fmt.Sprintf("%d_%s", q.level, s.Name)
+	paramKey := q.nextParamKey(s.Name)
 
-	q.Query += fmt.Sprintf(" attrs->>'%s' ILIKE :%s", s.Name, paramKey)
+	q.Query += fmt.Sprintf("attrs->>'%s' ILIKE :%s", s.Name, paramKey)
 	q.Params[paramKey] = val
 }
 
 type Query struct {
-	level  int
 	hasOr  bool
 	Query  string
 	Params map[string]interface{}
 }
 
+func (q *Query) nextParamKey(name string) string {
+	return fmt.Sprintf("%d_%s", len(q.Params), name)
+}
+
 func ToQuery(schemaMap SchemaMap, packet message.Filter) (*Query, error) {
 	q := &Query{
-		level:  0,
 		Query:  "",
 		Params: map[string]interface{}{},
 	}
@@ -102,17 +104,13 @@ func ToQuery(schemaMap SchemaMap, packet message.Filter) (*Query, error) {
 }
 
 func translateFilter(schemaMap SchemaMap, packet message.Filter, q *Query) (err error) {
-	if q.level > 0 {
-		q.Query += "("
-	}
 	err = nil
 
 	switch f := packet.(type) {
 	case message.FilterAnd:
+		q.Query += "("
 		for i, child := range f {
-			q.level++
 			err = translateFilter(schemaMap, child, q)
-			q.level--
 
 			if err != nil {
 				return
@@ -121,11 +119,11 @@ func translateFilter(schemaMap SchemaMap, packet message.Filter, q *Query) (err 
 				q.Query += " AND "
 			}
 		}
+		q.Query += ")"
 	case message.FilterOr:
+		q.Query += "("
 		for i, child := range f {
-			q.level++
 			err = translateFilter(schemaMap, child, q)
-			q.level--
 
 			if err != nil {
 				return
@@ -134,12 +132,13 @@ func translateFilter(schemaMap SchemaMap, packet message.Filter, q *Query) (err 
 				q.Query += " OR "
 			}
 		}
+		q.Query += ")"
 	case message.FilterNot:
 		q.Query += "NOT "
 
-		q.level++
+		q.Query += "("
 		err = translateFilter(schemaMap, f.Filter, q)
-		q.level--
+		q.Query += ")"
 
 		if err != nil {
 			return
@@ -195,9 +194,6 @@ func translateFilter(schemaMap SchemaMap, packet message.Filter, q *Query) (err 
 		}
 	}
 
-	if q.level > 0 {
-		q.Query += ")"
-	}
 	return
 }
 
