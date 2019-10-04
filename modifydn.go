@@ -37,7 +37,7 @@ func handleModifyDN(w ldap.ResponseWriter, m *ldap.Message) {
 	err = dn.Modify(string(r.NewRDN()))
 	if err != nil {
 		// TODO return correct error
-		log.Printf("info: Invalid newrdn. dn: %s newrdn: %s err: %#v", dn.DN, r.NewRDN, err)
+		log.Printf("info: Invalid newrdn. dn: %s newrdn: %s err: %#v", dn.DN, r.NewRDN(), err)
 		res := ldap.NewModifyDNResponse(ldap.LDAPResultOperationsError)
 		w.Write(res)
 		return

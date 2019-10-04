@@ -174,7 +174,7 @@ func main() {
 
 	rootDN, err = normalizeDN(*rootdn)
 	if err != nil {
-		log.Fatalf("fatal: Invalid root-dn format: %s, err: ", *rootdn, err)
+		log.Fatalf("fatal: Invalid root-dn format: %s, err: %s", *rootdn, err)
 	}
 
 	// Init DB connection

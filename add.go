@@ -19,7 +19,7 @@ func handleAdd(w ldap.ResponseWriter, m *ldap.Message) {
 
 	dn, err := normalizeDN(string(r.Entry()))
 	if err != nil {
-		log.Println("warn: Invalid DN: %s err: %s", r.Entry(), err)
+		log.Printf("warn: Invalid DN: %s err: %s", r.Entry(), err)
 
 		// TODO return correct code
 		res := ldap.NewAddResponse(ldap.LDAPResultOperationsError)
