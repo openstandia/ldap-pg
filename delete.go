@@ -22,6 +22,20 @@ func handleDelete(w ldap.ResponseWriter, m *ldap.Message) {
 
 	tx := db.MustBegin()
 
+	entry, err := findByDN(tx, dn)
+	if err != nil {
+		tx.Rollback()
+
+		// TODO return correct error
+		log.Printf("info: Failed to fetch the entry. dn: %s err: %#v", dn.DN, err)
+		res := ldap.NewDeleteResponse(ldap.LDAPResultOperationsError)
+		w.Write(res)
+		return
+	}
+
+	jsonMap := map[string]interface{}{}
+	entry.Attrs.Unmarshal(&jsonMap)
+
 	_, err = tx.NamedExec("DELETE FROM ldap_entry WHERE dn = :dn", map[string]interface{}{"dn": dn.DN})
 
 	if err != nil {
@@ -32,6 +46,9 @@ func handleDelete(w ldap.ResponseWriter, m *ldap.Message) {
 		w.Write(res)
 		return
 	}
+
+	// TODO delete memberOf of entry which is fetched by member DN
+	// TODO delete member of entry which is fetched by memberOf DN
 
 	tx.Commit()
 

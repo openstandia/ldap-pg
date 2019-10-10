@@ -149,9 +149,17 @@ func mapAttributeValue(s *Schema, attr message.Attribute, jsonMap map[string]int
 func mergeMultipleValues(s *Schema, vals []interface{}, jsonMap map[string]interface{}) error {
 	if mv, ok := jsonMap[s.Name]; ok {
 		if mvv, ok := mv.([]interface{}); ok {
-			jsonMap[s.Name] = append(mvv, vals...)
+			mvvMap := arrayToMap(mvv)
 
-			// TODO need to remove duplication??
+			for i, v := range vals {
+				if _, ok := mvvMap[v]; ok {
+					// Duplicate error
+					return NewTypeOrValueExists("modify/add", s.Name, i)
+				}
+				mvv = append(mvv, v)
+			}
+
+			jsonMap[s.Name] = mvv
 		} else {
 			// Value in DB isn't array
 			return fmt.Errorf("%s is not array.", s.Name)
@@ -161,4 +169,13 @@ func mergeMultipleValues(s *Schema, vals []interface{}, jsonMap map[string]inter
 		jsonMap[s.Name] = vals
 	}
 	return nil
+}
+
+func arrayToMap(arr []interface{}) map[interface{}]struct{} {
+	// TODO schema aware
+	m := map[interface{}]struct{}{}
+	for _, v := range arr {
+		m[v] = struct{}{}
+	}
+	return m
 }

@@ -55,18 +55,18 @@ func handleModifyDN(w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
+	// TODO impl
 	if r.DeleteOldRDN() {
 		log.Printf("DeleteOldRDN")
-
 	} else {
 		log.Printf("Not DeleteOldRDN")
-
 	}
 
+	// TODO impl
 	if r.NewSuperior() != nil {
 		log.Printf("NewSuperior: %s", *r.NewSuperior())
-
 	}
+
 	jsonText := types.JSONText(string(newAttrs))
 	_, err = tx.NamedExec(`UPDATE ldap_entry SET updated = now(), dn = :newdn, path = :newpath, attrs = :attrs WHERE id = :id`, map[string]interface{}{
 		"id":      entry.Id,
@@ -83,6 +83,10 @@ func handleModifyDN(w ldap.ResponseWriter, m *ldap.Message) {
 		w.Write(res)
 		return
 	}
+
+	// Resolve memberOf
+	// TODO error handling
+	_ = updateOwnerAssociation(tx, dn, jsonMap)
 
 	tx.Commit()
 
