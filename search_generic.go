@@ -267,6 +267,9 @@ func responseEntry(w ldap.ResponseWriter, r message.SearchRequest, entry *Entry)
 				}
 
 				val := jsonMap[s.Name]
+				if val == nil {
+					val = getColumnValue(entry, s.Name)
+				}
 
 				if val == nil {
 					log.Printf("No attribute in attrs, name: %s", s.Name)
@@ -297,4 +300,15 @@ func responseEntry(w ldap.ResponseWriter, r message.SearchRequest, entry *Entry)
 	w.Write(e)
 
 	log.Printf("Wrote 1 entry dn: %s", entry.Dn)
+}
+
+func getColumnValue(entry *Entry, s string) string {
+	if s == "entryUUID" {
+		return entry.EntryUUID
+	} else if s == "createTimestamp" {
+		return entry.Created.Format(TIMESTAMP_FORMAT)
+	} else if s == "modifyTimestamp" {
+		return entry.Updated.Format(TIMESTAMP_FORMAT)
+	}
+	return ""
 }
