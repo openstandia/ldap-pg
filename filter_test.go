@@ -44,7 +44,6 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 			},
 			filter: message.NewFilterEqualityMatch("cn", "foo"),
 			out: &Query{
-				level: 0,
 				Query: "attrs->>'cn' = :0_cn",
 				Params: map[string]interface{}{
 					"0_cn": "foo",
@@ -71,7 +70,6 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 				message.NewFilterEqualityMatch("uid", "bar"),
 			},
 			out: &Query{
-				level: 0,
 				Query: "(attrs->>'cn' = :0_cn AND attrs->>'uid' = :1_uid)",
 				Params: map[string]interface{}{
 					"0_cn":  "foo",
@@ -94,7 +92,6 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 				message.NewFilterEqualityMatch("cn", "bar"),
 			},
 			out: &Query{
-				level: 0,
 				Query: "(attrs->>'cn' = :0_cn OR attrs->>'cn' = :1_cn)",
 				Params: map[string]interface{}{
 					"0_cn": "foo",
@@ -118,7 +115,6 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 				message.NewFilterEqualityMatch("cn", "hoge"),
 			},
 			out: &Query{
-				level: 0,
 				Query: "(attrs->>'cn' = :0_cn OR attrs->>'cn' = :1_cn OR attrs->>'cn' = :2_cn)",
 				Params: map[string]interface{}{
 					"0_cn": "foo",
@@ -155,7 +151,6 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 				},
 			},
 			out: &Query{
-				level: 0,
 				Query: "(attrs->>'cn' = :0_cn OR (attrs->>'uid' = :1_uid AND attrs->>'sn' = :2_sn))",
 				Params: map[string]interface{}{
 					"0_cn":  "foo",
@@ -178,7 +173,6 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 				message.NewFilterEqualityMatch("cn", "foo"),
 			},
 			out: &Query{
-				level: 0,
 				Query: "NOT (attrs->>'cn' = :0_cn)",
 				Params: map[string]interface{}{
 					"0_cn": "foo",

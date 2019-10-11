@@ -151,6 +151,7 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 		responseEntry(w, r, &entry)
 
 		count++
+		entry.Clear()
 	}
 
 	if max == 0 {
@@ -233,23 +234,15 @@ func responseEntry(w ldap.ResponseWriter, r message.SearchRequest, entry *Entry)
 
 	log.Printf("get Entry: %+v", entry)
 
-	jsonMap := map[string]interface{}{}
-	entry.Attrs.Unmarshal(&jsonMap)
-
-	log.Printf("Attrs: %#v", jsonMap)
-
 	e := ldap.NewSearchResultEntry(entry.Dn)
 
 	if isAllAttributesRequested(r) {
-		for k, val := range jsonMap {
-			log.Printf("AddAttribute %s=%#v", k, val)
-			if mval, ok := val.([]interface{}); ok {
-				for _, v := range mval {
-					if vv, ok := v.(string); ok {
-						e.AddAttribute(message.AttributeDescription(k), message.AttributeValue(vv))
-					}
-				}
-			} else if v, ok := val.(string); ok {
+		for k, _ := range entry.GetAttrs() {
+			values, _ := entry.GetAttr(k)
+
+			log.Printf("AddAttribute %s: %#v", k, values)
+
+			for _, v := range values {
 				e.AddAttribute(message.AttributeDescription(k), message.AttributeValue(v))
 			}
 		}
@@ -262,28 +255,18 @@ func responseEntry(w ldap.ResponseWriter, r message.SearchRequest, entry *Entry)
 			if a != "+" {
 				s, ok := schemaMap.Get(a)
 				if !ok {
-					log.Printf("error No schema for attr: %s", a)
+					log.Printf("No schema for requested attr, ignore. attr: %s", a)
 					continue
 				}
 
-				val := jsonMap[s.Name]
-				if val == nil {
-					val = getColumnValue(entry, s.Name)
-				}
-
-				if val == nil {
-					log.Printf("No attribute in attrs, name: %s", s.Name)
+				values, ok := entry.GetAttr(s.Name)
+				if !ok {
+					log.Printf("No data for requested attr, ignore. attr: %s", a)
 					continue
 				}
 
-				if mval, ok := val.([]interface{}); ok {
-					log.Printf("AddAttribute %s=%#v", s.Name, val)
-					for _, v := range mval {
-						if vv, ok := v.(string); ok {
-							e.AddAttribute(message.AttributeDescription(s.Name), message.AttributeValue(vv))
-						}
-					}
-				} else if v, ok := val.(string); ok {
+				log.Printf("AddAttribute %s=%#v", a, values)
+				for _, v := range values {
 					e.AddAttribute(message.AttributeDescription(s.Name), message.AttributeValue(v))
 				}
 			}
@@ -300,15 +283,4 @@ func responseEntry(w ldap.ResponseWriter, r message.SearchRequest, entry *Entry)
 	w.Write(e)
 
 	log.Printf("Wrote 1 entry dn: %s", entry.Dn)
-}
-
-func getColumnValue(entry *Entry, s string) string {
-	if s == "entryUUID" {
-		return entry.EntryUUID
-	} else if s == "createTimestamp" {
-		return entry.Created.Format(TIMESTAMP_FORMAT)
-	} else if s == "modifyTimestamp" {
-		return entry.Updated.Format(TIMESTAMP_FORMAT)
-	}
-	return ""
 }

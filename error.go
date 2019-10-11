@@ -10,7 +10,34 @@ type LDAPError struct {
 }
 
 func (e *LDAPError) Error() string {
-	return fmt.Sprintf("LDAPError: %d", e.Code)
+	return fmt.Sprintf("LDAPError: %d %s", e.Code, e.Msg)
+}
+
+func NewNoSuchAttribute(op, attr string) *LDAPError {
+	return &LDAPError{
+		Code: 16,
+		Msg:  fmt.Sprintf("%s: %s: no such value", op, attr),
+	}
+}
+func NewUndefinedType(attr string) *LDAPError {
+	return &LDAPError{
+		Code: 17,
+		Msg:  fmt.Sprintf("%s: attribute type undefined", attr),
+	}
+}
+
+func NewMultipleValuesProvidedError(attr string) *LDAPError {
+	return &LDAPError{
+		Code: 19,
+		Msg:  fmt.Sprintf("%s: multiple values provided", attr),
+	}
+}
+
+func NewMultipleValuesConstraintViolation(attr string) *LDAPError {
+	return &LDAPError{
+		Code: 19,
+		Msg:  fmt.Sprintf("attribute '%s' cannot have multiple values", attr),
+	}
 }
 
 func NewTypeOrValueExists(op, attr string, valueidx int) *LDAPError {
@@ -20,7 +47,27 @@ func NewTypeOrValueExists(op, attr string, valueidx int) *LDAPError {
 	}
 }
 
-func NewAlreadyExists(op, attr string, valueidx int) *LDAPError {
+func NewMoreThanOnceError(attr string, valueidx int) *LDAPError {
+	return &LDAPError{
+		Code: 20,
+		Msg:  fmt.Sprintf("%s: value #%d provided more than once", attr, valueidx),
+	}
+}
+
+func NewInvalidPerSyntax(attr string, valueidx int) *LDAPError {
+	return &LDAPError{
+		Code: 21,
+		Msg:  fmt.Sprintf("%s: value #%d invalid per syntax", attr, valueidx),
+	}
+}
+
+func NewNoSuchObject() *LDAPError {
+	return &LDAPError{
+		Code: 32,
+	}
+}
+
+func NewAlreadyExists() *LDAPError {
 	return &LDAPError{
 		Code: 68,
 	}

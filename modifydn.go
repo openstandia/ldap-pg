@@ -1,10 +1,8 @@
 package main
 
 import (
-	"encoding/json"
 	"log"
 
-	"github.com/jmoiron/sqlx/types"
 	ldap "github.com/openstandia/ldapserver"
 )
 
@@ -16,8 +14,7 @@ func handleModifyDN(w ldap.ResponseWriter, m *ldap.Message) {
 		log.Printf("warn: Invalid dn: %s err: %s", r.Entry(), err)
 
 		// TODO return correct error
-		res := ldap.NewModifyResponse(ldap.LDAPResultOperationsError)
-		w.Write(res)
+		responseModifyDNError(w, err)
 		return
 	}
 
@@ -25,12 +22,11 @@ func handleModifyDN(w ldap.ResponseWriter, m *ldap.Message) {
 
 	tx := db.MustBegin()
 
-	entry, err := findByDN(tx, dn)
+	entry, err := findByDNWithLock(tx, dn)
 	if err != nil {
 		// TODO return correct error
 		log.Printf("info: Failed to fetch the entry. dn: %s err: %#v", dn.DN, err)
-		res := ldap.NewModifyDNResponse(ldap.LDAPResultOperationsError)
-		w.Write(res)
+		responseModifyDNError(w, err)
 		return
 	}
 
@@ -38,58 +34,54 @@ func handleModifyDN(w ldap.ResponseWriter, m *ldap.Message) {
 	if err != nil {
 		// TODO return correct error
 		log.Printf("info: Invalid newrdn. dn: %s newrdn: %s err: %#v", dn.DN, r.NewRDN(), err)
-		res := ldap.NewModifyDNResponse(ldap.LDAPResultOperationsError)
-		w.Write(res)
+		responseModifyDNError(w, err)
 		return
 	}
 
-	jsonMap := map[string]interface{}{}
-	entry.Attrs.Unmarshal(&jsonMap)
-
-	newAttrs, err := json.Marshal(jsonMap)
-	if err != nil {
-		// TODO return correct error
-		log.Printf("error: Failed to marshal entry: %#v", err)
-		res := ldap.NewModifyDNResponse(ldap.LDAPResultOperationsError)
-		w.Write(res)
-		return
+	// TODO impl
+	if r.NewSuperior() != nil {
+		log.Printf("error: Not implemented NewSuperior. value: %s", *r.NewSuperior())
 	}
 
 	// TODO impl
 	if r.DeleteOldRDN() {
 		log.Printf("DeleteOldRDN")
 	} else {
-		log.Printf("Not DeleteOldRDN")
+		log.Printf("error: Not implemented DeleteOldRDN false")
 	}
 
-	// TODO impl
-	if r.NewSuperior() != nil {
-		log.Printf("NewSuperior: %s", *r.NewSuperior())
-	}
-
-	jsonText := types.JSONText(string(newAttrs))
-	_, err = tx.NamedExec(`UPDATE ldap_entry SET updated = now(), dn = :newdn, path = :newpath, attrs = :attrs WHERE id = :id`, map[string]interface{}{
-		"id":      entry.Id,
-		"newdn":   dn.DN,
-		"newpath": dn.ReverseParentDN,
-		"attrs":   jsonText,
-	})
+	err = updateDN(tx, entry, dn)
 
 	if err != nil {
 		tx.Rollback()
 
 		log.Printf("warn: Failed to modify dn: %s err: %s", dn.DN, err)
-		res := ldap.NewModifyResponse(ldap.LDAPResultOperationsError)
-		w.Write(res)
+		// TODO error code
+		responseModifyDNError(w, err)
 		return
 	}
 
 	// Resolve memberOf
 	// TODO error handling
-	_ = updateOwnerAssociation(tx, dn, jsonMap)
+	// _ = updateOwnerAssociation(tx, dn, jsonMap)
 
 	tx.Commit()
 
 	res := ldap.NewModifyDNResponse(ldap.LDAPResultSuccess)
 	w.Write(res)
+}
+
+func responseModifyDNError(w ldap.ResponseWriter, err error) {
+	if ldapErr, ok := err.(*LDAPError); ok {
+		res := ldap.NewModifyDNResponse(ldapErr.Code)
+		if ldapErr.Msg != "" {
+			res.SetDiagnosticMessage(ldapErr.Msg)
+		}
+		w.Write(res)
+	} else {
+		log.Printf("error: %s", err)
+		// TODO
+		res := ldap.NewModifyDNResponse(ldap.LDAPResultProtocolError)
+		w.Write(res)
+	}
 }

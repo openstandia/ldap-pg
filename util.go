@@ -134,18 +134,6 @@ func responseUnsupportedSearch(w ldap.ResponseWriter, r message.SearchRequest) {
 	w.Write(res)
 }
 
-func mapAttributeValue(s *Schema, attr message.Attribute, jsonMap map[string]interface{}) {
-	if s.SingleValue {
-		jsonMap[s.Name] = string(attr.Vals()[0])
-	} else {
-		arr := []interface{}{}
-		for _, v := range attr.Vals() {
-			arr = append(arr, string(v))
-		}
-		jsonMap[s.Name] = arr
-	}
-}
-
 func mergeMultipleValues(s *Schema, vals []interface{}, jsonMap map[string]interface{}) error {
 	if mv, ok := jsonMap[s.Name]; ok {
 		if mvv, ok := mv.([]interface{}); ok {
@@ -178,4 +166,26 @@ func arrayToMap(arr []interface{}) map[interface{}]struct{} {
 		m[v] = struct{}{}
 	}
 	return m
+}
+
+func arrayContains(arr []string, str string) (int, bool) {
+	for i, v := range arr {
+		if v == str {
+			return i, true
+		}
+	}
+	return -1, false
+}
+
+func hasDuplicate(s *Schema, arr []string) (int, bool) {
+	m := make(map[string]int, len(arr))
+
+	for i, v := range arr {
+		// TODO Schema aware
+		if j, ok := m[v]; ok {
+			return j, true
+		}
+		m[v] = i
+	}
+	return -1, false
 }

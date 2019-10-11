@@ -1,10 +1,10 @@
 package main
 
 import (
-	"encoding/json"
+	"database/sql"
+	"fmt"
 	"log"
 
-	"github.com/jmoiron/sqlx/types"
 	ldap "github.com/openstandia/ldapserver"
 )
 
@@ -32,240 +32,118 @@ func handleModify(w ldap.ResponseWriter, m *ldap.Message) {
 
 	tx := db.MustBegin()
 
-	entry, err := findByDN(tx, dn)
+	entry, err := findByDNWithLock(tx, dn)
 	if err != nil {
 		tx.Rollback()
-
-		// TODO return correct error
-		log.Printf("info: Failed to fetch the entry. dn: %s err: %#v", dn.DN, err)
-		res := ldap.NewModifyResponse(ldap.LDAPResultOperationsError)
-		w.Write(res)
-		return
+		if err == sql.ErrNoRows {
+			responseModifyError(w, NewNoSuchObject())
+			return
+		} else {
+			responseModifyError(w, fmt.Errorf("Failed to fetch the entry. dn: %s err: %#v", dn.DN, err))
+			return
+		}
 	}
 
-	jsonMap := map[string]interface{}{}
-	entry.Attrs.Unmarshal(&jsonMap)
-
 	// TODO refactoring
-	deleteMembers := []interface{}{}
+	// deleteMembers := []interface{}{}
 
 	for _, change := range r.Changes() {
 		modification := change.Modification()
 		attrName := string(modification.Type_())
 
-		s, ok := schemaMap.Get(attrName)
-		if !ok {
-			tx.Rollback()
+		log.Printf("Modify operation: %d attribute: %s", change.Operation(), modification.Type_())
 
-			// TODO return correct error code
-			log.Printf("warn: Failed to modify because of no schema, dn=%s", dn.DN)
-			res := ldap.NewModifyResponse(ldap.LDAPResultOperationsError)
-			w.Write(res)
-			return
+		var values []string
+		for _, attributeValue := range modification.Vals() {
+			values = append(values, string(attributeValue))
+			log.Printf("--> value: %s", attributeValue)
 		}
 
-		var operationString string
+		var err error
+
 		switch change.Operation() {
 		case ldap.ModifyRequestChangeOperationAdd:
-			operationString = "Add"
-
-			var values []interface{}
-			for _, attributeValue := range modification.Vals() {
-				values = append(values, string(attributeValue))
-			}
-
-			if s.SingleValue {
-				if len(values) > 1 {
-					tx.Rollback()
-
-					// TODO return correct error code
-					log.Printf("warn: Failed to modify because of adding multiple values to single-value attribute dn=%s ", dn.DN)
-					res := ldap.NewModifyResponse(ldap.LDAPResultOperationsError)
-					w.Write(res)
-					return
-				}
-				// TODO override ok?
-				jsonMap[s.Name] = values[0]
-			} else {
-				err := mergeMultipleValues(s, values, jsonMap)
-
-				if lerr, ok := err.(*LDAPError); ok {
-					tx.Rollback()
-
-					log.Printf("warn: Failed to modify because of invalid modify/add data. dn: %s attrName: %s value: %#v", dn.DN, s.Name, jsonMap[s.Name])
-
-					res := ldap.NewModifyResponse(lerr.Code)
-					res.SetDiagnosticMessage(lerr.Msg)
-					w.Write(res)
-					return
-				}
-			}
+			err = entry.AddAttrs(attrName, values)
 
 		case ldap.ModifyRequestChangeOperationDelete:
-			operationString = "Delete"
+			err = entry.DeleteAttrs(attrName, values)
 
-			if len(modification.Vals()) == 0 {
-				// TODO
-				if s.Name == "member" {
-					deleteMembers = append(deleteMembers, jsonMap["member"].([]interface{})...)
-					log.Printf("DeleteAll: deleteMembers: %v", deleteMembers)
-				}
-				delete(jsonMap, s.Name)
-			} else {
-				delVals := s.NewSchemaValueMap(len(modification.Vals()))
-				for _, attributeValue := range modification.Vals() {
-					log.Printf("attributeValue: %s", attributeValue)
-					delVals.Put(string(attributeValue))
-				}
-
-				if s.SingleValue {
-					// TODO test multiple delVals against single-value
-					if cur, ok := jsonMap[s.Name].(string); ok {
-						if delVals.Has(cur) {
-							delete(jsonMap, s.Name)
-						}
-					} else {
-						tx.Rollback()
-
-						// TODO return correct error code
-						log.Printf("error: Failed to modify because of invalid schema. Need to be single string value. dn: %s attrName: %s value: %#v", dn.DN, s.Name, jsonMap[s.Name])
-
-						res := ldap.NewModifyResponse(ldap.LDAPResultOperationsError)
-						w.Write(res)
-						return
-					}
-				} else {
-					if cur, ok := jsonMap[s.Name].([]interface{}); ok {
-						newVals := []string{}
-						for _, v := range cur {
-							if vv, ok := v.(string); ok {
-								if !delVals.Has(vv) {
-									newVals = append(newVals, vv)
-								} else {
-									if s.Name == "member" {
-										deleteMembers = append(deleteMembers, vv)
-										log.Printf("DeleteOne: deleteMembers: %v", deleteMembers)
-									}
-								}
-							} else {
-								tx.Rollback()
-
-								// TODO return correct error code
-								log.Printf("error: Failed to modify because of invalid schema. Need to be string in array. dn: %s attrName: %s value: %#v", dn.DN, s.Name, jsonMap[s.Name])
-
-								res := ldap.NewModifyResponse(ldap.LDAPResultOperationsError)
-								w.Write(res)
-								return
-							}
-						}
-						jsonMap[s.Name] = newVals
-					} else {
-						tx.Rollback()
-
-						// TODO return correct error code
-						log.Printf("error: Failed to modify because of invalid schema. Need to be array. dn: %s attrName: %s value: %#v", dn.DN, s.Name, jsonMap[s.Name])
-
-						res := ldap.NewModifyResponse(ldap.LDAPResultOperationsError)
-						w.Write(res)
-						return
-					}
-				}
-			}
 		case ldap.ModifyRequestChangeOperationReplace:
-			operationString = "Replace"
-
-			if len(modification.Vals()) == 0 {
-				// Replaceの値なしで削除するケース
-				delete(jsonMap, s.Name)
-			} else {
-				if s.SingleValue {
-					// TODO test multiple replace values against single-value
-					jsonMap[s.Name] = string(modification.Vals()[0])
-				} else {
-					if s.Name == "member" {
-						deleteMembers = append(deleteMembers, jsonMap[s.Name].([]interface{})...)
-						log.Printf("Replace: deleteMembers: %v", deleteMembers)
-					}
-					var newVals []string
-					for _, attributeValue := range modification.Vals() {
-						newVals = append(newVals, string(attributeValue))
-					}
-					jsonMap[s.Name] = newVals
-				}
-			}
+			err = entry.ReplaceAttrs(attrName, values)
 		}
 
-		// For logging
-		// TODO
-		log.Printf("%s attribute '%s'", operationString, modification.Type_())
-		for _, attributeValue := range modification.Vals() {
-			log.Printf(" - value: %s", attributeValue)
+		if err != nil {
+			tx.Rollback()
+
+			log.Printf("warn: Failed to modify. dn: %s err: %s", dn.DN, err)
+			responseModifyError(w, err)
+			return
 		}
 	}
 
-	attrs, err := json.Marshal(jsonMap)
-	if err != nil {
-		tx.Rollback()
+	log.Printf("Update entry with %#v", entry)
 
-		// TODO return correct error
-		log.Printf("error: Failed to marshal entry: %#v", err)
-		res := ldap.NewModifyResponse(ldap.LDAPResultOperationsError)
-		w.Write(res)
-		return
-	}
-
-	jsonText := types.JSONText(string(attrs))
-	_, err = tx.NamedExec(`UPDATE ldap_entry SET updated = now(), attrs = :attrs WHERE id = :id`, map[string]interface{}{
-		"id":    entry.Id,
-		"attrs": jsonText,
-	})
+	err = update(tx, entry)
 
 	if err != nil {
 		tx.Rollback()
 
-		log.Printf("warn: Failed to modify dn: %s err: %s", dn.DN, err)
-		res := ldap.NewModifyResponse(ldap.LDAPResultOperationsError)
-		w.Write(res)
+		// TODO error code
+		responseModifyError(w, fmt.Errorf("Failed to modify the entry. dn: %s entry: %#v err: %#v", dn.DN, entry, err))
 		return
 	}
-
 	// Resolve memberOf
 	// TODO error handling
-	_ = updateAssociation(tx, dn, jsonMap)
-	_ = updateOwnerAssociation(tx, dn, jsonMap)
+	// _ = updateAssociation(tx, dn, jsonMap)
+	// _ = updateOwnerAssociation(tx, dn, jsonMap)
 
 	// Clean deleted Members
-	for _, m := range deleteMembers {
-		var memberDN *DN
-		var err error
-		if memberDN, err = normalizeDN(m.(string)); err != nil {
-			log.Printf("error: Invalid member, can't normalize dn: %#v", err)
-			continue
-		}
-
-		entry, err := findByDN(tx, memberDN)
-
-		if err != nil {
-			log.Printf("error: Search member memberDN: %s error: %#v", memberDN.DN, err)
-			continue
-		}
-
-		log.Printf("deleting memberOf: %+v deleteDN: %s", entry.Attrs, dn.DN)
-
-		deleteMemberOf(entry, dn)
-
-		_, err = tx.NamedExec(`UPDATE ldap_entry SET attrs = :attrs WHERE id = :id`, map[string]interface{}{
-			"id":    entry.Id,
-			"attrs": entry.Attrs,
-		})
-		if err != nil {
-			log.Printf("error: Faild to modify member dn: %s err: %#v", entry.Dn, err)
-			continue
-		}
-	}
+	// for _, m := range deleteMembers {
+	// 	var memberDN *DN
+	// 	var err error
+	// 	if memberDN, err = normalizeDN(m.(string)); err != nil {
+	// 		log.Printf("error: Invalid member, can't normalize dn: %#v", err)
+	// 		continue
+	// 	}
+	//
+	// 	entry, err := findByDNWithLock(tx, memberDN)
+	//
+	// 	if err != nil {
+	// 		log.Printf("error: Search member memberDN: %s error: %#v", memberDN.DN, err)
+	// 		continue
+	// 	}
+	//
+	// 	log.Printf("deleting memberOf: %+v deleteDN: %s", entry.Attrs, dn.DN)
+	//
+	// 	deleteMemberOf(entry, dn)
+	//
+	// 	_, err = tx.NamedExec(`UPDATE ldap_entry SET attrs = :attrs WHERE id = :id`, map[string]interface{}{
+	// 		"id":    entry.Id,
+	// 		"attrs": entry.Attrs,
+	// 	})
+	// 	if err != nil {
+	// 		log.Printf("error: Faild to modify member dn: %s err: %#v", entry.Dn, err)
+	// 		continue
+	// 	}
+	// }
 
 	tx.Commit()
 
 	res := ldap.NewModifyResponse(ldap.LDAPResultSuccess)
 	w.Write(res)
+}
+
+func responseModifyError(w ldap.ResponseWriter, err error) {
+	if ldapErr, ok := err.(*LDAPError); ok {
+		res := ldap.NewModifyResponse(ldapErr.Code)
+		if ldapErr.Msg != "" {
+			res.SetDiagnosticMessage(ldapErr.Msg)
+		}
+		w.Write(res)
+	} else {
+		log.Printf("error: %s", err)
+		// TODO
+		res := ldap.NewModifyResponse(ldap.LDAPResultProtocolError)
+		w.Write(res)
+	}
 }

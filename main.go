@@ -104,6 +104,7 @@ type typeMapper struct {
 var (
 	db        *sqlx.DB
 	schemaMap SchemaMap
+	mapper    *Mapper
 	rootDN    *DN
 )
 
@@ -191,6 +192,9 @@ func main() {
 
 	// Init schema map
 	schemaMap = InitSchemaMap()
+
+	// Init mapper
+	mapper = NewMapper(schemaMap)
 
 	//Create a new LDAP Server
 	server := ldap.NewServer()

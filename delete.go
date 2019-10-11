@@ -22,28 +22,14 @@ func handleDelete(w ldap.ResponseWriter, m *ldap.Message) {
 
 	tx := db.MustBegin()
 
-	entry, err := findByDN(tx, dn)
-	if err != nil {
-		tx.Rollback()
-
-		// TODO return correct error
-		log.Printf("info: Failed to fetch the entry. dn: %s err: %#v", dn.DN, err)
-		res := ldap.NewDeleteResponse(ldap.LDAPResultOperationsError)
-		w.Write(res)
-		return
-	}
-
-	jsonMap := map[string]interface{}{}
-	entry.Attrs.Unmarshal(&jsonMap)
-
-	_, err = tx.NamedExec("DELETE FROM ldap_entry WHERE dn = :dn", map[string]interface{}{"dn": dn.DN})
+	var id int64
+	err = tx.Get(&id, "DELETE FROM ldap_entry WHERE dn = :dn RETURNING id", map[string]interface{}{"dn": dn.DN})
 
 	if err != nil {
 		log.Printf("info: Failed to delete entry: %#v", err)
 		tx.Rollback()
 
-		res := ldap.NewDeleteResponse(ldap.LDAPResultNoSuchObject)
-		w.Write(res)
+		responseDeleteError(w, err)
 		return
 	}
 
@@ -52,8 +38,23 @@ func handleDelete(w ldap.ResponseWriter, m *ldap.Message) {
 
 	tx.Commit()
 
-	log.Printf("info: Deleted dn: %s", dn.DN)
+	log.Printf("info: Deleted. id: %d dn: %s", id, dn.DN)
 
 	res := ldap.NewDeleteResponse(ldap.LDAPResultSuccess)
 	w.Write(res)
+}
+
+func responseDeleteError(w ldap.ResponseWriter, err error) {
+	if ldapErr, ok := err.(*LDAPError); ok {
+		res := ldap.NewDeleteResponse(ldapErr.Code)
+		if ldapErr.Msg != "" {
+			res.SetDiagnosticMessage(ldapErr.Msg)
+		}
+		w.Write(res)
+	} else {
+		log.Printf("error: %s", err)
+		// TODO
+		res := ldap.NewDeleteResponse(ldap.LDAPResultProtocolError)
+		w.Write(res)
+	}
 }

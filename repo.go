@@ -1,21 +1,18 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
 	"sync"
-	"time"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/jmoiron/sqlx/types"
 )
 
 var (
-	findByDNStmt     *sqlx.NamedStmt
-	findCredByDNStmt *sqlx.NamedStmt
-	baseSearchStmt   *sqlx.NamedStmt
+	findByDNStmt         *sqlx.NamedStmt
+	findByDNWithLockStmt *sqlx.NamedStmt
+	findCredByDNStmt     *sqlx.NamedStmt
+	baseSearchStmt       *sqlx.NamedStmt
 )
 
 // For generic filter
@@ -37,21 +34,15 @@ func (m *FilterStmtMap) Put(key string, value *sqlx.NamedStmt) {
 
 var filterStmtMap FilterStmtMap
 
-type Entry struct {
-	Id        int            `db:"id"`
-	Dn        string         `db:"dn"`
-	Path      string         `db:"path"`
-	EntryUUID string         `db:"uuid"`
-	Created   time.Time      `db:"created"`
-	Updated   time.Time      `db:"updated"`
-	Attrs     types.JSONText `db:"attrs"`
-	Count     int32          `db:"count"`
-}
-
 func initStmt(db *sqlx.DB) error {
 	var err error
 
 	findByDNStmt, err = db.PrepareNamed("SELECT id, attrs FROM ldap_entry WHERE LOWER(dn) = LOWER(:dn)")
+	if err != nil {
+		return err
+	}
+
+	findByDNWithLockStmt, err = db.PrepareNamed("SELECT id, attrs FROM ldap_entry WHERE LOWER(dn) = LOWER(:dn) FOR UPDATE")
 	if err != nil {
 		return err
 	}
@@ -69,9 +60,73 @@ func initStmt(db *sqlx.DB) error {
 	return nil
 }
 
+func insert(tx *sqlx.Tx, entry *Entry) (int64, error) {
+	rows, err := tx.NamedQuery(`INSERT INTO ldap_entry (dn, path, uuid, created, updated, attrs) SELECT :dn, :path, :uuid, :created, :updated, :attrs WHERE NOT EXISTS (SELECT id FROM ldap_entry WHERE dn = :dn) RETURNING id`, map[string]interface{}{
+		"dn":      entry.Dn,
+		"path":    entry.Path,
+		"uuid":    entry.EntryUUID,
+		"created": entry.Created,
+		"updated": entry.Updated,
+		"attrs":   entry.GetRawAttrs(),
+	})
+	if err != nil {
+		log.Printf("error: Failed to insert entry record. entry: %#v err: %v", entry, err)
+		return 0, err
+	}
+
+	var id int64
+	if rows.Next() {
+		rows.Scan(&id)
+	} else {
+		return 0, NewAlreadyExists()
+	}
+
+	return id, nil
+}
+
+func update(tx *sqlx.Tx, entry *Entry) error {
+	_, err := tx.NamedExec(`UPDATE ldap_entry SET updated = now(), attrs = :attrs WHERE id = :id`, map[string]interface{}{
+		"id":    entry.Id,
+		"attrs": entry.GetRawAttrs(),
+	})
+	if err != nil {
+		log.Printf("error: Failed to update entry record. entry: %#v err: %v", entry, err)
+		return err
+	}
+
+	return nil
+}
+
+func updateDN(tx *sqlx.Tx, entry *Entry, newDN *DN) error {
+	_, err := tx.NamedExec(`UPDATE ldap_entry SET updated = now(), dn = :newdn, path = :newpath, attrs = :attrs WHERE id = :id`, map[string]interface{}{
+		"id":      entry.Id,
+		"newdn":   newDN.DN,
+		"newpath": newDN.ReverseParentDN,
+		"attrs":   entry.GetRawAttrs(),
+	})
+
+	if err != nil {
+		log.Printf("error: Failed to update entry DN. entry: %#v newDN: %s err: %v", entry, newDN.DN, err)
+		return err
+	}
+
+	return nil
+}
+
 func findByDN(tx *sqlx.Tx, dn *DN) (*Entry, error) {
 	entry := Entry{}
 	err := tx.NamedStmt(findByDNStmt).Get(&entry, map[string]interface{}{
+		"dn": dn.DN,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &entry, nil
+}
+
+func findByDNWithLock(tx *sqlx.Tx, dn *DN) (*Entry, error) {
+	entry := Entry{}
+	err := tx.NamedStmt(findByDNWithLockStmt).Get(&entry, map[string]interface{}{
 		"dn": dn.DN,
 	})
 	if err != nil {
@@ -188,7 +243,7 @@ func resolveMember(tx *sqlx.Tx, ownerDN *DN, jsonMap map[string]interface{}) {
 					continue
 				}
 
-				log.Printf("merging memberOf: %+v addDN: %s", entry.Attrs, ownerDN.DN)
+				log.Printf("merging memberOf: %+v addDN: %s", entry.GetAttrs(), ownerDN.DN)
 
 				err = mergeMemberOf(entry, ownerDN)
 				if err != nil {
@@ -196,11 +251,11 @@ func resolveMember(tx *sqlx.Tx, ownerDN *DN, jsonMap map[string]interface{}) {
 					continue
 				}
 
-				log.Printf("merged memberOf: %+v", entry.Attrs)
+				log.Printf("merged memberOf: %+v", entry.GetAttrs())
 
 				_, err = tx.NamedExec(`UPDATE ldap_entry SET attrs = :attrs WHERE id = :id`, map[string]interface{}{
 					"id":    entry.Id,
-					"attrs": entry.Attrs,
+					"attrs": entry.GetRawAttrs(),
 				})
 				if err != nil {
 					log.Printf("error: Faild to modify memberOf dn: %s err: %#v", entry.Dn, err)
@@ -238,7 +293,7 @@ func updateOwnerAssociation(tx *sqlx.Tx, subjectDN *DN, jsonMap map[string]inter
 					continue
 				}
 
-				log.Printf("merging member: %+v addDN: %s", entry.Attrs, subjectDN.DN)
+				log.Printf("merging member: %+v addDN: %s", entry.GetAttrs(), subjectDN.DN)
 
 				err = mergeMember(entry, subjectDN)
 				if err != nil {
@@ -246,11 +301,11 @@ func updateOwnerAssociation(tx *sqlx.Tx, subjectDN *DN, jsonMap map[string]inter
 					continue
 				}
 
-				log.Printf("merged member: %+v", entry.Attrs)
+				log.Printf("merged member: %+v", entry.GetAttrs())
 
 				_, err = tx.NamedExec(`UPDATE ldap_entry SET attrs = :attrs WHERE id = :id`, map[string]interface{}{
 					"id":    entry.Id,
-					"attrs": entry.Attrs,
+					"attrs": entry.GetRawAttrs(),
 				})
 				if err != nil {
 					log.Printf("error: Faild to modify member dn: %s err: %#v", entry.Dn, err)
@@ -275,75 +330,16 @@ func deleteMemberOf(entry *Entry, ownerDN *DN) error {
 }
 
 func appendDNArray(entry *Entry, dn *DN, attrName string) error {
-	jsonMap := map[string]interface{}{}
-	entry.Attrs.Unmarshal(&jsonMap)
-
-	if val, ok := jsonMap[attrName]; ok {
-		if valarr, ok := val.([]interface{}); ok {
-			found := false
-			for _, v := range valarr {
-				if vv, ok := v.(string); ok {
-					log.Printf("Check %s == %s", vv, dn.DN)
-					if strings.ToLower(vv) == strings.ToLower(dn.DN) {
-						found = true
-						break
-					}
-				}
-			}
-			if !found {
-				valarr = append(valarr, dn.DN)
-			}
-			jsonMap[attrName] = valarr
-		}
-	} else {
-		// Nothing, add dn
-		jsonMap[attrName] = []string{dn.DN}
-	}
-
-	attrs, err := json.Marshal(jsonMap)
-
-	if err != nil {
-		return err
-	}
-
-	jsonText := types.JSONText(string(attrs))
-	entry.Attrs = jsonText
-
-	return nil
+	s, _ := schemaMap.Get(attrName)
+	return entry.GetAttrs().MergeMultiValues(s, []string{dn.DN})
 }
 
 func deleteDNArray(entry *Entry, dn *DN, attrName string) error {
-	jsonMap := map[string]interface{}{}
-	entry.Attrs.Unmarshal(&jsonMap)
-
-	if val, ok := jsonMap[attrName]; ok {
-		if valarr, ok := val.([]interface{}); ok {
-			newarr := []string{}
-			for _, v := range valarr {
-				if vv, ok := v.(string); ok {
-					log.Printf("Check %s == %s", vv, dn.DN)
-					if strings.ToLower(vv) != strings.ToLower(dn.DN) {
-						newarr = append(newarr, vv)
-					}
-				}
-			}
-			jsonMap[attrName] = newarr
-		}
-	}
-
-	attrs, err := json.Marshal(jsonMap)
-
-	if err != nil {
-		return err
-	}
-
-	jsonText := types.JSONText(string(attrs))
-	entry.Attrs = jsonText
-
-	return nil
+	s, _ := schemaMap.Get(attrName)
+	return entry.GetAttrs().Remove(s, []string{dn.DN})
 }
 
-func resolveAssociation(tx *sqlx.Tx, ownerId int, jsonMap map[string]interface{}) {
+func resolveAssociation(tx *sqlx.Tx, ownerId int64, jsonMap map[string]interface{}) {
 	log.Printf("resolveAssociation id: %d", ownerId)
 	if members, ok := jsonMap["member"]; ok {
 		log.Printf("members %#v", members)
