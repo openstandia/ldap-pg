@@ -23,16 +23,9 @@ func handleModify(w ldap.ResponseWriter, m *ldap.Message) {
 
 	log.Printf("info: Modify entry: %s", dn.DN)
 
-	// if err != nil {
-	// 	log.Printf("warn: Invalid DN format for modify dn=%s", dn)
-	// 	res := ldap.NewModifyResponse(ldap.LDAPResultNoSuchObject)
-	// 	w.Write(res)
-	// 	return
-	// }
-
 	tx := db.MustBegin()
 
-	entry, err := findByDNWithLock(tx, dn)
+	oldEntry, err := findByDNWithLock(tx, dn)
 	if err != nil {
 		tx.Rollback()
 		if err == sql.ErrNoRows {
@@ -44,8 +37,7 @@ func handleModify(w ldap.ResponseWriter, m *ldap.Message) {
 		}
 	}
 
-	// TODO refactoring
-	// deleteMembers := []interface{}{}
+	newEntry := oldEntry.Clone()
 
 	for _, change := range r.Changes() {
 		modification := change.Modification()
@@ -63,13 +55,13 @@ func handleModify(w ldap.ResponseWriter, m *ldap.Message) {
 
 		switch change.Operation() {
 		case ldap.ModifyRequestChangeOperationAdd:
-			err = entry.AddAttrs(attrName, values)
+			err = newEntry.AddAttrs(attrName, values)
 
 		case ldap.ModifyRequestChangeOperationDelete:
-			err = entry.DeleteAttrs(attrName, values)
+			err = newEntry.DeleteAttrs(attrName, values)
 
 		case ldap.ModifyRequestChangeOperationReplace:
-			err = entry.ReplaceAttrs(attrName, values)
+			err = newEntry.ReplaceAttrs(attrName, values)
 		}
 
 		if err != nil {
@@ -81,51 +73,26 @@ func handleModify(w ldap.ResponseWriter, m *ldap.Message) {
 		}
 	}
 
-	log.Printf("Update entry with %#v", entry)
+	log.Printf("Update entry. oldEntry: %#v newEntry: %#v", oldEntry, newEntry)
 
-	err = update(tx, entry)
+	err = update(tx, newEntry)
 
 	if err != nil {
 		tx.Rollback()
 
 		// TODO error code
-		responseModifyError(w, fmt.Errorf("Failed to modify the entry. dn: %s entry: %#v err: %#v", dn.DN, entry, err))
+		responseModifyError(w, fmt.Errorf("Failed to modify the entry. dn: %s entry: %#v err: %#v", dn.DN, newEntry, err))
 		return
 	}
-	// Resolve memberOf
-	// TODO error handling
-	// _ = updateAssociation(tx, dn, jsonMap)
-	// _ = updateOwnerAssociation(tx, dn, jsonMap)
 
-	// Clean deleted Members
-	// for _, m := range deleteMembers {
-	// 	var memberDN *DN
-	// 	var err error
-	// 	if memberDN, err = normalizeDN(m.(string)); err != nil {
-	// 		log.Printf("error: Invalid member, can't normalize dn: %#v", err)
-	// 		continue
-	// 	}
-	//
-	// 	entry, err := findByDNWithLock(tx, memberDN)
-	//
-	// 	if err != nil {
-	// 		log.Printf("error: Search member memberDN: %s error: %#v", memberDN.DN, err)
-	// 		continue
-	// 	}
-	//
-	// 	log.Printf("deleting memberOf: %+v deleteDN: %s", entry.Attrs, dn.DN)
-	//
-	// 	deleteMemberOf(entry, dn)
-	//
-	// 	_, err = tx.NamedExec(`UPDATE ldap_entry SET attrs = :attrs WHERE id = :id`, map[string]interface{}{
-	// 		"id":    entry.Id,
-	// 		"attrs": entry.Attrs,
-	// 	})
-	// 	if err != nil {
-	// 		log.Printf("error: Faild to modify member dn: %s err: %#v", entry.Dn, err)
-	// 		continue
-	// 	}
-	// }
+	// resolve member
+	err = modifyAssociation(tx, oldEntry, newEntry)
+	if err != nil {
+		tx.Rollback()
+
+		responseModifyError(w, err)
+		return
+	}
 
 	tx.Commit()
 

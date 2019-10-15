@@ -26,6 +26,21 @@ func (m *Mapper) ToEntry(dn *DN, ldapAttrs message.AttributeList) (*Entry, error
 
 	jsonAttrs := JSONAttrs{}
 
+	// Store RDN into attrs
+	rdn := dn.GetRDN()
+	for k, v := range rdn {
+		s, ok := m.schemaMap.Get(k)
+		if !ok {
+			log.Printf("warn: Invalid rdn. attrName: %s", k)
+			return nil, NewInvalidDNSyntax()
+		}
+		if s.SingleValue {
+			jsonAttrs[s.Name] = v
+		} else {
+			jsonAttrs[s.Name] = []interface{}{v}
+		}
+	}
+
 	for _, attr := range ldapAttrs {
 		k := attr.Type_()
 		attrName := string(k)
@@ -38,6 +53,7 @@ func (m *Mapper) ToEntry(dn *DN, ldapAttrs message.AttributeList) (*Entry, error
 		}
 
 		var err error
+		// TODO strict mode
 		if s.Name == "entryUUID" {
 			entryUUID, err = uuid.Parse(string(attr.Vals()[0]))
 			if err != nil {
@@ -46,6 +62,7 @@ func (m *Mapper) ToEntry(dn *DN, ldapAttrs message.AttributeList) (*Entry, error
 			}
 			continue
 		}
+		// TODO strict mode
 		if s.Name == "createTimestamp" {
 			createTimestamp, err = time.Parse(TIMESTAMP_FORMAT, string(attr.Vals()[0]))
 			if err != nil {
@@ -54,6 +71,7 @@ func (m *Mapper) ToEntry(dn *DN, ldapAttrs message.AttributeList) (*Entry, error
 			}
 			continue
 		}
+		// TODO strict mode
 		if s.Name == "modifyTimestamp" {
 			modifyTimestamp, err = time.Parse(TIMESTAMP_FORMAT, string(attr.Vals()[0]))
 			if err != nil {

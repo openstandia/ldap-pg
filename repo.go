@@ -9,10 +9,15 @@ import (
 )
 
 var (
-	findByDNStmt         *sqlx.NamedStmt
-	findByDNWithLockStmt *sqlx.NamedStmt
-	findCredByDNStmt     *sqlx.NamedStmt
-	baseSearchStmt       *sqlx.NamedStmt
+	findByDNStmt               *sqlx.NamedStmt
+	findByDNWithLockStmt       *sqlx.NamedStmt
+	findCredByDNStmt           *sqlx.NamedStmt
+	baseSearchStmt             *sqlx.NamedStmt
+	findByMemberOfWithLockStmt *sqlx.NamedStmt
+	findByMemberWithLockStmt   *sqlx.NamedStmt
+	updateAttrsByIdStmt        *sqlx.NamedStmt
+	updateDNByIdStmt           *sqlx.NamedStmt
+	deleteByDNStmt             *sqlx.NamedStmt
 )
 
 // For generic filter
@@ -37,12 +42,12 @@ var filterStmtMap FilterStmtMap
 func initStmt(db *sqlx.DB) error {
 	var err error
 
-	findByDNStmt, err = db.PrepareNamed("SELECT id, attrs FROM ldap_entry WHERE LOWER(dn) = LOWER(:dn)")
+	findByDNStmt, err = db.PrepareNamed("SELECT id, dn, attrs FROM ldap_entry WHERE LOWER(dn) = LOWER(:dn)")
 	if err != nil {
 		return err
 	}
 
-	findByDNWithLockStmt, err = db.PrepareNamed("SELECT id, attrs FROM ldap_entry WHERE LOWER(dn) = LOWER(:dn) FOR UPDATE")
+	findByDNWithLockStmt, err = db.PrepareNamed("SELECT id, dn, attrs FROM ldap_entry WHERE LOWER(dn) = LOWER(:dn) FOR UPDATE")
 	if err != nil {
 		return err
 	}
@@ -53,6 +58,31 @@ func initStmt(db *sqlx.DB) error {
 	}
 
 	baseSearchStmt, err = db.PrepareNamed("SELECT * FROM ldap_entry WHERE LOWER(dn) = LOWER(:baseDN)")
+	if err != nil {
+		return err
+	}
+
+	findByMemberOfWithLockStmt, err = db.PrepareNamed(`SELECT id, attrs FROM ldap_entry WHERE f_jsonb_array_lower(attrs->'memberOf') @> f_jsonb_array_lower('[":dn"]') FOR UPDATE`)
+	if err != nil {
+		return err
+	}
+
+	findByMemberWithLockStmt, err = db.PrepareNamed(`SELECT id, attrs FROM ldap_entry WHERE f_jsonb_array_lower(attrs->'member') @> f_jsonb_array_lower('[":dn"]') FOR UPDATE`)
+	if err != nil {
+		return err
+	}
+
+	updateAttrsByIdStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET updated = now(), attrs = :attrs WHERE id = :id`)
+	if err != nil {
+		return err
+	}
+
+	updateDNByIdStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET updated = now(), dn = :newdn, path = :newpath, attrs = :attrs WHERE id = :id`)
+	if err != nil {
+		return err
+	}
+
+	deleteByDNStmt, err = db.PrepareNamed(`DELETE FROM ldap_entry WHERE dn = :dn RETURNING id`)
 	if err != nil {
 		return err
 	}
@@ -85,7 +115,7 @@ func insert(tx *sqlx.Tx, entry *Entry) (int64, error) {
 }
 
 func update(tx *sqlx.Tx, entry *Entry) error {
-	_, err := tx.NamedExec(`UPDATE ldap_entry SET updated = now(), attrs = :attrs WHERE id = :id`, map[string]interface{}{
+	_, err := tx.NamedStmt(updateAttrsByIdStmt).Exec(map[string]interface{}{
 		"id":    entry.Id,
 		"attrs": entry.GetRawAttrs(),
 	})
@@ -97,19 +127,90 @@ func update(tx *sqlx.Tx, entry *Entry) error {
 	return nil
 }
 
-func updateDN(tx *sqlx.Tx, entry *Entry, newDN *DN) error {
-	_, err := tx.NamedExec(`UPDATE ldap_entry SET updated = now(), dn = :newdn, path = :newpath, attrs = :attrs WHERE id = :id`, map[string]interface{}{
-		"id":      entry.Id,
-		"newdn":   newDN.DN,
-		"newpath": newDN.ReverseParentDN,
-		"attrs":   entry.GetRawAttrs(),
+func updateDNWithAssociationWithLock(tx *sqlx.Tx, oldDN, newDN *DN) error {
+	rows, err := tx.NamedStmt(findByMemberWithLockStmt).Queryx(map[string]interface{}{
+		"dn": oldDN.DN,
 	})
-
 	if err != nil {
-		log.Printf("error: Failed to update entry DN. entry: %#v newDN: %s err: %v", entry, newDN.DN, err)
+		return err
+	}
+	defer rows.Close()
+
+	entry := &Entry{}
+	if rows.Next() {
+		err := rows.StructScan(&entry)
+		if err != nil {
+			return err
+		}
+
+		err = entry.DeleteAttrs("member", []string{oldDN.DN})
+		if err != nil {
+			return err
+		}
+
+		err = entry.AddAttrs("member", []string{newDN.DN})
+		if err != nil {
+			return err
+		}
+
+		err = update(tx, entry)
+		if err != nil {
+			return err
+		}
+	}
+
+	oldEntry, err := findByDNWithLock(tx, oldDN)
+	if err != nil {
 		return err
 	}
 
+	newEntry, err := oldEntry.ModifyDN(newDN)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.NamedStmt(updateDNByIdStmt).Exec(map[string]interface{}{
+		"id":      newEntry.Id,
+		"newdn":   newDN.DN,
+		"newpath": newDN.ReverseParentDN,
+		"attrs":   newEntry.GetRawAttrs(),
+	})
+
+	if err != nil {
+		log.Printf("error: Failed to update entry DN. entry: %#v newDN: %s err: %v", newEntry, newDN.DN, err)
+		return err
+	}
+
+	rows, err = tx.NamedStmt(findByMemberOfWithLockStmt).Queryx(map[string]interface{}{
+		"dn": oldDN.DN,
+	})
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	entry = &Entry{}
+	if rows.Next() {
+		err := rows.StructScan(&entry)
+		if err != nil {
+			return err
+		}
+
+		err = entry.DeleteAttrs("memberOf", []string{oldDN.DN})
+		if err != nil {
+			return err
+		}
+
+		err = entry.AddAttrs("memberOf", []string{newDN.DN})
+		if err != nil {
+			return err
+		}
+
+		err = update(tx, entry)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -189,193 +290,120 @@ func findByFilter(pathQuery string, q *Query) (*sqlx.Rows, error) {
 	return rows, nil
 }
 
-// func countOneByFilter(tx *sqlx.Tx, q *Query) (int, error) {
-// 	var count int
-// 	err := tx.NamedStmt(findByDNStmt).Get(&entry, map[string]interface{}{
-// 		"dn": dn.DN,
-// 	})
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	return &entry, nil
-// }
+func deleteWithAssociationByDNWithLock(tx *sqlx.Tx, dn *DN) error {
+	rows, err := tx.NamedStmt(findByMemberWithLockStmt).Queryx(map[string]interface{}{
+		"dn": dn.DN,
+	})
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
 
-var useAssociationTable bool
-
-func updateAssociation(tx *sqlx.Tx, ownerDN *DN, ownerJsonMap map[string]interface{}) error {
-	if useAssociationTable {
-		ownerEntry, err := findByDN(tx, ownerDN)
+	entry := &Entry{}
+	if rows.Next() {
+		err := rows.StructScan(&entry)
 		if err != nil {
-			log.Printf("Failed to get owner entry: %v", err)
 			return err
 		}
-		resolveAssociation(tx, ownerEntry.Id, ownerJsonMap)
-	} else {
-		resolveMember(tx, ownerDN, ownerJsonMap)
-	}
-	return nil
-}
 
-func resolveMember(tx *sqlx.Tx, ownerDN *DN, jsonMap map[string]interface{}) {
-	log.Printf("resolveMember dn: %s", ownerDN)
-	if members, ok := jsonMap["member"]; ok {
-		log.Printf("members %#v", members)
-		if marr, ok := members.([]interface{}); ok {
-			for _, mem := range marr {
-				log.Printf("memberDN %#v", mem)
+		err = entry.DeleteAttrs("member", []string{dn.DN})
+		if err != nil {
+			return err
+		}
 
-				var memberDN *DN
-				var err error
-				if memDN, ok := mem.(string); ok {
-					if memberDN, err = normalizeDN(memDN); err != nil {
-						log.Printf("error: Invalid member, can't normalize dn: %#v", err)
-						continue
-					}
-				} else {
-					log.Printf("error: Invalid member, not string dn: %#v", err)
-					continue
-				}
-
-				entry, err := findByDN(tx, memberDN)
-
-				if err != nil {
-					log.Printf("error: Search member memberDN: %s error: %#v", memberDN.DN, err)
-					continue
-				}
-
-				log.Printf("merging memberOf: %+v addDN: %s", entry.GetAttrs(), ownerDN.DN)
-
-				err = mergeMemberOf(entry, ownerDN)
-				if err != nil {
-					log.Printf("error: Merge memberOf error: %#v", err)
-					continue
-				}
-
-				log.Printf("merged memberOf: %+v", entry.GetAttrs())
-
-				_, err = tx.NamedExec(`UPDATE ldap_entry SET attrs = :attrs WHERE id = :id`, map[string]interface{}{
-					"id":    entry.Id,
-					"attrs": entry.GetRawAttrs(),
-				})
-				if err != nil {
-					log.Printf("error: Faild to modify memberOf dn: %s err: %#v", entry.Dn, err)
-					continue
-				}
-			}
+		err = update(tx, entry)
+		if err != nil {
+			return err
 		}
 	}
-}
 
-func updateOwnerAssociation(tx *sqlx.Tx, subjectDN *DN, jsonMap map[string]interface{}) error {
-	log.Printf("updateOwnerAssociation subjectDN: %s", subjectDN)
-	if memberOfs, ok := jsonMap["memberOf"]; ok {
-		log.Printf("memberOfs %#v", memberOfs)
-		if marr, ok := memberOfs.([]interface{}); ok {
-			for _, mem := range marr {
-				log.Printf("memberOfDN %#v", mem)
+	var id int = 0
+	err = tx.NamedStmt(deleteByDNStmt).Get(&id, map[string]interface{}{
+		"dn": dn.DN,
+	})
+	if err != nil {
+		return err
+	}
+	if id == 0 {
+		return NewNoSuchObject()
+	}
 
-				var memberOfDN *DN
-				var err error
-				if memOfDN, ok := mem.(string); ok {
-					if memberOfDN, err = normalizeDN(memOfDN); err != nil {
-						log.Printf("error: Invalid memberOf, can't normalize dn: %#v", err)
-						continue
-					}
-				} else {
-					log.Printf("error: Invalid memberOf, not string dn: %#v", err)
-					continue
-				}
+	rows, err = tx.NamedStmt(findByMemberOfWithLockStmt).Queryx(map[string]interface{}{
+		"dn": dn.DN,
+	})
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
 
-				entry, err := findByDN(tx, memberOfDN)
+	entry = &Entry{}
+	if rows.Next() {
+		err := rows.StructScan(&entry)
+		if err != nil {
+			return err
+		}
 
-				if err != nil {
-					log.Printf("error: Search memberOf memberOfDN: %s error: %#v", memberOfDN.DN, err)
-					continue
-				}
+		err = entry.DeleteAttrs("memberOf", []string{dn.DN})
+		if err != nil {
+			return err
+		}
 
-				log.Printf("merging member: %+v addDN: %s", entry.GetAttrs(), subjectDN.DN)
-
-				err = mergeMember(entry, subjectDN)
-				if err != nil {
-					log.Printf("error: Merge member error: %#v", err)
-					continue
-				}
-
-				log.Printf("merged member: %+v", entry.GetAttrs())
-
-				_, err = tx.NamedExec(`UPDATE ldap_entry SET attrs = :attrs WHERE id = :id`, map[string]interface{}{
-					"id":    entry.Id,
-					"attrs": entry.GetRawAttrs(),
-				})
-				if err != nil {
-					log.Printf("error: Faild to modify member dn: %s err: %#v", entry.Dn, err)
-					continue
-				}
-			}
+		err = update(tx, entry)
+		if err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func mergeMember(entry *Entry, subjectDN *DN) error {
-	return appendDNArray(entry, subjectDN, "member")
+func addMemberOf(tx *sqlx.Tx, dn, memberOfDN string) error {
+	entry := Entry{}
+	err := tx.NamedStmt(findByDNWithLockStmt).Get(&entry, map[string]interface{}{
+		"dn": dn,
+	})
+	if err != nil {
+		return err
+	}
+
+	err = entry.AddAttrs("memberOf", []string{memberOfDN})
+	if err != nil {
+		log.Printf("error: Failed to add memberOf. dn: %s memberOf: %s err: %#v", entry.Dn, memberOfDN, err)
+		return err
+	}
+
+	log.Printf("Add memberOf. dn: %s memberOf: %s", dn, memberOfDN)
+
+	err = update(tx, &entry)
+	if err != nil {
+		log.Printf("error: Failed to add memberOf. dn: %s memberOf: %s err: %#v", entry.Dn, memberOfDN, err)
+		return err
+	}
+
+	return nil
 }
 
-func mergeMemberOf(entry *Entry, ownerDN *DN) error {
-	return appendDNArray(entry, ownerDN, "memberOf")
-}
+func deleteMemberOf(tx *sqlx.Tx, dn, memberOfDN string) error {
+	entry := Entry{}
+	err := tx.NamedStmt(findByDNWithLockStmt).Get(&entry, map[string]interface{}{
+		"dn": dn,
+	})
+	if err != nil {
+		return err
+	}
 
-func deleteMemberOf(entry *Entry, ownerDN *DN) error {
-	return deleteDNArray(entry, ownerDN, "memberOf")
-}
-
-func appendDNArray(entry *Entry, dn *DN, attrName string) error {
-	s, _ := schemaMap.Get(attrName)
-	return entry.GetAttrs().MergeMultiValues(s, []string{dn.DN})
-}
-
-func deleteDNArray(entry *Entry, dn *DN, attrName string) error {
-	s, _ := schemaMap.Get(attrName)
-	return entry.GetAttrs().Remove(s, []string{dn.DN})
-}
-
-func resolveAssociation(tx *sqlx.Tx, ownerId int64, jsonMap map[string]interface{}) {
-	log.Printf("resolveAssociation id: %d", ownerId)
-	if members, ok := jsonMap["member"]; ok {
-		log.Printf("members %#v", members)
-		if marr, ok := members.([]interface{}); ok {
-			for _, mem := range marr {
-				log.Printf("memberDN %#v", mem)
-
-				var memberDN *DN
-				var err error
-				if memDN, ok := mem.(string); ok {
-					if memberDN, err = normalizeDN(memDN); err != nil {
-						log.Printf("error: Invalid member, can't normalize dn: %#v", err)
-						continue
-					}
-				} else {
-					log.Printf("error: Invalid member, not string dn: %#v", err)
-					continue
-				}
-
-				entry, err := findByDN(tx, memberDN)
-
-				if err != nil {
-					log.Printf("error: Search member memberDN: %s error: %#v", memberDN.DN, err)
-					continue
-				}
-
-				_, err = tx.NamedExec(`INSERT INTO relation (attr, ownerId, itemId) VALUES ('member', :ownerId, :itemId)`, map[string]interface{}{
-					"ownerId": ownerId,
-					"itemId":  entry.Id,
-				})
-
-				if err != nil {
-					log.Printf("error: Faild to add association id: %d itemId: %d  err: %#v", ownerId, entry.Id, err)
-					continue
-				}
-			}
+	err = entry.DeleteAttrs("memberOf", []string{memberOfDN})
+	if err != nil {
+		if err != NewNoSuchAttribute("modify/delete", "memberOf") {
+			log.Printf("error: Faild to delete memberOf. dn: %s memberOf: %s error: %#v", entry.Dn, memberOfDN, err)
+			return err
 		}
 	}
+
+	err = update(tx, &entry)
+	if err != nil {
+		log.Printf("error: Failed to delete memberOf. dn: %s memberOf: %s err: %#v", entry.Dn, memberOfDN, err)
+		return err
+	}
+
+	return nil
 }

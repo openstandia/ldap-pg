@@ -67,6 +67,20 @@ func NewNoSuchObject() *LDAPError {
 	}
 }
 
+func NewInvalidDNSyntax() *LDAPError {
+	return &LDAPError{
+		Code: 34,
+		Msg:  fmt.Sprintf("invalid DN"),
+	}
+}
+
+func NewObjectClassViolation() *LDAPError {
+	return &LDAPError{
+		Code: 65,
+		Msg:  fmt.Sprintf("no objectClass attribute"),
+	}
+}
+
 func NewAlreadyExists() *LDAPError {
 	return &LDAPError{
 		Code: 68,

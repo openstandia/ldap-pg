@@ -30,6 +30,86 @@ func NewEntry(dn *DN, jsonAttrs JSONAttrs) *Entry {
 	}
 }
 
+type diffAttr struct {
+	add []string
+	del []string
+}
+
+func calcDiffAttr(from, to *Entry, attrName string) *diffAttr {
+	fromAttrs, _ := from.GetAttr(attrName)
+	toAttrs, _ := to.GetAttr(attrName)
+
+	fromMap := make(map[string]struct{}, len(fromAttrs))
+	toMap := make(map[string]struct{}, len(toAttrs))
+
+	for _, v := range fromAttrs {
+		fromMap[v] = struct{}{}
+	}
+
+	diff := &diffAttr{}
+
+	for _, v := range toAttrs {
+		toMap[v] = struct{}{}
+		if _, found := fromMap[v]; !found {
+			diff.add = append(diff.add, v)
+		}
+	}
+
+	for _, v := range fromAttrs {
+		if _, found := toMap[v]; !found {
+			diff.del = append(diff.del, v)
+		}
+	}
+
+	return diff
+}
+
+func (e *Entry) ModifyDN(newDN *DN) (*Entry, error) {
+	clone := e.Clone()
+	clone.Dn = newDN.DN
+	clone.Path = newDN.ReverseParentDN
+
+	// Store RDN into attrs
+	rdn := newDN.GetRDN()
+	for k, v := range rdn {
+		// TODO
+		s, ok := schemaMap.Get(k)
+		if !ok {
+			log.Printf("warn: Invalid rdn. attrName: %s", k)
+			return nil, NewInvalidDNSyntax()
+		}
+		if s.SingleValue {
+			clone.jsonAttrs[s.Name] = v
+		} else {
+			// TODO replace old RDN
+			clone.jsonAttrs[s.Name] = []interface{}{v}
+		}
+	}
+	return clone, nil
+}
+
+func (e *Entry) Clone() *Entry {
+	clone := &Entry{
+		Id:        e.Id,
+		Dn:        e.Dn,
+		Path:      e.Path,
+		Created:   e.Created,
+		Updated:   e.Updated,
+		jsonAttrs: JSONAttrs{},
+	}
+	for k, v := range e.GetAttrs() {
+		if vv, ok := v.([]interface{}); ok {
+			vvv := make([]interface{}, len(vv))
+			copy(vvv, vv)
+			clone.jsonAttrs[k] = vvv
+		} else {
+			clone.jsonAttrs[k] = v
+		}
+	}
+
+	return clone
+}
+
 func (e *Entry) Clear() {
 	e.Id = 0
 	e.Dn = ""
@@ -65,6 +145,10 @@ func (e *Entry) GetRawAttrs() types.JSONText {
 }
 
 func (e *Entry) GetAttr(attrName string) ([]string, bool) {
+	if e == nil {
+		return make([]string, 0), true
+	}
+
 	s, ok := schemaMap.Get(attrName)
 	if !ok {
 		return nil, false
@@ -317,7 +401,7 @@ func (j JSONAttrs) RemoveAll(s *Schema) error {
 }
 
 func (j JSONAttrs) Remove(s *Schema, values []string) error {
-	var m map[string]struct{}
+	m := make(map[string]struct{}, len(values))
 	for _, v := range values {
 		m[v] = struct{}{}
 	}

@@ -18,25 +18,18 @@ func handleModifyDN(w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	log.Printf("info: Modify entry: %s", dn.DN)
+	newDN, err := dn.Modify(string(r.NewRDN()))
 
-	tx := db.MustBegin()
-
-	entry, err := findByDNWithLock(tx, dn)
-	if err != nil {
-		// TODO return correct error
-		log.Printf("info: Failed to fetch the entry. dn: %s err: %#v", dn.DN, err)
-		responseModifyDNError(w, err)
-		return
-	}
-
-	err = dn.Modify(string(r.NewRDN()))
 	if err != nil {
 		// TODO return correct error
 		log.Printf("info: Invalid newrdn. dn: %s newrdn: %s err: %#v", dn.DN, r.NewRDN(), err)
 		responseModifyDNError(w, err)
 		return
 	}
+
+	log.Printf("info: Modify entry: %s", dn.DN)
+
+	tx := db.MustBegin()
 
 	// TODO impl
 	if r.NewSuperior() != nil {
@@ -50,8 +43,7 @@ func handleModifyDN(w ldap.ResponseWriter, m *ldap.Message) {
 		log.Printf("error: Not implemented DeleteOldRDN false")
 	}
 
-	err = updateDN(tx, entry, dn)
-
+	err = updateDNWithAssociationWithLock(tx, dn, newDN)
 	if err != nil {
 		tx.Rollback()
 
@@ -60,10 +52,6 @@ func handleModifyDN(w ldap.ResponseWriter, m *ldap.Message) {
 		responseModifyDNError(w, err)
 		return
 	}
-
-	// Resolve memberOf
-	// TODO error handling
-	// _ = updateOwnerAssociation(tx, dn, jsonMap)
 
 	tx.Commit()
 

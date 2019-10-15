@@ -21,10 +21,22 @@ func (d *DN) Equal(o *DN) bool {
 	return d.DN == o.DN
 }
 
-func (d *DN) Modify(newRDN string) error {
+func (d *DN) GetRDN() map[string]string {
+	dn, _ := goldap.ParseDN(d.DN)
+
+	m := make(map[string]string, len(dn.RDNs[0].Attributes))
+
+	for _, a := range dn.RDNs[0].Attributes {
+		m[a.Type] = a.Value
+	}
+
+	return m
+}
+
+func (d *DN) Modify(newRDN string) (*DN, error) {
 	nd, err := goldap.ParseDN(newRDN)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	dn, _ := goldap.ParseDN(d.DN)
@@ -48,10 +60,10 @@ func (d *DN) Modify(newRDN string) error {
 	ndn := strings.Join(n, ",")
 	reverse := toReverseDN(n)
 
-	d.DN = ndn
-	d.ReverseParentDN = reverse
-
-	return nil
+	return &DN{
+		DN:              ndn,
+		ReverseParentDN: reverse,
+	}, nil
 }
 
 func (d *DN) ToPath() string {
@@ -188,4 +200,18 @@ func hasDuplicate(s *Schema, arr []string) (int, bool) {
 		m[v] = i
 	}
 	return -1, false
+}
+
+func arrayDiff(a, b []string) []string {
+	mb := make(map[string]struct{}, len(b))
+	for _, x := range b {
+		mb[x] = struct{}{}
+	}
+	var diff []string
+	for _, x := range a {
+		if _, found := mb[x]; !found {
+			diff = append(diff, x)
+		}
+	}
+	return diff
 }

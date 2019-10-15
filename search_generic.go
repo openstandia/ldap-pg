@@ -138,7 +138,7 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 	for rows.Next() {
 		err := rows.StructScan(&entry)
 		if err != nil {
-			log.Printf("error: Struct mapping error: %#v", err)
+			log.Printf("error: Entry struct mapping error: %#v", err)
 
 			// TODO return correct error code
 			res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultOperationsError)

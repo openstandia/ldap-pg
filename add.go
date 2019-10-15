@@ -22,6 +22,15 @@ func handleAdd(w ldap.ResponseWriter, m *ldap.Message) {
 	}
 
 	entry, err := mapper.ToEntry(dn, r.Attributes())
+	if err != nil {
+		responseAddError(w, err)
+		return
+	}
+
+	if err := validateNewEntry(entry); err != nil {
+		responseAddError(w, err)
+		return
+	}
 
 	tx := db.MustBegin()
 
@@ -34,7 +43,7 @@ func handleAdd(w ldap.ResponseWriter, m *ldap.Message) {
 	}
 
 	// Resolve member/memberOf
-	err = addAssociation(tx, entry, dn)
+	err = addAssociation(tx, entry)
 	if err != nil {
 		tx.Rollback()
 
@@ -65,4 +74,14 @@ func responseAddError(w ldap.ResponseWriter, err error) {
 		res := ldap.NewAddResponse(ldap.LDAPResultProtocolError)
 		w.Write(res)
 	}
+}
+
+func validateNewEntry(entry *Entry) error {
+	if !entry.HasAttr("objectClass") {
+		return NewObjectClassViolation()
+	}
+	// TODO more validation
+
+	return nil
+
 }

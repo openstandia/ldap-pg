@@ -22,23 +22,18 @@ func handleDelete(w ldap.ResponseWriter, m *ldap.Message) {
 
 	tx := db.MustBegin()
 
-	var id int64
-	err = tx.Get(&id, "DELETE FROM ldap_entry WHERE dn = :dn RETURNING id", map[string]interface{}{"dn": dn.DN})
-
+	err = deleteWithAssociationByDNWithLock(tx, dn)
 	if err != nil {
-		log.Printf("info: Failed to delete entry: %#v", err)
+		log.Printf("info: Failed to lock and delete entry: %#v", err)
 		tx.Rollback()
 
 		responseDeleteError(w, err)
 		return
 	}
 
-	// TODO delete memberOf of entry which is fetched by member DN
-	// TODO delete member of entry which is fetched by memberOf DN
-
 	tx.Commit()
 
-	log.Printf("info: Deleted. id: %d dn: %s", id, dn.DN)
+	log.Printf("info: Deleted. dn: %s", dn.DN)
 
 	res := ldap.NewDeleteResponse(ldap.LDAPResultSuccess)
 	w.Write(res)
