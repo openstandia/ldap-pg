@@ -188,18 +188,6 @@ func findCredByDN(dn *DN) (string, error) {
 	return bindUserCred, nil
 }
 
-func getBaseSearch(baseDN *DN) (*Entry, error) {
-	var entry Entry
-	err := baseSearchStmt.Get(&entry, map[string]interface{}{
-		"baseDN": baseDN.DN,
-	})
-	// including not found
-	if err != nil {
-		return nil, err
-	}
-	return &entry, nil
-}
-
 func findByFilter(pathQuery string, q *Query) (*sqlx.Rows, error) {
 	var query string
 	if q.Query != "" {

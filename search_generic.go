@@ -74,15 +74,16 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 	var pathQuery string
 	path := baseDN.ToPath()
 	if scope == 0 {
-		handleBaseSearch(w, r, baseDN)
-		return
+		pathQuery = "(LOWER(dn) = LOWER(:baseDN))"
+		q.Params["baseDN"] = baseDN.DN
+
 	} else if scope == 1 {
-		pathQuery = "LOWER(dn) = LOWER(:baseDN) OR path = :path"
+		pathQuery = "(LOWER(dn) = LOWER(:baseDN) OR path = :path)"
 		q.Params["baseDN"] = baseDN.DN
 		q.Params["path"] = path
 
 	} else if scope == 2 {
-		pathQuery = "LOWER(dn) = LOWER(:baseDN) OR path LIKE :path"
+		pathQuery = "(LOWER(dn) = LOWER(:baseDN) OR path LIKE :path)"
 		q.Params["baseDN"] = baseDN.DN
 		q.Params["path"] = path + "%"
 
@@ -196,38 +197,6 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 	}
 
 	return
-}
-
-func handleBaseSearch(w ldap.ResponseWriter, r message.SearchRequest, baseDN *DN) {
-	// Only response 1 entry always
-	entry, err := getBaseSearch(baseDN)
-	if err != nil {
-		if err.Error() == "sql: no rows in result set" {
-			log.Printf("info: No entry. baseDN: %s", baseDN.DN)
-
-			res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultNoSuchObject)
-			w.Write(res)
-			return
-		} else {
-			log.Printf("error: query error: %#v", err)
-
-			// TODO return correct error code
-			res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultOperationsError)
-			w.Write(res)
-			return
-		}
-	}
-	if entry == nil {
-		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultNoSuchObject)
-		w.Write(res)
-		return
-
-	} else {
-		responseEntry(w, r, entry)
-		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultSuccess)
-		w.Write(res)
-		return
-	}
 }
 
 func responseEntry(w ldap.ResponseWriter, r message.SearchRequest, entry *Entry) {
