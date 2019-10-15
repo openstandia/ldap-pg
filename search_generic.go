@@ -246,6 +246,15 @@ func responseEntry(w ldap.ResponseWriter, r message.SearchRequest, entry *Entry)
 				e.AddAttribute(message.AttributeDescription(k), message.AttributeValue(v))
 			}
 		}
+
+		// TODO
+		if isSupportedFetchMemberOf() {
+			values := entry.GetMemberOf()
+			log.Printf("AddAttribute memberOf=%#v", values)
+			for _, v := range values {
+				e.AddAttribute(message.AttributeDescription("memberOf"), message.AttributeValue(v))
+			}
+		}
 	} else {
 		for _, attr := range r.Attributes() {
 			a := string(attr)
@@ -259,10 +268,18 @@ func responseEntry(w ldap.ResponseWriter, r message.SearchRequest, entry *Entry)
 					continue
 				}
 
-				values, ok := entry.GetAttr(s.Name)
-				if !ok {
-					log.Printf("No data for requested attr, ignore. attr: %s", a)
-					continue
+				var values []string
+
+				// TODO
+				if s.Name == "memberOf" && isSupportedFetchMemberOf() {
+					values = entry.GetMemberOf()
+				} else {
+					var ok bool
+					values, ok = entry.GetAttr(s.Name)
+					if !ok {
+						log.Printf("No data for requested attr, ignore. attr: %s", a)
+						continue
+					}
 				}
 
 				log.Printf("AddAttribute %s=%#v", a, values)

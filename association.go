@@ -6,40 +6,241 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-type MembershipSupport interface {
-	updateMembership(tx *sqlx.Tx, oldEntry, newEntry *Entry) error
-	deleteMembership(tx *sqlx.Tx, dn *DN) error
-	rename(tx *sqlx.Tx, oldDN, newDN *DN) error
+type RenameSupport interface {
+	renameMember(tx *sqlx.Tx, oldDN, newDN *DN, callback func() error) error
 }
 
-type MemberSupport interface {
+type DeleteSupport interface {
+	deleteMember(tx *sqlx.Tx, dn *DN, callback func() error) error
+}
+
+type OneWaySupport interface {
+	RenameSupport
+	DeleteSupport
+}
+
+type TwoWaySupport interface {
+	RenameSupport
+	DeleteSupport
 	updateMember(tx *sqlx.Tx, oldEntry, newEntry *Entry) error
-	deleteMember(tx *sqlx.Tx, dn *DN) error
-	rename(tx *sqlx.Tx, oldDN, newDN *DN) error
+	updateMembership(tx *sqlx.Tx, oldEntry, newEntry *Entry) error
 }
 
-type Membership struct {
+type OneWay struct {
 }
 
-func (a *Membership) addMembership(tx *sqlx.Tx, entry *Entry, dn *DN) error {
+func (a *OneWay) renameMember(tx *sqlx.Tx, oldDN, newDN *DN, callback func() error) error {
+	rows, err := tx.NamedStmt(findByMemberWithLockStmt).Queryx(map[string]interface{}{
+		"dn": oldDN.DN,
+	})
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
 
+	entry := &Entry{}
+	if rows.Next() {
+		err := rows.StructScan(&entry)
+		if err != nil {
+			return err
+		}
+
+		err = entry.DeleteAttrs("member", []string{oldDN.DN})
+		if err != nil {
+			return err
+		}
+
+		err = entry.AddAttrs("member", []string{newDN.DN})
+		if err != nil {
+			return err
+		}
+
+		err = update(tx, entry)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = callback()
+	return err
+}
+
+func (a *OneWay) deleteMember(tx *sqlx.Tx, dn *DN, callback func() error) error {
+	rows, err := tx.NamedStmt(findByMemberWithLockStmt).Queryx(map[string]interface{}{
+		"dn": dn.DN,
+	})
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	entry := &Entry{}
+	if rows.Next() {
+		err := rows.StructScan(&entry)
+		if err != nil {
+			return err
+		}
+
+		err = entry.DeleteAttrs("member", []string{dn.DN})
+		if err != nil {
+			return err
+		}
+
+		err = update(tx, entry)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = callback()
+	return err
+}
+
+func (a *OneWay) updateMember(tx *sqlx.Tx, oldEntry, newEntry *Entry) error {
+	// Do nothing
 	return nil
 }
 
-func (a *Membership) deleteMembership(tx *sqlx.Tx, dn *DN) error {
-
+func (a *OneWay) updateMembership(tx *sqlx.Tx, oldEntry, newEntry *Entry) error {
+	// Do nothing
 	return nil
 }
 
-func (a *Membership) rename(tx *sqlx.Tx, oldDN *DN, newDN *DN) error {
+type TwoWay struct {
+	OneWay
+}
 
+func (a *TwoWay) renameMember(tx *sqlx.Tx, oldDN, newDN *DN, callback func() error) error {
+	rows, err := tx.NamedStmt(findByMemberWithLockStmt).Queryx(map[string]interface{}{
+		"dn": oldDN.DN,
+	})
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	entry := &Entry{}
+	if rows.Next() {
+		err := rows.StructScan(&entry)
+		if err != nil {
+			return err
+		}
+
+		err = entry.DeleteAttrs("member", []string{oldDN.DN})
+		if err != nil {
+			return err
+		}
+
+		err = entry.AddAttrs("member", []string{newDN.DN})
+		if err != nil {
+			return err
+		}
+
+		err = update(tx, entry)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = callback()
+	if err != nil {
+		return err
+	}
+
+	rows, err = tx.NamedStmt(findByMemberOfWithLockStmt).Queryx(map[string]interface{}{
+		"dn": oldDN.DN,
+	})
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	entry = &Entry{}
+	if rows.Next() {
+		err := rows.StructScan(&entry)
+		if err != nil {
+			return err
+		}
+
+		err = entry.DeleteAttrs("memberOf", []string{oldDN.DN})
+		if err != nil {
+			return err
+		}
+
+		err = entry.AddAttrs("memberOf", []string{newDN.DN})
+		if err != nil {
+			return err
+		}
+
+		err = update(tx, entry)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-type Member struct {
+func (a *TwoWay) deleteMember(tx *sqlx.Tx, dn *DN, callback func() error) error {
+	rows, err := tx.NamedStmt(findByMemberWithLockStmt).Queryx(map[string]interface{}{
+		"dn": dn.DN,
+	})
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	entry := &Entry{}
+	if rows.Next() {
+		err := rows.StructScan(&entry)
+		if err != nil {
+			return err
+		}
+
+		err = entry.DeleteAttrs("member", []string{dn.DN})
+		if err != nil {
+			return err
+		}
+
+		err = update(tx, entry)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = callback()
+	if err != nil {
+		return err
+	}
+
+	rows, err = tx.NamedStmt(findByMemberOfWithLockStmt).Queryx(map[string]interface{}{
+		"dn": dn.DN,
+	})
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	entry = &Entry{}
+	if rows.Next() {
+		err := rows.StructScan(&entry)
+		if err != nil {
+			return err
+		}
+
+		err = entry.DeleteAttrs("memberOf", []string{dn.DN})
+		if err != nil {
+			return err
+		}
+
+		err = update(tx, entry)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func (a *Member) updateMember(tx *sqlx.Tx, oldEntry, newEntry *Entry) error {
+func (a *TwoWay) updateMember(tx *sqlx.Tx, oldEntry, newEntry *Entry) error {
 	// 1. Add member in the object entry
 	// 2. Add memberOf in the subject entry
 
@@ -64,67 +265,58 @@ func (a *Member) updateMember(tx *sqlx.Tx, oldEntry, newEntry *Entry) error {
 	return nil
 }
 
-func (a *Member) deleteMember(tx *sqlx.Tx, dn *DN) error {
-	// 1. Delete member in the object entry
-	// 2. Delete memberOf in the subject entry
-
-	return nil
-}
-
-func (a *Member) rename(tx *sqlx.Tx, oldDN, newDN *DN) error {
-	// 1. Rename member in the parent entry
-	// 2. Rename memberOf in the child entry
-
+func (a *TwoWay) updateMembership(tx *sqlx.Tx, oldEntry, newEntry *Entry) error {
+	// TODO
 	return nil
 }
 
 // TODO configurable
-var handler interface{} = &Member{}
+var handler interface{} = &OneWay{}
 
-func addAssociation(tx *sqlx.Tx, newEntry *Entry) error {
+func isSupportedFetchMemberOf() bool {
+	_, ok := handler.(OneWaySupport)
+	return ok
+}
+
+func renameAssociation(tx *sqlx.Tx, oldEntry, newEntry *DN, callback func() error) error {
 	var err error
-	if t, ok := handler.(MembershipSupport); ok {
-		err = t.updateMembership(tx, nil, newEntry)
-	}
-
-	if t, ok := handler.(MemberSupport); ok {
-		err = t.updateMember(tx, nil, newEntry)
+	if t, ok := handler.(RenameSupport); ok {
+		err = t.renameMember(tx, oldEntry, newEntry, callback)
+		if err != nil {
+			return err
+		}
 	}
 	return err
+}
+
+func deleteAssociation(tx *sqlx.Tx, dn *DN, callback func() error) error {
+	var err error
+	if t, ok := handler.(DeleteSupport); ok {
+		err = t.deleteMember(tx, dn, callback)
+		if err != nil {
+			return err
+		}
+	}
+	return err
+}
+
+func addAssociation(tx *sqlx.Tx, newEntry *Entry) error {
+	return modifyAssociation(tx, nil, newEntry)
 }
 
 func modifyAssociation(tx *sqlx.Tx, oldEntry, newEntry *Entry) error {
 	var err error
-	if t, ok := handler.(MembershipSupport); ok {
-		err = t.updateMembership(tx, oldEntry, newEntry)
+	if t, ok := handler.(TwoWaySupport); ok {
+		if oldEntry.HasAttr("memberOf") || newEntry.HasAttr("memberOf") {
+			err = t.updateMembership(tx, oldEntry, newEntry)
+			if err != nil {
+				return err
+			}
+		}
+		if oldEntry.HasAttr("member") || newEntry.HasAttr("member") {
+			err = t.updateMember(tx, oldEntry, newEntry)
+		}
 	}
 
-	if t, ok := handler.(MemberSupport); ok {
-		err = t.updateMember(tx, oldEntry, newEntry)
-	}
-	return err
-}
-
-func deleteAssociation(tx *sqlx.Tx, dn *DN) error {
-	var err error
-	if t, ok := handler.(MembershipSupport); ok {
-		err = t.deleteMembership(tx, dn)
-	}
-
-	if t, ok := handler.(MemberSupport); ok {
-		err = t.deleteMember(tx, dn)
-	}
-	return err
-}
-
-func renameAssociation(tx *sqlx.Tx, oldDN *DN, newDN *DN) error {
-	var err error
-	if t, ok := handler.(MembershipSupport); ok {
-		err = t.rename(tx, oldDN, newDN)
-	}
-
-	if t, ok := handler.(MemberSupport); ok {
-		err = t.rename(tx, oldDN, newDN)
-	}
 	return err
 }

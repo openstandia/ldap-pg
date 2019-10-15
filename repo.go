@@ -128,90 +128,31 @@ func update(tx *sqlx.Tx, entry *Entry) error {
 }
 
 func updateDNWithAssociationWithLock(tx *sqlx.Tx, oldDN, newDN *DN) error {
-	rows, err := tx.NamedStmt(findByMemberWithLockStmt).Queryx(map[string]interface{}{
-		"dn": oldDN.DN,
+	return renameAssociation(tx, oldDN, newDN, func() error {
+		oldEntry, err := findByDNWithLock(tx, oldDN)
+		if err != nil {
+			return err
+		}
+
+		newEntry, err := oldEntry.ModifyDN(newDN)
+		if err != nil {
+			return err
+		}
+
+		_, err = tx.NamedStmt(updateDNByIdStmt).Exec(map[string]interface{}{
+			"id":      newEntry.Id,
+			"newdn":   newDN.DN,
+			"newpath": newDN.ReverseParentDN,
+			"attrs":   newEntry.GetRawAttrs(),
+		})
+
+		if err != nil {
+			log.Printf("error: Failed to update entry DN. entry: %#v newDN: %s err: %v", newEntry, newDN.DN, err)
+			return err
+		}
+
+		return nil
 	})
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	entry := &Entry{}
-	if rows.Next() {
-		err := rows.StructScan(&entry)
-		if err != nil {
-			return err
-		}
-
-		err = entry.DeleteAttrs("member", []string{oldDN.DN})
-		if err != nil {
-			return err
-		}
-
-		err = entry.AddAttrs("member", []string{newDN.DN})
-		if err != nil {
-			return err
-		}
-
-		err = update(tx, entry)
-		if err != nil {
-			return err
-		}
-	}
-
-	oldEntry, err := findByDNWithLock(tx, oldDN)
-	if err != nil {
-		return err
-	}
-
-	newEntry, err := oldEntry.ModifyDN(newDN)
-	if err != nil {
-		return err
-	}
-
-	_, err = tx.NamedStmt(updateDNByIdStmt).Exec(map[string]interface{}{
-		"id":      newEntry.Id,
-		"newdn":   newDN.DN,
-		"newpath": newDN.ReverseParentDN,
-		"attrs":   newEntry.GetRawAttrs(),
-	})
-
-	if err != nil {
-		log.Printf("error: Failed to update entry DN. entry: %#v newDN: %s err: %v", newEntry, newDN.DN, err)
-		return err
-	}
-
-	rows, err = tx.NamedStmt(findByMemberOfWithLockStmt).Queryx(map[string]interface{}{
-		"dn": oldDN.DN,
-	})
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	entry = &Entry{}
-	if rows.Next() {
-		err := rows.StructScan(&entry)
-		if err != nil {
-			return err
-		}
-
-		err = entry.DeleteAttrs("memberOf", []string{oldDN.DN})
-		if err != nil {
-			return err
-		}
-
-		err = entry.AddAttrs("memberOf", []string{newDN.DN})
-		if err != nil {
-			return err
-		}
-
-		err = update(tx, entry)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func findByDN(tx *sqlx.Tx, dn *DN) (*Entry, error) {
@@ -265,7 +206,12 @@ func findByFilter(pathQuery string, q *Query) (*sqlx.Rows, error) {
 		query = " AND " + q.Query
 	}
 
-	fetchQuery := fmt.Sprintf(`SELECT *, count(id) over() as count FROM ldap_entry WHERE %s %s LIMIT :pageSize OFFSET :offset`, pathQuery, query)
+	var fetchQuery string
+	if isSupportedFetchMemberOf() {
+		fetchQuery = fmt.Sprintf(`SELECT id, dn, created, updated, attrs, (select jsonb_agg(e2.dn) AS memberOf FROM ldap_entry e2 WHERE f_jsonb_array_lower(e2.attrs->'member') @> jsonb_build_array(LOWER(e1.dn))) AS memberOf, count(id) over() AS count FROM ldap_entry e1 WHERE %s %s LIMIT :pageSize OFFSET :offset`, pathQuery, query)
+	} else {
+		fetchQuery = fmt.Sprintf(`SELECT *, COUNT(id) OVER() AS count FROM ldap_entry WHERE %s %s LIMIT :pageSize OFFSET :offset`, pathQuery, query)
+	}
 
 	log.Printf("Fetch Query: %s Params: %v", fetchQuery, q.Params)
 
@@ -291,69 +237,19 @@ func findByFilter(pathQuery string, q *Query) (*sqlx.Rows, error) {
 }
 
 func deleteWithAssociationByDNWithLock(tx *sqlx.Tx, dn *DN) error {
-	rows, err := tx.NamedStmt(findByMemberWithLockStmt).Queryx(map[string]interface{}{
-		"dn": dn.DN,
+	return deleteAssociation(tx, dn, func() error {
+		var id int = 0
+		err := tx.NamedStmt(deleteByDNStmt).Get(&id, map[string]interface{}{
+			"dn": dn.DN,
+		})
+		if err != nil {
+			return err
+		}
+		if id == 0 {
+			return NewNoSuchObject()
+		}
+		return nil
 	})
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	entry := &Entry{}
-	if rows.Next() {
-		err := rows.StructScan(&entry)
-		if err != nil {
-			return err
-		}
-
-		err = entry.DeleteAttrs("member", []string{dn.DN})
-		if err != nil {
-			return err
-		}
-
-		err = update(tx, entry)
-		if err != nil {
-			return err
-		}
-	}
-
-	var id int = 0
-	err = tx.NamedStmt(deleteByDNStmt).Get(&id, map[string]interface{}{
-		"dn": dn.DN,
-	})
-	if err != nil {
-		return err
-	}
-	if id == 0 {
-		return NewNoSuchObject()
-	}
-
-	rows, err = tx.NamedStmt(findByMemberOfWithLockStmt).Queryx(map[string]interface{}{
-		"dn": dn.DN,
-	})
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	entry = &Entry{}
-	if rows.Next() {
-		err := rows.StructScan(&entry)
-		if err != nil {
-			return err
-		}
-
-		err = entry.DeleteAttrs("memberOf", []string{dn.DN})
-		if err != nil {
-			return err
-		}
-
-		err = update(tx, entry)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func addMemberOf(tx *sqlx.Tx, dn, memberOfDN string) error {

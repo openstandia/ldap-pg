@@ -19,6 +19,7 @@ type Entry struct {
 	Updated   time.Time      `db:"updated"`
 	RawAttrs  types.JSONText `db:"attrs"`
 	Count     int32          `db:"count"`
+	MemberOf  types.JSONText `db:"memberof"`
 	jsonAttrs JSONAttrs
 }
 
@@ -120,6 +121,15 @@ func (e *Entry) Clear() {
 	e.RawAttrs = types.JSONText{}
 	e.Count = 0
 	e.jsonAttrs = JSONAttrs{}
+}
+
+func (e *Entry) GetMemberOf() []string {
+	if len(e.MemberOf) == 0 {
+		return nil
+	}
+	var jsonArray []string
+	e.MemberOf.Unmarshal(&jsonArray)
+	return jsonArray
 }
 
 func (e *Entry) GetAttrs() JSONAttrs {
