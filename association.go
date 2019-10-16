@@ -30,70 +30,38 @@ type OneWay struct {
 }
 
 func (a *OneWay) renameMember(tx *sqlx.Tx, oldDN, newDN *DN, callback func() error) error {
-	rows, err := tx.NamedStmt(findByMemberWithLockStmt).Queryx(map[string]interface{}{
-		"dn": oldDN.DN,
+	_, err := tx.NamedStmt(replaceMemberByMemberStmt).Queryx(map[string]interface{}{
+		"oldMemberDN": oldDN.DN,
+		"newMemberDN": newDN.DN,
+		"dn":          oldDN.DN,
 	})
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-
-	entry := &Entry{}
-	if rows.Next() {
-		err := rows.StructScan(&entry)
-		if err != nil {
-			return err
-		}
-
-		err = entry.DeleteAttrs("member", []string{oldDN.DN})
-		if err != nil {
-			return err
-		}
-
-		err = entry.AddAttrs("member", []string{newDN.DN})
-		if err != nil {
-			return err
-		}
-
-		err = update(tx, entry)
-		if err != nil {
-			return err
-		}
-	}
 
 	err = callback()
-	return err
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (a *OneWay) deleteMember(tx *sqlx.Tx, dn *DN, callback func() error) error {
-	rows, err := tx.NamedStmt(findByMemberWithLockStmt).Queryx(map[string]interface{}{
-		"dn": dn.DN,
+	_, err := tx.NamedStmt(removeMemberByMemberStmt).Exec(map[string]interface{}{
+		"memberDN": dn.DN,
+		"dn":       dn.DN,
 	})
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-
-	entry := &Entry{}
-	if rows.Next() {
-		err := rows.StructScan(&entry)
-		if err != nil {
-			return err
-		}
-
-		err = entry.DeleteAttrs("member", []string{dn.DN})
-		if err != nil {
-			return err
-		}
-
-		err = update(tx, entry)
-		if err != nil {
-			return err
-		}
-	}
 
 	err = callback()
-	return err
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (a *OneWay) updateMember(tx *sqlx.Tx, oldEntry, newEntry *Entry) error {
@@ -111,35 +79,13 @@ type TwoWay struct {
 }
 
 func (a *TwoWay) renameMember(tx *sqlx.Tx, oldDN, newDN *DN, callback func() error) error {
-	rows, err := tx.NamedStmt(findByMemberWithLockStmt).Queryx(map[string]interface{}{
-		"dn": oldDN.DN,
+	_, err := tx.NamedStmt(replaceMemberByMemberStmt).Queryx(map[string]interface{}{
+		"oldMemberDN": oldDN.DN,
+		"newMemberDN": newDN.DN,
+		"dn":          oldDN.DN,
 	})
 	if err != nil {
 		return err
-	}
-	defer rows.Close()
-
-	entry := &Entry{}
-	if rows.Next() {
-		err := rows.StructScan(&entry)
-		if err != nil {
-			return err
-		}
-
-		err = entry.DeleteAttrs("member", []string{oldDN.DN})
-		if err != nil {
-			return err
-		}
-
-		err = entry.AddAttrs("member", []string{newDN.DN})
-		if err != nil {
-			return err
-		}
-
-		err = update(tx, entry)
-		if err != nil {
-			return err
-		}
 	}
 
 	err = callback()
@@ -147,64 +93,24 @@ func (a *TwoWay) renameMember(tx *sqlx.Tx, oldDN, newDN *DN, callback func() err
 		return err
 	}
 
-	rows, err = tx.NamedStmt(findByMemberOfWithLockStmt).Queryx(map[string]interface{}{
-		"dn": oldDN.DN,
+	_, err = tx.NamedStmt(replaceMemberOfByMemberOfStmt).Queryx(map[string]interface{}{
+		"oldMemberOfDN": oldDN.DN,
+		"newMemberOfDN": newDN.DN,
+		"dn":            oldDN.DN,
 	})
 	if err != nil {
 		return err
-	}
-	defer rows.Close()
-
-	entry = &Entry{}
-	if rows.Next() {
-		err := rows.StructScan(&entry)
-		if err != nil {
-			return err
-		}
-
-		err = entry.DeleteAttrs("memberOf", []string{oldDN.DN})
-		if err != nil {
-			return err
-		}
-
-		err = entry.AddAttrs("memberOf", []string{newDN.DN})
-		if err != nil {
-			return err
-		}
-
-		err = update(tx, entry)
-		if err != nil {
-			return err
-		}
 	}
 	return nil
 }
 
 func (a *TwoWay) deleteMember(tx *sqlx.Tx, dn *DN, callback func() error) error {
-	rows, err := tx.NamedStmt(findByMemberWithLockStmt).Queryx(map[string]interface{}{
-		"dn": dn.DN,
+	_, err := tx.NamedStmt(removeMemberByMemberStmt).Exec(map[string]interface{}{
+		"memberDN": dn.DN,
+		"dn":       dn.DN,
 	})
 	if err != nil {
 		return err
-	}
-	defer rows.Close()
-
-	entry := &Entry{}
-	if rows.Next() {
-		err := rows.StructScan(&entry)
-		if err != nil {
-			return err
-		}
-
-		err = entry.DeleteAttrs("member", []string{dn.DN})
-		if err != nil {
-			return err
-		}
-
-		err = update(tx, entry)
-		if err != nil {
-			return err
-		}
 	}
 
 	err = callback()
@@ -212,30 +118,12 @@ func (a *TwoWay) deleteMember(tx *sqlx.Tx, dn *DN, callback func() error) error 
 		return err
 	}
 
-	rows, err = tx.NamedStmt(findByMemberOfWithLockStmt).Queryx(map[string]interface{}{
-		"dn": dn.DN,
+	_, err = tx.NamedStmt(removeMemberOfByMemberOfStmt).Exec(map[string]interface{}{
+		"memberOfDN": dn.DN,
+		"dn":         dn.DN,
 	})
 	if err != nil {
 		return err
-	}
-	defer rows.Close()
-
-	entry = &Entry{}
-	if rows.Next() {
-		err := rows.StructScan(&entry)
-		if err != nil {
-			return err
-		}
-
-		err = entry.DeleteAttrs("memberOf", []string{dn.DN})
-		if err != nil {
-			return err
-		}
-
-		err = update(tx, entry)
-		if err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -296,6 +184,8 @@ func deleteAssociation(tx *sqlx.Tx, dn *DN, callback func() error) error {
 		if err != nil {
 			return err
 		}
+	} else {
+		log.Printf("warn: Not supported DeleteSupport")
 	}
 	return err
 }

@@ -192,6 +192,9 @@ func getColumnValue(entry *Entry, s string) string {
 }
 
 func (e *Entry) HasAttr(attrName string) bool {
+	if e == nil {
+		return false
+	}
 	s, ok := schemaMap.Get(attrName)
 	if !ok {
 		return false

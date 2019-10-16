@@ -188,7 +188,10 @@ func main() {
 	// db.SetConnMaxLifetime(time.Hour)
 
 	// Init prepared statement
-	initStmt(db)
+	err = initStmt(db)
+	if err != nil {
+		log.Fatalf("fatal: Prepare statement error. host=%s, port=%d, user=%s, dbname=%s, error=%s", *dbHostName, *dbPort, *dbUser, *dbName, err)
+	}
 
 	// Init schema map
 	schemaMap = InitSchemaMap()

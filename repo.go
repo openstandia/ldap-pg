@@ -9,15 +9,20 @@ import (
 )
 
 var (
-	findByDNStmt               *sqlx.NamedStmt
-	findByDNWithLockStmt       *sqlx.NamedStmt
-	findCredByDNStmt           *sqlx.NamedStmt
-	baseSearchStmt             *sqlx.NamedStmt
-	findByMemberOfWithLockStmt *sqlx.NamedStmt
-	findByMemberWithLockStmt   *sqlx.NamedStmt
-	updateAttrsByIdStmt        *sqlx.NamedStmt
-	updateDNByIdStmt           *sqlx.NamedStmt
-	deleteByDNStmt             *sqlx.NamedStmt
+	findByDNStmt                  *sqlx.NamedStmt
+	findByDNWithLockStmt          *sqlx.NamedStmt
+	findCredByDNStmt              *sqlx.NamedStmt
+	baseSearchStmt                *sqlx.NamedStmt
+	findByMemberOfWithLockStmt    *sqlx.NamedStmt
+	findByMemberWithLockStmt      *sqlx.NamedStmt
+	appendMemberByDNStmt          *sqlx.NamedStmt
+	removeMemberByMemberStmt      *sqlx.NamedStmt
+	removeMemberOfByMemberOfStmt  *sqlx.NamedStmt
+	replaceMemberByMemberStmt     *sqlx.NamedStmt
+	replaceMemberOfByMemberOfStmt *sqlx.NamedStmt
+	updateAttrsByIdStmt           *sqlx.NamedStmt
+	updateDNByIdStmt              *sqlx.NamedStmt
+	deleteByDNStmt                *sqlx.NamedStmt
 )
 
 // For generic filter
@@ -62,12 +67,37 @@ func initStmt(db *sqlx.DB) error {
 		return err
 	}
 
-	findByMemberOfWithLockStmt, err = db.PrepareNamed(`SELECT id, attrs FROM ldap_entry WHERE f_jsonb_array_lower(attrs->'memberOf') @> f_jsonb_array_lower('[":dn"]') FOR UPDATE`)
+	findByMemberOfWithLockStmt, err = db.PrepareNamed(`SELECT id, attrs FROM ldap_entry WHERE f_jsonb_array_lower(attrs->'memberOf') @> jsonb_build_array(LOWER(:dn)) FOR UPDATE`)
 	if err != nil {
 		return err
 	}
 
-	findByMemberWithLockStmt, err = db.PrepareNamed(`SELECT id, attrs FROM ldap_entry WHERE f_jsonb_array_lower(attrs->'member') @> f_jsonb_array_lower('[":dn"]') FOR UPDATE`)
+	findByMemberWithLockStmt, err = db.PrepareNamed(`SELECT id, attrs FROM ldap_entry WHERE f_jsonb_array_lower(attrs->'member') @> jsonb_build_array(LOWER(:dn)) FOR UPDATE`)
+	if err != nil {
+		return err
+	}
+
+	appendMemberByDNStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET attrs = jsonb_set(attrs, array['member'], CAST(attrs->'member' AS jsonb) || jsonb_build_array(CAST(:memberDN AS text)) ) WHERE LOWER(dn) = LOWER(:dn)`)
+	if err != nil {
+		return err
+	}
+
+	removeMemberByMemberStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET attrs = jsonb_set(attrs, array['member'], CAST(attrs->'member' AS jsonb) - :memberDN ) WHERE f_jsonb_array_lower(attrs->'member') @> jsonb_build_array(LOWER(:dn))`)
+	if err != nil {
+		return err
+	}
+
+	removeMemberOfByMemberOfStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET attrs = jsonb_set(attrs, array['memberOf'], CAST(attrs->'memberOf' AS jsonb) - :memberOfDN ) WHERE f_jsonb_array_lower(attrs->'memberOf') @> jsonb_build_array(LOWER(:dn))`)
+	if err != nil {
+		return err
+	}
+
+	replaceMemberByMemberStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET attrs = jsonb_set(attrs, array['member'], CAST(attrs->'member' AS jsonb) - :oldMemberDN || jsonb_build_array(CAST(:newMemberDN AS text)) ) WHERE f_jsonb_array_lower(attrs->'member') @> jsonb_build_array(LOWER(:dn))`)
+	if err != nil {
+		return err
+	}
+
+	replaceMemberOfByMemberOfStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET attrs = jsonb_set(attrs, array['memberOf'], CAST(attrs->'memberOf' AS jsonb) - :oldMemberOfDN || jsonb_build_array(CAST(:newMemberOfDN AS text)) ) WHERE f_jsonb_array_lower(attrs->'memberOf') @> jsonb_build_array(LOWER(:dn))`)
 	if err != nil {
 		return err
 	}
@@ -115,6 +145,7 @@ func insert(tx *sqlx.Tx, entry *Entry) (int64, error) {
 }
 
 func update(tx *sqlx.Tx, entry *Entry) error {
+	log.Printf("stmt: %#v", updateAttrsByIdStmt)
 	_, err := tx.NamedStmt(updateAttrsByIdStmt).Exec(map[string]interface{}{
 		"id":    entry.Id,
 		"attrs": entry.GetRawAttrs(),
@@ -231,6 +262,7 @@ func deleteWithAssociationByDNWithLock(tx *sqlx.Tx, dn *DN) error {
 			"dn": dn.DN,
 		})
 		if err != nil {
+			log.Printf("error: Failed to delete entry")
 			return err
 		}
 		if id == 0 {
