@@ -227,7 +227,7 @@ func findByFilter(pathQuery string, q *Query) (*sqlx.Rows, error) {
 
 	var fetchQuery string
 	if isSupportedFetchMemberOf() {
-		fetchQuery = fmt.Sprintf(`SELECT id, dn, created, updated, attrs, (select jsonb_agg(e2.dn) AS memberOf FROM ldap_entry e2 WHERE f_jsonb_array_lower(e2.attrs->'member') @> jsonb_build_array(LOWER(e1.dn))) AS memberOf, count(id) over() AS count FROM ldap_entry e1 WHERE %s %s LIMIT :pageSize OFFSET :offset`, pathQuery, query)
+		fetchQuery = fmt.Sprintf(`SELECT id, dn, uuid, created, updated, attrs, (select jsonb_agg(e2.dn) AS memberOf FROM ldap_entry e2 WHERE f_jsonb_array_lower(e2.attrs->'member') @> jsonb_build_array(LOWER(e1.dn))) AS memberOf, count(id) over() AS count FROM ldap_entry e1 WHERE %s %s LIMIT :pageSize OFFSET :offset`, pathQuery, query)
 	} else {
 		fetchQuery = fmt.Sprintf(`SELECT *, COUNT(id) OVER() AS count FROM ldap_entry WHERE %s %s LIMIT :pageSize OFFSET :offset`, pathQuery, query)
 	}
