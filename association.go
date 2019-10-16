@@ -30,7 +30,7 @@ type OneWay struct {
 }
 
 func (a *OneWay) renameMember(tx *sqlx.Tx, oldDN, newDN *DN, callback func() error) error {
-	_, err := tx.NamedStmt(replaceMemberByMemberStmt).Queryx(map[string]interface{}{
+	_, err := tx.NamedStmt(replaceMemberByMemberStmt).Exec(map[string]interface{}{
 		"oldMemberDN": oldDN.DN,
 		"newMemberDN": newDN.DN,
 		"dn":          oldDN.DN,
@@ -79,7 +79,7 @@ type TwoWay struct {
 }
 
 func (a *TwoWay) renameMember(tx *sqlx.Tx, oldDN, newDN *DN, callback func() error) error {
-	_, err := tx.NamedStmt(replaceMemberByMemberStmt).Queryx(map[string]interface{}{
+	_, err := tx.NamedStmt(replaceMemberByMemberStmt).Exec(map[string]interface{}{
 		"oldMemberDN": oldDN.DN,
 		"newMemberDN": newDN.DN,
 		"dn":          oldDN.DN,
@@ -93,7 +93,7 @@ func (a *TwoWay) renameMember(tx *sqlx.Tx, oldDN, newDN *DN, callback func() err
 		return err
 	}
 
-	_, err = tx.NamedStmt(replaceMemberOfByMemberOfStmt).Queryx(map[string]interface{}{
+	_, err = tx.NamedStmt(replaceMemberOfByMemberOfStmt).Exec(map[string]interface{}{
 		"oldMemberOfDN": oldDN.DN,
 		"newMemberOfDN": newDN.DN,
 		"dn":            oldDN.DN,
