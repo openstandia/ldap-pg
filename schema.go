@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"log"
+	"reflect"
 	"regexp"
 	"strings"
 )
@@ -17,6 +19,45 @@ func (s SchemaMap) Put(k string, schema *Schema) {
 	s[strings.ToLower(k)] = schema
 }
 
+func (s SchemaMap) Resolve() error {
+	for _, v := range s {
+		log.Printf("Schema resolve %s", v.Name)
+		vv := reflect.ValueOf(v)
+
+		for _, f := range []string{"Equality", "Ordering", "Substr"} {
+			log.Printf("Checking %s", f)
+			field := vv.Elem().FieldByName(f)
+			val := field.Interface().(string)
+
+			if val == "" {
+				cur := v
+				var parent *Schema
+				for {
+					if cur.Sup == "" {
+						break
+					}
+					var ok bool
+					parent, ok = s.Get(cur.Sup)
+					if !ok {
+						return fmt.Errorf("Not found '%s' in schema.", cur.Sup)
+					}
+					log.Printf("Finding parent: %s", cur.Sup)
+
+					pval := reflect.ValueOf(parent).Elem().FieldByName(f).Interface().(string)
+					if pval != "" {
+						log.Printf("Found %s: %s", f, pval)
+						field.SetString(pval)
+						break
+					}
+					// find next parent
+					cur = parent
+				}
+			}
+		}
+	}
+	return nil
+}
+
 type Schema struct {
 	Name        string
 	AName       string
@@ -30,7 +71,7 @@ type Schema struct {
 	SingleValue bool
 }
 
-func InitSchemaMap() map[string]*Schema {
+func InitSchemaMap() SchemaMap {
 	m := SchemaMap{}
 
 	namePattern := regexp.MustCompile("attributeTypes: \\( (.*?) NAME '(.*?)' ")
@@ -97,6 +138,11 @@ func InitSchemaMap() map[string]*Schema {
 		}
 	}
 
+	err := m.Resolve()
+	if err != nil {
+		log.Printf("error: Resolving schema error. %v", err)
+	}
+
 	return m
 }
 
@@ -131,46 +177,77 @@ func (m SchemaValueMap) Has(val string) bool {
 	}
 }
 
-func (s *Schema) IsCaseIgnore() bool {
-	equality := s.Equality
+type SchemaValue struct {
+	schema     *Schema
+	value      []string
+	cachedNorm []string
+}
 
-	if equality == "" && s.Sup != "" {
-		// TODO look more parent
-		parent, ok := schemaMap.Get(s.Sup)
-		if !ok {
-			log.Printf("error: WIP need to support schema: %#v", s)
-			return true
-		}
-		equality = parent.Equality
+func NewSchemaValue(attrType string, attrValue []string) (*SchemaValue, error) {
+	s, ok := schemaMap.Get(attrType)
+	if !ok {
+		return nil, fmt.Errorf("Not found attr in schema. attrName: %s", attrType)
+	}
+	return &SchemaValue{
+		schema: s,
+		value:  attrValue,
+	}, nil
+}
+
+func (s *SchemaValue) IsSingle() bool {
+	return s.schema.SingleValue
+}
+
+func (s *SchemaValue) Set(v []string) {
+	s.value = v
+	s.cachedNorm = nil
+}
+
+func (s *SchemaValue) Get() []string {
+	return s.value
+}
+
+func (s *SchemaValue) GetForJSON() interface{} {
+	s.Normalize()
+	if s.schema.SingleValue {
+		return s.cachedNorm[0]
+	}
+	return s.cachedNorm
+}
+
+// Normalize the value using schema definition.
+// The value is expected as a valid value. It means you need to validte the value in advance.
+func (s *SchemaValue) Normalize() ([]string, error) {
+	if len(s.cachedNorm) == 0 {
+		return s.cachedNorm, nil
 	}
 
-	if strings.HasPrefix(equality, "caseIgnore") ||
-		equality == "objectIdentifierMatch" {
+	rtn := make([]string, len(s.value))
+	for i, v := range s.value {
+		var err error
+		rtn[i], err = normalize(s.schema, v)
+		if err != nil {
+			return nil, err
+		}
+	}
+	s.cachedNorm = rtn
+
+	return rtn, nil
+}
+
+func (s *Schema) IsCaseIgnore() bool {
+	if strings.HasPrefix(s.Equality, "caseIgnore") ||
+		s.Equality == "objectIdentifierMatch" {
 		return true
 	}
-	log.Printf("schema: %#v", s)
-
 	return false
 }
 
 func (s *Schema) IsCaseIgnoreSubstr() bool {
-	var substr string
-
-	if s.Substr == "" && s.Sup != "" {
-		// TODO look more parent
-		parent, ok := schemaMap.Get(s.Sup)
-		if !ok {
-			log.Printf("error: WIP need to support schema: %#v", s)
-			return true
-		}
-		substr = parent.Substr
-	}
-
-	if strings.HasPrefix(substr, "caseIgnore") ||
-		substr == "numericStringSubstringsMatch" {
+	if strings.HasPrefix(s.Substr, "caseIgnore") ||
+		s.Substr == "numericStringSubstringsMatch" {
 		return true
 	}
-
 	return false
 }
 

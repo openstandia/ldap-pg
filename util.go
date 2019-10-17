@@ -3,8 +3,10 @@ package main
 import (
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/openstandia/goldap/message"
 	ldap "github.com/openstandia/ldapserver"
 	goldap "gopkg.in/ldap.v3"
@@ -77,23 +79,15 @@ func (d *DN) ToPath() string {
 }
 
 func normalizeDN(dn string) (*DN, error) {
-	d, err := goldap.ParseDN(dn)
+	d, err := parseDN(dn)
 	if err != nil {
 		return nil, err
 	}
-	var n []string
-	for _, v := range d.RDNs {
-		for _, a := range v.Attributes {
-			n = append(n, fmt.Sprintf("%s=%s", a.Type, a.Value))
-			// TODO multiple RDN using +
-		}
-	}
 
-	ndn := strings.Join(n, ",")
-	reverse := toReverseDN(n)
+	reverse := toReverseDN(d)
 
 	return &DN{
-		DN:              ndn,
+		DN:              strings.Join(d, ","),
 		ReverseParentDN: reverse,
 	}, nil
 }
@@ -214,4 +208,101 @@ func arrayDiff(a, b []string) []string {
 		}
 	}
 	return diff
+}
+
+func normalize(s *Schema, value string) (string, error) {
+	switch s.Equality {
+	case "caseExactMatch":
+		return normalizeSpace(value), nil
+	case "caseIgnoreMatch":
+		return strings.ToLower(normalizeSpace(value)), nil
+	case "distinguishedNameMatch":
+		return normalizeDistinguishedName(value)
+	case "caseExactIA5Match":
+		return normalizeSpace(value), nil
+	case "caseIgnoreIA5Match":
+		return strings.ToLower(normalizeSpace(value)), nil
+	case "generalizedTimeMatch":
+		return value, nil
+	case "objectIdentifierMatch":
+		return strings.ToLower(value), nil
+	case "numericStringMatch":
+		return removeAllSpace(value), nil
+	case "integerMatch":
+		return value, nil
+	case "UUIDMatch":
+		return normalizeUUID(value)
+	}
+
+	switch s.Substr {
+	case "caseExactSubstringsMatch":
+		return normalizeSpace(value), nil
+	case "caseIgnoreSubstringsMatch":
+		return strings.ToLower(normalizeSpace(value)), nil
+	case "caseExactIA5SubstringsMatch":
+		return normalizeSpace(value), nil
+	case "caseIgnoreIA5SubstringsMatch":
+		return strings.ToLower(normalizeSpace(value)), nil
+	}
+
+	return value, nil
+}
+
+var SPACE_PATTERN = regexp.MustCompile(`\s+`)
+
+func normalizeSpace(value string) string {
+	str := SPACE_PATTERN.ReplaceAllString(value, " ")
+	str = strings.Trim(str, " ")
+	return str
+}
+
+func removeAllSpace(value string) string {
+	str := SPACE_PATTERN.ReplaceAllString(value, "")
+	return str
+}
+
+func parseDN(value string) ([]string, error) {
+	d, err := goldap.ParseDN(value)
+	if err != nil {
+		log.Printf("warn: Invalid DN syntax. dn: %s", value)
+		return nil, NewInvalidDNSyntax()
+	}
+
+	n := make([]string, len(d.RDNs))
+	for i, v := range d.RDNs {
+		nn := make([]string, len(v.Attributes))
+		for j, a := range v.Attributes {
+			sv, err := NewSchemaValue(a.Type, []string{value})
+			if err != nil {
+				return nil, NewInvalidDNSyntax()
+			}
+
+			vv, err := sv.Normalize()
+			if err != nil {
+				log.Printf("warn: Invalid RDN of DN syntax. dn: %s", value)
+				return nil, NewInvalidDNSyntax()
+			}
+
+			nn[j] = fmt.Sprintf("%s=%s", strings.ToLower(a.Type), vv[0])
+		}
+		n[i] = strings.Join(nn, ",")
+	}
+	return n, nil
+}
+
+func normalizeDistinguishedName(value string) (string, error) {
+	d, err := parseDN(value)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.Join(d, ","), nil
+}
+
+func normalizeUUID(value string) (string, error) {
+	u, err := uuid.Parse(value)
+	if err != nil {
+		return "", err
+	}
+	return u.String(), nil
 }
