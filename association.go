@@ -22,8 +22,8 @@ type OneWaySupport interface {
 type TwoWaySupport interface {
 	RenameSupport
 	DeleteSupport
-	updateMember(tx *sqlx.Tx, oldEntry, newEntry *Entry) error
-	updateMembership(tx *sqlx.Tx, oldEntry, newEntry *Entry) error
+	updateMember(tx *sqlx.Tx, oldEntry, newEntry *ModifyEntry) error
+	updateMembership(tx *sqlx.Tx, oldEntry, newEntry *ModifyEntry) error
 }
 
 type OneWay struct {
@@ -31,9 +31,9 @@ type OneWay struct {
 
 func (a *OneWay) renameMember(tx *sqlx.Tx, oldDN, newDN *DN, callback func() error) error {
 	_, err := tx.NamedStmt(replaceMemberByMemberStmt).Exec(map[string]interface{}{
-		"oldMemberDN": oldDN.DN,
-		"newMemberDN": newDN.DN,
-		"dn":          oldDN.DN,
+		"oldMemberDNNorm": oldDN.DNNorm,
+		"newMemberDNNorm": newDN.DNNorm,
+		"dnNorm":          oldDN.DNNorm,
 	})
 	if err != nil {
 		return err
@@ -49,8 +49,8 @@ func (a *OneWay) renameMember(tx *sqlx.Tx, oldDN, newDN *DN, callback func() err
 
 func (a *OneWay) deleteMember(tx *sqlx.Tx, dn *DN, callback func() error) error {
 	_, err := tx.NamedStmt(removeMemberByMemberStmt).Exec(map[string]interface{}{
-		"memberDN": dn.DN,
-		"dn":       dn.DN,
+		"memberDNNorm": dn.DNNorm,
+		"dnNorm":       dn.DNNorm,
 	})
 	if err != nil {
 		return err
@@ -64,25 +64,15 @@ func (a *OneWay) deleteMember(tx *sqlx.Tx, dn *DN, callback func() error) error 
 	return nil
 }
 
-func (a *OneWay) updateMember(tx *sqlx.Tx, oldEntry, newEntry *Entry) error {
-	// Do nothing
-	return nil
-}
-
-func (a *OneWay) updateMembership(tx *sqlx.Tx, oldEntry, newEntry *Entry) error {
-	// Do nothing
-	return nil
-}
-
 type TwoWay struct {
 	OneWay
 }
 
 func (a *TwoWay) renameMember(tx *sqlx.Tx, oldDN, newDN *DN, callback func() error) error {
 	_, err := tx.NamedStmt(replaceMemberByMemberStmt).Exec(map[string]interface{}{
-		"oldMemberDN": oldDN.DN,
-		"newMemberDN": newDN.DN,
-		"dn":          oldDN.DN,
+		"oldMemberDNNorm": oldDN.DNNorm,
+		"newMemberDN":     newDN.DNNorm,
+		"dnNorm":          oldDN.DNNorm,
 	})
 	if err != nil {
 		return err
@@ -94,9 +84,9 @@ func (a *TwoWay) renameMember(tx *sqlx.Tx, oldDN, newDN *DN, callback func() err
 	}
 
 	_, err = tx.NamedStmt(replaceMemberOfByMemberOfStmt).Exec(map[string]interface{}{
-		"oldMemberOfDN": oldDN.DN,
-		"newMemberOfDN": newDN.DN,
-		"dn":            oldDN.DN,
+		"oldMemberOfDNNorm": oldDN.DNNorm,
+		"newMemberOfDNNorm": newDN.DNNorm,
+		"dnNorm":            oldDN.DNNorm,
 	})
 	if err != nil {
 		return err
@@ -106,8 +96,8 @@ func (a *TwoWay) renameMember(tx *sqlx.Tx, oldDN, newDN *DN, callback func() err
 
 func (a *TwoWay) deleteMember(tx *sqlx.Tx, dn *DN, callback func() error) error {
 	_, err := tx.NamedStmt(removeMemberByMemberStmt).Exec(map[string]interface{}{
-		"memberDN": dn.DN,
-		"dn":       dn.DN,
+		"memberDNNorm": dn.DNNorm,
+		"dnNorm":       dn.DNNorm,
 	})
 	if err != nil {
 		return err
@@ -119,8 +109,8 @@ func (a *TwoWay) deleteMember(tx *sqlx.Tx, dn *DN, callback func() error) error 
 	}
 
 	_, err = tx.NamedStmt(removeMemberOfByMemberOfStmt).Exec(map[string]interface{}{
-		"memberOfDN": dn.DN,
-		"dn":         dn.DN,
+		"memberOfDNNorm": dn.DNNorm,
+		"dnNorm":         dn.DNNorm,
 	})
 	if err != nil {
 		return err
@@ -128,7 +118,7 @@ func (a *TwoWay) deleteMember(tx *sqlx.Tx, dn *DN, callback func() error) error 
 	return nil
 }
 
-func (a *TwoWay) updateMember(tx *sqlx.Tx, oldEntry, newEntry *Entry) error {
+func (a *TwoWay) updateMember(tx *sqlx.Tx, oldEntry, newEntry *ModifyEntry) error {
 	// 1. Add member in the object entry
 	// 2. Add memberOf in the subject entry
 
@@ -138,13 +128,13 @@ func (a *TwoWay) updateMember(tx *sqlx.Tx, oldEntry, newEntry *Entry) error {
 	log.Printf("oldEntry: %#v", oldEntry)
 
 	for _, memberDN := range diff.add {
-		err := addMemberOf(tx, memberDN, oldEntry.Dn)
+		err := addMemberOf(tx, memberDN, oldEntry.GetDN().DNNorm)
 		if err != nil {
 			return err
 		}
 	}
 	for _, memberDN := range diff.del {
-		err := deleteMemberOf(tx, memberDN, oldEntry.Dn)
+		err := deleteMemberOf(tx, memberDN, oldEntry.GetDN().DNNorm)
 		if err != nil {
 			return err
 		}
@@ -153,7 +143,7 @@ func (a *TwoWay) updateMember(tx *sqlx.Tx, oldEntry, newEntry *Entry) error {
 	return nil
 }
 
-func (a *TwoWay) updateMembership(tx *sqlx.Tx, oldEntry, newEntry *Entry) error {
+func (a *TwoWay) updateMembership(tx *sqlx.Tx, oldEntry, newEntry *ModifyEntry) error {
 	// TODO
 	return nil
 }
@@ -187,26 +177,5 @@ func deleteAssociation(tx *sqlx.Tx, dn *DN, callback func() error) error {
 	} else {
 		log.Printf("warn: Not supported DeleteSupport")
 	}
-	return err
-}
-
-func addAssociation(tx *sqlx.Tx, newEntry *Entry) error {
-	return modifyAssociation(tx, nil, newEntry)
-}
-
-func modifyAssociation(tx *sqlx.Tx, oldEntry, newEntry *Entry) error {
-	var err error
-	if t, ok := handler.(TwoWaySupport); ok {
-		if oldEntry.HasAttr("memberOf") || newEntry.HasAttr("memberOf") {
-			err = t.updateMembership(tx, oldEntry, newEntry)
-			if err != nil {
-				return err
-			}
-		}
-		if oldEntry.HasAttr("member") || newEntry.HasAttr("member") {
-			err = t.updateMember(tx, oldEntry, newEntry)
-		}
-	}
-
 	return err
 }

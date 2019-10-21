@@ -4,7 +4,6 @@ import (
 	"log"
 
 	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
 	"github.com/openstandia/goldap/message"
 	ldap "github.com/openstandia/ldapserver"
 )
@@ -74,17 +73,17 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 	var pathQuery string
 	path := baseDN.ToPath()
 	if scope == 0 {
-		pathQuery = "(LOWER(dn) = LOWER(:baseDN))"
-		q.Params["baseDN"] = baseDN.DN
+		pathQuery = "dn_norm = :baseDNNorm"
+		q.Params["baseDNNorm"] = baseDN.DNNorm
 
 	} else if scope == 1 {
-		pathQuery = "(LOWER(dn) = LOWER(:baseDN) OR path = :path)"
-		q.Params["baseDN"] = baseDN.DN
+		pathQuery = "(dn_norm = :baseDNNorm OR path = :path)"
+		q.Params["baseDNNorm"] = baseDN.DNNorm
 		q.Params["path"] = path
 
 	} else if scope == 2 {
-		pathQuery = "(LOWER(dn) = LOWER(:baseDN) OR path LIKE :path)"
-		q.Params["baseDN"] = baseDN.DN
+		pathQuery = "(dn_norm = :baseDNNorm OR path LIKE :path)"
+		q.Params["baseDNNorm"] = baseDN.DNNorm
 		q.Params["path"] = path + "%"
 
 	} else if scope == 3 {
@@ -117,58 +116,25 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 		}
 	}
 
-	var rows *sqlx.Rows
-
 	q.Params["pageSize"] = pageSize
 	q.Params["offset"] = offset
 
-	rows, err = findByFilter(pathQuery, q)
+	maxCount, limittedCount, err := findByFilter(pathQuery, q, isMemberOfAttributesRequested(r), func(searchEntry *SearchEntry) error {
+		responseEntry(w, r, searchEntry)
+		return nil
+	})
 	if err != nil {
-		log.Printf("info: Search  error: %#v", err)
+		log.Printf("error: Search  error: %#v", err)
 
 		// TODO return correct error code
 		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultOperationsError)
 		w.Write(res)
 		return
 	}
-	defer rows.Close()
 
-	entry := Entry{}
-	var max int32 = 0
-	var count int32 = 0
-	for rows.Next() {
-		err := rows.StructScan(&entry)
-		if err != nil {
-			log.Printf("error: Entry struct mapping error: %#v", err)
-
-			// TODO return correct error code
-			res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultOperationsError)
-			w.Write(res)
-			return
-		}
-		if max == 0 {
-			max = entry.Count
-		}
-		responseEntry(w, r, &entry)
-
-		count++
-		entry.Clear()
-	}
-
-	if max == 0 {
+	if maxCount == 0 {
 		log.Printf("info: Not found")
 
-		// TODO return correct error code
-		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultNoSuchObject)
-		w.Write(res)
-		return
-	}
-
-	err = rows.Err()
-	if err != nil {
-		log.Printf("error: Search error: %#v", err)
-
-		// TODO return correct error code
 		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultNoSuchObject)
 		w.Write(res)
 		return
@@ -176,7 +142,7 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 
 	var nextCookie string
 
-	if count+offset < max {
+	if limittedCount+offset < maxCount {
 		uuid, _ := uuid.NewRandom()
 		nextCookie = uuid.String()
 
@@ -199,74 +165,57 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 	return
 }
 
-func responseEntry(w ldap.ResponseWriter, r message.SearchRequest, entry *Entry) {
+func responseEntry(w ldap.ResponseWriter, r message.SearchRequest, searchEntry *SearchEntry) {
+	log.Printf("Response Entry: %+v", searchEntry)
 
-	log.Printf("get Entry: %+v", entry)
+	e := ldap.NewSearchResultEntry(searchEntry.GetDNNorm())
 
-	e := ldap.NewSearchResultEntry(entry.Dn)
+	sentAttrs := map[string]struct{}{}
 
 	if isAllAttributesRequested(r) {
-		for k, _ := range entry.GetAttrs() {
-			values, _ := entry.GetAttr(k)
+		for k, v := range searchEntry.GetAttrsOrig() {
+			log.Printf("- Attribute %s: %#v", k, v)
 
-			log.Printf("AddAttribute %s: %#v", k, values)
-
-			for _, v := range values {
-				e.AddAttribute(message.AttributeDescription(k), message.AttributeValue(v))
-			}
-		}
-
-		// TODO
-		if isSupportedFetchMemberOf() {
-			values := entry.GetMemberOf()
-			log.Printf("AddAttribute memberOf=%#v", values)
-			for _, v := range values {
-				e.AddAttribute(message.AttributeDescription("memberOf"), message.AttributeValue(v))
+			for _, vv := range v {
+				e.AddAttribute(message.AttributeDescription(k), message.AttributeValue(vv))
 			}
 		}
 	} else {
 		for _, attr := range r.Attributes() {
 			a := string(attr)
 
-			log.Printf("attr: %s", a)
+			log.Printf("Requested attr: %s", a)
 
 			if a != "+" {
-				s, ok := schemaMap.Get(a)
+				k, values, ok := searchEntry.GetAttrOrig(a)
 				if !ok {
 					log.Printf("No schema for requested attr, ignore. attr: %s", a)
 					continue
 				}
 
-				var values []string
-
-				// TODO
-				if s.Name == "memberOf" && isSupportedFetchMemberOf() {
-					values = entry.GetMemberOf()
-				} else {
-					var ok bool
-					values, ok = entry.GetAttr(s.Name)
-					if !ok {
-						log.Printf("No data for requested attr, ignore. attr: %s", a)
-						continue
-					}
-				}
-
-				log.Printf("AddAttribute %s=%#v", a, values)
+				log.Printf("- Attribute %s=%#v", a, values)
 				for _, v := range values {
-					e.AddAttribute(message.AttributeDescription(s.Name), message.AttributeValue(v))
+					e.AddAttribute(message.AttributeDescription(k), message.AttributeValue(v))
 				}
+				sentAttrs[k] = struct{}{}
 			}
 		}
 	}
 
 	if isOperationalAttributesRequested(r) {
-		e.AddAttribute("entryUUID", message.AttributeValue(entry.EntryUUID))
-		e.AddAttribute("createTimestamp", message.AttributeValue(entry.Created.Format(TIMESTAMP_FORMAT)))
-		e.AddAttribute("modifyTimestamp", message.AttributeValue(entry.Updated.Format(TIMESTAMP_FORMAT)))
-		// TODO Adding more operational attributes
+		for k, v := range searchEntry.GetOperationalAttrsOrig() {
+			if _, ok := sentAttrs[k]; !ok {
+				for _, vv := range v {
+					e.AddAttribute(message.AttributeDescription(k), message.AttributeValue(vv))
+				}
+			}
+		}
+		// e.AddAttribute("entryUUID", message.AttributeValue(entry.EntryUUID))
+		// e.AddAttribute("createTimestamp", message.AttributeValue(entry.Created.Format(TIMESTAMP_FORMAT)))
+		// e.AddAttribute("modifyTimestamp", message.AttributeValue(entry.Updated.Format(TIMESTAMP_FORMAT)))
 	}
 
 	w.Write(e)
 
-	log.Printf("Wrote 1 entry dn: %s", entry.Dn)
+	log.Printf("Response an entry. dn: %s", searchEntry.GetDNNorm())
 }

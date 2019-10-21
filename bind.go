@@ -39,7 +39,7 @@ func handleBind(w ldap.ResponseWriter, m *ldap.Message) {
 			return
 		}
 
-		log.Printf("info: Find bind user. DN: %s", dn.DN)
+		log.Printf("info: Find bind user. DN: %s", dn.DNNorm)
 
 		bindUserCred, err := findCredByDN(dn)
 		if err == nil && bindUserCred != "" {

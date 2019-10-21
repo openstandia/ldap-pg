@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"time"
 )
 
 type SchemaMap map[string]*Schema
@@ -67,6 +68,7 @@ type Schema struct {
 	Substr      string
 	Syntax      string
 	Sup         string
+	Usage       string
 	IndexType   string
 	SingleValue bool
 }
@@ -81,6 +83,7 @@ func InitSchemaMap() SchemaMap {
 	substrPattern := regexp.MustCompile(" SUBSTR (.*?) ")
 	orderingPattern := regexp.MustCompile(" ORDERING (.*?) ")
 	supPattern := regexp.MustCompile(" SUP (.*?) ")
+	usagePattern := regexp.MustCompile(" USAGE (.*?) ")
 
 	for _, line := range strings.Split(strings.TrimSuffix(SCHEMA, "\n"), "\n") {
 		if strings.HasPrefix(line, "attributeTypes") {
@@ -91,6 +94,7 @@ func InitSchemaMap() SchemaMap {
 			subg := substrPattern.FindStringSubmatch(line)
 			og := orderingPattern.FindStringSubmatch(line)
 			supg := supPattern.FindStringSubmatch(line)
+			usag := usagePattern.FindStringSubmatch(line)
 
 			if ng == nil && nsg == nil {
 				log.Printf("warn: Unsupported schema. %s", line)
@@ -128,6 +132,9 @@ func InitSchemaMap() SchemaMap {
 			}
 			if supg != nil {
 				s.Sup = supg[1]
+			}
+			if usag != nil {
+				s.Usage = usag[1]
 			}
 
 			if strings.Contains(line, "SINGLE-VALUE") {
@@ -178,33 +185,173 @@ func (m SchemaValueMap) Has(val string) bool {
 }
 
 type SchemaValue struct {
-	schema     *Schema
-	value      []string
-	cachedNorm []string
+	schema          *Schema
+	value           []string
+	cachedNorm      []string
+	cachedNormIndex map[string]struct{}
 }
 
-func NewSchemaValue(attrType string, attrValue []string) (*SchemaValue, error) {
-	s, ok := schemaMap.Get(attrType)
+func NewSchemaValue(attrName string, attrValue []string) (*SchemaValue, error) {
+	// TODO refactoring
+	s, ok := schemaMap.Get(attrName)
 	if !ok {
-		return nil, fmt.Errorf("Not found attr in schema. attrName: %s", attrType)
+		return nil, NewUndefinedType(attrName)
 	}
-	return &SchemaValue{
+
+	if s.SingleValue && len(attrValue) > 1 {
+		return nil, NewMultipleValuesProvidedError(attrName)
+	}
+
+	sv := &SchemaValue{
 		schema: s,
 		value:  attrValue,
-	}, nil
+	}
+
+	_, err := sv.Normalize()
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if it contains duplicate value
+	if !s.SingleValue && len(sv.value) != len(sv.cachedNormIndex) {
+		// TODO index
+		return nil, NewMoreThanOnceError(attrName, 0)
+	}
+
+	return sv, nil
+}
+
+func (s *SchemaValue) Name() string {
+	return s.schema.Name
+}
+
+func (s *SchemaValue) HasDuplicate(value *SchemaValue) bool {
+	s.Normalize()
+
+	for _, v := range value.GetNorm() {
+		if _, ok := s.cachedNormIndex[v]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *SchemaValue) Validate() string {
+
+	//return NewInvalidPerSyntax(attrName, 0)
+	return s.schema.Name
 }
 
 func (s *SchemaValue) IsSingle() bool {
 	return s.schema.SingleValue
 }
 
-func (s *SchemaValue) Set(v []string) {
-	s.value = v
-	s.cachedNorm = nil
+func (s *SchemaValue) IsEmpty() bool {
+	return len(s.value) == 0
 }
 
-func (s *SchemaValue) Get() []string {
+func (s *SchemaValue) Clone() *SchemaValue {
+	newValue := make([]string, len(s.value))
+	copy(newValue, s.value)
+
+	return &SchemaValue{
+		schema: s.schema,
+		value:  newValue,
+	}
+}
+
+func (s *SchemaValue) Equals(value *SchemaValue) bool {
+	if s.IsSingle() != value.IsSingle() {
+		return false
+	}
+	if s.IsSingle() {
+		return s.GetNorm()[0] == value.GetNorm()[0]
+	} else {
+		if len(s.value) != len(value.value) {
+			return false
+		}
+
+		s.Normalize()
+
+		for _, v := range value.GetNorm() {
+			if _, ok := s.cachedNormIndex[v]; !ok {
+				return false
+			}
+		}
+		return true
+	}
+}
+
+func (s *SchemaValue) Add(value *SchemaValue) error {
+	if s.IsSingle() {
+		return NewMultipleValuesConstraintViolation(value.Name())
+
+	} else {
+		if s.HasDuplicate(value) {
+			// TODO index
+			return NewTypeOrValueExists("modify/add", value.Name(), 0)
+		}
+	}
+	s.value = append(s.value, value.value...)
+	s.cachedNorm = nil
+	s.cachedNormIndex = nil
+
+	return nil
+}
+
+func (s *SchemaValue) Delete(value *SchemaValue) error {
+	s.Normalize()
+	value.Normalize()
+
+	// TODO Duplicate delete error
+
+	// Check the values
+	for _, v := range value.GetNorm() {
+		if _, ok := s.cachedNormIndex[v]; !ok {
+			// Not found the value
+			return NewNoSuchAttribute("modify/delete", value.Name())
+		}
+	}
+
+	// Create new values
+	newValue := make([]string, len(s.value)-len(value.value))
+	newValueNorm := make([]string, len(newValue))
+	for i, v := range s.GetNorm() {
+		if _, ok := value.cachedNormIndex[v]; !ok {
+			newValue = append(newValue, s.value[i])
+			newValueNorm = append(newValue, s.cachedNorm[i])
+		}
+	}
+
+	s.value = newValue
+	s.cachedNorm = newValueNorm
+	s.cachedNormIndex = nil
+
+	return nil
+}
+
+func (s *SchemaValue) Replace(value *SchemaValue) {
+	s.value = value.value
+	s.cachedNorm = nil
+	s.cachedNormIndex = nil
+}
+
+func (s *SchemaValue) GetOrig() []string {
 	return s.value
+}
+
+func (s *SchemaValue) GetAsTime() []time.Time {
+	t := make([]time.Time, len(s.value))
+	for i, _ := range s.value {
+		// Already validated, ignore error
+		t[i], _ = time.Parse(TIMESTAMP_FORMAT, s.value[i])
+	}
+	return t
+}
+
+func (s *SchemaValue) GetNorm() []string {
+	s.Normalize()
+	return s.cachedNorm
 }
 
 func (s *SchemaValue) GetForJSON() interface{} {
@@ -218,19 +365,22 @@ func (s *SchemaValue) GetForJSON() interface{} {
 // Normalize the value using schema definition.
 // The value is expected as a valid value. It means you need to validte the value in advance.
 func (s *SchemaValue) Normalize() ([]string, error) {
-	if len(s.cachedNorm) == 0 {
+	if len(s.cachedNorm) > 0 {
 		return s.cachedNorm, nil
 	}
 
 	rtn := make([]string, len(s.value))
+	m := make(map[string]struct{}, len(s.value))
 	for i, v := range s.value {
 		var err error
 		rtn[i], err = normalize(s.schema, v)
 		if err != nil {
 			return nil, err
 		}
+		m[rtn[i]] = struct{}{}
 	}
 	s.cachedNorm = rtn
+	s.cachedNormIndex = m
 
 	return rtn, nil
 }
@@ -248,6 +398,14 @@ func (s *Schema) IsCaseIgnoreSubstr() bool {
 		s.Substr == "numericStringSubstringsMatch" {
 		return true
 	}
+	return false
+}
+
+func (s *Schema) IsOperationalAttribute() bool {
+	if s.Usage == "directoryOperation" {
+		return true
+	}
+	// TODO check other case
 	return false
 }
 

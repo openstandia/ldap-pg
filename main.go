@@ -173,11 +173,6 @@ func main() {
 
 	var err error
 
-	rootDN, err = normalizeDN(*rootdn)
-	if err != nil {
-		log.Fatalf("fatal: Invalid root-dn format: %s, err: %s", *rootdn, err)
-	}
-
 	// Init DB connection
 	db, err = sqlx.Connect("postgres", fmt.Sprintf("host=%s port=%d user=%s dbname=%s password=%s sslmode=disable", *dbHostName, *dbPort, *dbUser, *dbName, *dbPassword))
 	if err != nil {
@@ -190,7 +185,7 @@ func main() {
 	// Init prepared statement
 	err = initStmt(db)
 	if err != nil {
-		log.Fatalf("fatal: Prepare statement error. host=%s, port=%d, user=%s, dbname=%s, error=%s", *dbHostName, *dbPort, *dbUser, *dbName, err)
+		log.Fatalf("fatal: Prepare statement error. host=%s, port=%d, user=%s, dbname=%s, error: %+v", *dbHostName, *dbPort, *dbUser, *dbName, err)
 	}
 
 	// Init schema map
@@ -198,6 +193,12 @@ func main() {
 
 	// Init mapper
 	mapper = NewMapper(schemaMap)
+
+	// Init rootDN
+	rootDN, err = normalizeDN(*rootdn)
+	if err != nil {
+		log.Fatalf("fatal: Invalid root-dn format: %s, err: %s", *rootdn, err)
+	}
 
 	//Create a new LDAP Server
 	server := ldap.NewServer()

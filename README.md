@@ -29,8 +29,8 @@
 * LDAP Controls
   * [x] Simple Paged Results Control
 * [ ] SSL/StartTLS
-* [ ] Automatic member-memberOf relation
-* [ ] Schema checking
+* [x] Support memberOf overlay
+* [x] Schema checking
 * [ ] User defined schema
 * [ ] Prometheus metrics
 * [ ] Auto create/migrate table for PostgreSQL 

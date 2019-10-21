@@ -5,6 +5,7 @@ import (
 	"log"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/openstandia/goldap/message"
@@ -13,93 +14,6 @@ import (
 )
 
 const TIMESTAMP_FORMAT string = "20060102150405Z"
-
-type DN struct {
-	DN              string
-	ReverseParentDN string
-}
-
-func (d *DN) Equal(o *DN) bool {
-	return d.DN == o.DN
-}
-
-func (d *DN) GetRDN() map[string]string {
-	dn, _ := goldap.ParseDN(d.DN)
-
-	m := make(map[string]string, len(dn.RDNs[0].Attributes))
-
-	for _, a := range dn.RDNs[0].Attributes {
-		m[a.Type] = a.Value
-	}
-
-	return m
-}
-
-func (d *DN) Modify(newRDN string) (*DN, error) {
-	nd, err := goldap.ParseDN(newRDN)
-	if err != nil {
-		return nil, err
-	}
-
-	dn, _ := goldap.ParseDN(d.DN)
-
-	var n []string
-
-	for _, v := range nd.RDNs {
-		for _, a := range v.Attributes {
-			n = append(n, fmt.Sprintf("%s=%s", a.Type, a.Value))
-			// TODO multiple RDN using +
-		}
-	}
-
-	for i := 1; i < len(dn.RDNs); i++ {
-		for _, a := range dn.RDNs[i].Attributes {
-			n = append(n, fmt.Sprintf("%s=%s", a.Type, a.Value))
-			// TODO multiple RDN using +
-		}
-	}
-
-	ndn := strings.Join(n, ",")
-	reverse := toReverseDN(n)
-
-	return &DN{
-		DN:              ndn,
-		ReverseParentDN: reverse,
-	}, nil
-}
-
-func (d *DN) ToPath() string {
-	parts := strings.Split(d.DN, ",")
-
-	var path string
-	for i := len(parts) - 1; i >= 0; i-- {
-		path += strings.ToLower(parts[i]) + "/"
-	}
-	return path
-}
-
-func normalizeDN(dn string) (*DN, error) {
-	d, err := parseDN(dn)
-	if err != nil {
-		return nil, err
-	}
-
-	reverse := toReverseDN(d)
-
-	return &DN{
-		DN:              strings.Join(d, ","),
-		ReverseParentDN: reverse,
-	}, nil
-}
-
-func toReverseDN(dn []string) string {
-	var path string
-	// ignore last rdn
-	for i := len(dn) - 1; i > 0; i-- {
-		path += strings.ToLower(dn[i]) + "/"
-	}
-	return path
-}
 
 func getSession(m *ldap.Message) map[string]int32 {
 	store := m.Client.GetCustomData()
@@ -127,6 +41,15 @@ func isAllAttributesRequested(r message.SearchRequest) bool {
 	}
 	for _, attr := range r.Attributes() {
 		if string(attr) == "*" {
+			return true
+		}
+	}
+	return false
+}
+
+func isMemberOfAttributesRequested(r message.SearchRequest) bool {
+	for _, attr := range r.Attributes() {
+		if strings.ToLower(string(attr)) == "memberof" {
 			return true
 		}
 	}
@@ -223,7 +146,7 @@ func normalize(s *Schema, value string) (string, error) {
 	case "caseIgnoreIA5Match":
 		return strings.ToLower(normalizeSpace(value)), nil
 	case "generalizedTimeMatch":
-		return value, nil
+		return normalizeGeneralizedTime(value)
 	case "objectIdentifierMatch":
 		return strings.ToLower(value), nil
 	case "numericStringMatch":
@@ -272,8 +195,9 @@ func parseDN(value string) ([]string, error) {
 	for i, v := range d.RDNs {
 		nn := make([]string, len(v.Attributes))
 		for j, a := range v.Attributes {
-			sv, err := NewSchemaValue(a.Type, []string{value})
+			sv, err := NewSchemaValue(a.Type, []string{a.Value})
 			if err != nil {
+				log.Printf("warn: Invalid DN syntax. Not found in schema. dn: %s err: %+v", value, err)
 				return nil, NewInvalidDNSyntax()
 			}
 
@@ -297,6 +221,14 @@ func normalizeDistinguishedName(value string) (string, error) {
 	}
 
 	return strings.Join(d, ","), nil
+}
+
+func normalizeGeneralizedTime(value string) (string, error) {
+	_, err := time.Parse(TIMESTAMP_FORMAT, value)
+	if err != nil {
+		return "", err
+	}
+	return value, nil
 }
 
 func normalizeUUID(value string) (string, error) {
