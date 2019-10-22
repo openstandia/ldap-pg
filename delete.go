@@ -18,6 +18,11 @@ func handleDelete(w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
+	if !requiredAuthz(m, "delete", dn) {
+		responseDeleteError(w, NewInsufficientAccess())
+		return
+	}
+
 	log.Printf("info: Deleting entry: %s", dn.DNNorm)
 
 	tx := db.MustBegin()

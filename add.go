@@ -21,6 +21,11 @@ func handleAdd(w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
+	if !requiredAuthz(m, "add", dn) {
+		responseAddError(w, NewInsufficientAccess())
+		return
+	}
+
 	addEntry, err := mapper.LDAPMessageToAddEntry(dn, r.Attributes())
 	if err != nil {
 		responseAddError(w, err)

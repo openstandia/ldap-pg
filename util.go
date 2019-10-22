@@ -15,14 +15,47 @@ import (
 
 const TIMESTAMP_FORMAT string = "20060102150405Z"
 
-func getSession(m *ldap.Message) map[string]int32 {
+func getSession(m *ldap.Message) map[string]interface{} {
 	store := m.Client.GetCustomData()
-	if sessionMap, ok := store.(map[string]int32); ok {
+	if sessionMap, ok := store.(map[string]interface{}); ok {
 		return sessionMap
 	} else {
-		sessionMap := map[string]int32{}
+		sessionMap := map[string]interface{}{}
 		m.Client.SetCustomData(sessionMap)
 		return sessionMap
+	}
+}
+
+func getAuthSession(m *ldap.Message) map[string]*DN {
+	session := getSession(m)
+	if authSession, ok := session["auth"]; ok {
+		return authSession.(map[string]*DN)
+	} else {
+		authSession := map[string]*DN{}
+		session["auth"] = authSession
+		return authSession
+	}
+}
+
+func requiredAuthz(m *ldap.Message, operation string, targetDN *DN) bool {
+	session := getAuthSession(m)
+	var ok bool
+	if _, ok = session["dn"]; !ok {
+		return false
+	}
+
+	// TODO authz
+	return true
+}
+
+func getPageSession(m *ldap.Message) map[string]int32 {
+	session := getSession(m)
+	if pageSession, ok := session["page"]; ok {
+		return pageSession.(map[string]int32)
+	} else {
+		pageSession := map[string]int32{}
+		session["page"] = pageSession
+		return pageSession
 	}
 }
 

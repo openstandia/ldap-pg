@@ -18,6 +18,11 @@ func handleModifyDN(w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
+	if !requiredAuthz(m, "modrdn", dn) {
+		responseModifyDNError(w, NewInsufficientAccess())
+		return
+	}
+
 	newDN, err := dn.Modify(string(r.NewRDN()))
 
 	if err != nil {

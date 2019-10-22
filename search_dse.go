@@ -7,7 +7,17 @@ import (
 	ldap "github.com/openstandia/ldapserver"
 )
 
-func handleSearchDSE(w ldap.ResponseWriter, m *ldap.Message) {
+type SearchDSEHandler struct {
+	server *Server
+}
+
+func NewSearchDSEHandler(s *Server) *SearchDSEHandler {
+	return &SearchDSEHandler{
+		server: s,
+	}
+}
+
+func (h SearchDSEHandler) HandleSearchDSE(w ldap.ResponseWriter, m *ldap.Message) {
 	r := m.GetSearchRequest()
 
 	log.Printf("info: handleSearchDSE")
@@ -25,7 +35,7 @@ func handleSearchDSE(w ldap.ResponseWriter, m *ldap.Message) {
 
 	if isOperationalAttributesRequested(r) {
 		e.AddAttribute("objectClass", "top", "extensibleObject")
-		e.AddAttribute("namingContexts", message.AttributeValue(getSuffix()))
+		e.AddAttribute("namingContexts", message.AttributeValue(h.server.GetSuffix()))
 		e.AddAttribute("supportedLDAPVersion", "3")
 		e.AddAttribute("supportedFeatures",
 			"1.3.6.1.4.1.4203.1.5.1",

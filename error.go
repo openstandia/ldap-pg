@@ -74,6 +74,12 @@ func NewInvalidDNSyntax() *LDAPError {
 	}
 }
 
+func NewInsufficientAccess() *LDAPError {
+	return &LDAPError{
+		Code: 50,
+	}
+}
+
 func NewObjectClassViolation() *LDAPError {
 	return &LDAPError{
 		Code: 65,

@@ -53,6 +53,11 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
+	if !requiredAuthz(m, "search", baseDN) {
+		responseSearchError(w, NewInsufficientAccess())
+		return
+	}
+
 	scope := int(r.Scope())
 
 	q, err := ToQuery(schemaMap, r.Filter())
@@ -105,7 +110,7 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 		pageSize = pageControl.Size()
 	}
 
-	sessionMap := getSession(m)
+	sessionMap := getPageSession(m)
 	var offset int32
 	if pageControl != nil {
 		reqCookie := pageControl.Cookie()
@@ -146,7 +151,7 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 		uuid, _ := uuid.NewRandom()
 		nextCookie = uuid.String()
 
-		sessionMap := getSession(m)
+		sessionMap := getPageSession(m)
 		sessionMap[nextCookie] = offset + pageSize
 	}
 
@@ -218,4 +223,16 @@ func responseEntry(w ldap.ResponseWriter, r message.SearchRequest, searchEntry *
 	w.Write(e)
 
 	log.Printf("Response an entry. dn: %s", searchEntry.GetDNNorm())
+}
+
+func responseSearchError(w ldap.ResponseWriter, err error) {
+	if ldapErr, ok := err.(*LDAPError); ok {
+		res := ldap.NewSearchResultDoneResponse(ldapErr.Code)
+		w.Write(res)
+	} else {
+		log.Printf("error: %s", err)
+		// TODO
+		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultProtocolError)
+		w.Write(res)
+	}
 }

@@ -21,6 +21,11 @@ func handleModify(w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
+	if !requiredAuthz(m, "modify", dn) {
+		responseModifyError(w, NewInsufficientAccess())
+		return
+	}
+
 	log.Printf("info: Modify entry: %s", dn.DNNorm)
 
 	tx := db.MustBegin()
