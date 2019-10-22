@@ -15,9 +15,10 @@ func NewModifyEntry(dn *DN, valuesOrig map[string][]string) (*ModifyEntry, error
 	// TODO
 	modifyEntry := &ModifyEntry{
 		schemaMap:  &schemaMap,
+		dn:         dn,
 		attributes: map[string]*SchemaValue{},
 	}
-	modifyEntry.SetDN(dn)
+
 	for k, v := range valuesOrig {
 		err := modifyEntry.Add(k, v)
 		if err != nil {
@@ -91,7 +92,7 @@ func (j *ModifyEntry) addsv(value *SchemaValue) error {
 	if !ok {
 		j.attributes[name] = value
 	} else {
-		current.Add(value)
+		return current.Add(value)
 	}
 	return nil
 }
