@@ -22,11 +22,11 @@ func (s SchemaMap) Put(k string, schema *Schema) {
 
 func (s SchemaMap) Resolve() error {
 	for _, v := range s {
-		log.Printf("Schema resolve %s", v.Name)
+		// log.Printf("Schema resolve %s", v.Name)
 		vv := reflect.ValueOf(v)
 
 		for _, f := range []string{"Equality", "Ordering", "Substr"} {
-			log.Printf("Checking %s", f)
+			// log.Printf("Checking %s", f)
 			field := vv.Elem().FieldByName(f)
 			val := field.Interface().(string)
 
@@ -42,11 +42,11 @@ func (s SchemaMap) Resolve() error {
 					if !ok {
 						return fmt.Errorf("Not found '%s' in schema.", cur.Sup)
 					}
-					log.Printf("Finding parent: %s", cur.Sup)
+					// log.Printf("Finding parent: %s", cur.Sup)
 
 					pval := reflect.ValueOf(parent).Elem().FieldByName(f).Interface().(string)
 					if pval != "" {
-						log.Printf("Found %s: %s", f, pval)
+						// log.Printf("Found %s: %s", f, pval)
 						field.SetString(pval)
 						break
 					}
@@ -116,7 +116,7 @@ func InitSchemaMap() SchemaMap {
 				s.AName = strings.Trim(names[1], "'")
 			}
 
-			log.Printf("schema: %+v", s)
+			// log.Printf("schema: %+v", s)
 
 			if eg != nil {
 				s.Equality = eg[1]
@@ -316,10 +316,12 @@ func (s *SchemaValue) Delete(value *SchemaValue) error {
 	// Create new values
 	newValue := make([]string, len(s.value)-len(value.value))
 	newValueNorm := make([]string, len(newValue))
-	for i, v := range s.GetNorm() {
+
+	i := 0
+	for j, v := range s.GetNorm() {
 		if _, ok := value.cachedNormIndex[v]; !ok {
-			newValue = append(newValue, s.value[i])
-			newValueNorm = append(newValue, s.cachedNorm[i])
+			newValue[i] = s.value[j]
+			newValueNorm[i] = s.cachedNorm[j]
 		}
 	}
 
