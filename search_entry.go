@@ -34,6 +34,18 @@ func (j *SearchEntry) GetAttrOrig(attrName string) (string, []string, bool) {
 	return s.Name, v, true
 }
 
+func (j *SearchEntry) GetAttrsOrigWithoutOperationalAttrs() map[string][]string {
+	m := map[string][]string{}
+	for k, v := range j.attributes {
+		if s, ok := schemaMap.Get(k); ok {
+			if !s.IsOperationalAttribute() {
+				m[k] = v
+			}
+		}
+	}
+	return m
+}
+
 func (j *SearchEntry) GetOperationalAttrsOrig() map[string][]string {
 	m := map[string][]string{}
 	for k, v := range j.attributes {

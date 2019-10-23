@@ -404,7 +404,8 @@ func (s *Schema) IsCaseIgnoreSubstr() bool {
 }
 
 func (s *Schema) IsOperationalAttribute() bool {
-	if s.Usage == "directoryOperation" {
+	if s.Usage == "directoryOperation" ||
+		s.Usage == "dSAOperation" {
 		return true
 	}
 	// TODO check other case

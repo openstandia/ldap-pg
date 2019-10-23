@@ -178,7 +178,7 @@ func responseEntry(w ldap.ResponseWriter, r message.SearchRequest, searchEntry *
 	sentAttrs := map[string]struct{}{}
 
 	if isAllAttributesRequested(r) {
-		for k, v := range searchEntry.GetAttrsOrig() {
+		for k, v := range searchEntry.GetAttrsOrigWithoutOperationalAttrs() {
 			log.Printf("- Attribute %s: %#v", k, v)
 
 			av := make([]message.AttributeValue, len(v))
