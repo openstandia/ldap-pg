@@ -27,7 +27,7 @@ func handleDelete(w ldap.ResponseWriter, m *ldap.Message) {
 
 	tx := db.MustBegin()
 
-	err = deleteWithAssociationByDNWithLock(tx, dn)
+	err = deleteByDN(tx, dn)
 	if err != nil {
 		log.Printf("info: Failed to lock and delete entry: %#v", err)
 		tx.Rollback()

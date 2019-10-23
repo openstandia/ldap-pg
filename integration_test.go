@@ -10,6 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jsimonetti/pwscheme/ssha"
+	"github.com/jsimonetti/pwscheme/ssha256"
+	"github.com/jsimonetti/pwscheme/ssha512"
 	_ "github.com/lib/pq"
 	"gopkg.in/ldap.v3"
 )
@@ -79,6 +82,102 @@ func TestLDAPCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Can't add: %v", err)
 	}
+	err = addEntry(c, "uid=user1,ou=Users", map[string][]string{
+		"objectClass":  []string{"inetOrgPerson"},
+		"sn":           []string{"user1"},
+		"userPassword": []string{toSsha("password")},
+	})
+	if err != nil {
+		t.Fatalf("Can't add: %v", err)
+	}
+	err = addEntry(c, "uid=user2,ou=Users", map[string][]string{
+		"objectClass":  []string{"inetOrgPerson"},
+		"sn":           []string{"user2"},
+		"userPassword": []string{toSsha256("password")},
+	})
+	if err != nil {
+		t.Fatalf("Can't add: %v", err)
+	}
+	err = addEntry(c, "cn=top,ou=Groups", map[string][]string{
+		"objectClass": []string{"groupOfNames"},
+		"member":      []string{"cn=A,ou=Groups," + server.GetSuffix()},
+	})
+	if err != nil {
+		t.Fatalf("Can't add: %v", err)
+	}
+	err = addEntry(c, "cn=A,ou=Groups", map[string][]string{
+		"objectClass": []string{"groupOfNames"},
+		"member": []string{
+			"cn=A_1,ou=Groups," + server.GetSuffix(),
+			"cn=A_2,ou=Groups," + server.GetSuffix(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Can't add: %v", err)
+	}
+	err = addEntry(c, "cn=A_1,ou=Groups", map[string][]string{
+		"objectClass": []string{"groupOfNames"},
+		"member":      []string{"uid=user1,ou=Users," + server.GetSuffix()},
+	})
+	if err != nil {
+		t.Fatalf("Can't add: %v", err)
+	}
+	err = addEntry(c, "cn=A_2,ou=Groups", map[string][]string{
+		"objectClass": []string{"groupOfNames"},
+		"member":      []string{"uid=user2,ou=Users," + server.GetSuffix()},
+	})
+	if err != nil {
+		t.Fatalf("Can't add: %v", err)
+	}
+	err = modifyEntry(c, "uid=user1,ou=Users", []change{
+		{
+			changetype: "add",
+			attrName:   "givenName",
+			attrValue:  []string{"foo"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Can't modify/add: %v", err)
+	}
+	err = modifyEntry(c, "uid=user1,ou=Users", []change{
+		{
+			changetype: "replace",
+			attrName:   "givenName",
+			attrValue:  []string{"bar"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Can't modify/replace: %v", err)
+	}
+	err = modifyEntry(c, "uid=user1,ou=Users", []change{
+		{
+			changetype: "delete",
+			attrName:   "givenName",
+			attrValue:  []string{},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Can't modify/delete: %v", err)
+	}
+	err = deleteEntry(c, "uid=user1,ou=Users")
+	if err != nil {
+		t.Fatalf("Can't modify/delete: %v", err)
+	}
+}
+
+func toSsha(p string) string {
+	h, _ := ssha.Generate(p, 8)
+	return h
+}
+
+func toSsha256(p string) string {
+	h, _ := ssha256.Generate(p, 8)
+	return h
+}
+
+func toSsha512(p string) string {
+	h, _ := ssha512.Generate(p, 8)
+	return h
 }
 
 func addEntry(c *ldap.Conn, rdn string, attrs map[string][]string) error {
@@ -89,15 +188,22 @@ func addEntry(c *ldap.Conn, rdn string, attrs map[string][]string) error {
 	return c.Add(add)
 }
 
-func modifyEntry(c *ldap.Conn, rdn string, operations []map[string][]string) error {
+type change struct {
+	changetype string
+	attrName   string
+	attrValue  []string
+}
+
+func modifyEntry(c *ldap.Conn, rdn string, changes []change) error {
 	modify := ldap.NewModifyRequest(rdn+","+server.GetSuffix(), nil)
-	for _, op := range operations {
-		switch op["changetype"][0] {
+	for _, change := range changes {
+		switch change.changetype {
 		case "add":
-		case "modify":
-
+			modify.Add(change.attrName, change.attrValue)
+		case "replace":
+			modify.Replace(change.attrName, change.attrValue)
 		case "delete":
-
+			modify.Delete(change.attrName, change.attrValue)
 		}
 	}
 	return c.Modify(modify)
