@@ -32,8 +32,11 @@
 * LDAP Controls
   * [x] Simple Paged Results Control
 * [ ] SSL/StartTLS
-* [x] Support memberOf overlay
-* Scehma
+* Support memberOf overlay
+  * [x] Return memberOf attribute as operational attribute
+  * [x] Maintain member when modifydn and delete entry
+  * [ ] Search filter using memberOf
+* Schema
   * [x] Basic schema processing
   * [ ] User defined schema
 * [ ] Prometheus metrics
