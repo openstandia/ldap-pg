@@ -181,9 +181,11 @@ func responseEntry(w ldap.ResponseWriter, r message.SearchRequest, searchEntry *
 		for k, v := range searchEntry.GetAttrsOrig() {
 			log.Printf("- Attribute %s: %#v", k, v)
 
-			for _, vv := range v {
-				e.AddAttribute(message.AttributeDescription(k), message.AttributeValue(vv))
+			av := make([]message.AttributeValue, len(v))
+			for i, vv := range v {
+				av[i] = message.AttributeValue(vv)
 			}
+			e.AddAttribute(message.AttributeDescription(k), av...)
 		}
 	} else {
 		for _, attr := range r.Attributes() {
@@ -199,9 +201,13 @@ func responseEntry(w ldap.ResponseWriter, r message.SearchRequest, searchEntry *
 				}
 
 				log.Printf("- Attribute %s=%#v", a, values)
-				for _, v := range values {
-					e.AddAttribute(message.AttributeDescription(k), message.AttributeValue(v))
+
+				av := make([]message.AttributeValue, len(values))
+				for i, vv := range values {
+					av[i] = message.AttributeValue(vv)
 				}
+				e.AddAttribute(message.AttributeDescription(k), av...)
+
 				sentAttrs[k] = struct{}{}
 			}
 		}

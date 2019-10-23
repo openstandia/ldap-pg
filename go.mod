@@ -8,7 +8,7 @@ require (
 	github.com/jmoiron/sqlx v1.2.0
 	github.com/jsimonetti/pwscheme v0.0.0-20160922125227-76804708ecad
 	github.com/lib/pq v1.2.0
-	github.com/openstandia/goldap/message v0.0.0-20191023020826-0fe515582e2f
+	github.com/openstandia/goldap/message v0.0.0-20191023044455-8d8c8ab9f51c
 	github.com/openstandia/ldapserver v0.0.0-20190930164349-8581cc1a444f
 	github.com/pkg/errors v0.8.1
 	golang.org/x/xerrors v0.0.0-20191011141410-1b5146add898

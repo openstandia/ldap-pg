@@ -12,6 +12,8 @@ import (
 func (s *Schema) SubstringMatch(q *Query, val string, i int) {
 	paramKey := q.nextParamKey(s.Name)
 
+	sv, _ := NewSchemaValue(s.Name, []string{val})
+
 	if s.IndexType == "fts" {
 		q.Query += fmt.Sprintf("attrs_norm->>'%s' ILIKE :%s", s.Name, paramKey)
 	} else {
@@ -21,11 +23,13 @@ func (s *Schema) SubstringMatch(q *Query, val string, i int) {
 			q.Query += fmt.Sprintf("attrs_norm->>'%s' LIKE :%s", s.Name, paramKey)
 		}
 	}
-	q.Params[paramKey] = val
+	q.Params[paramKey] = sv.GetNorm()[0]
 }
 
 func (s *Schema) EqualityMatch(q *Query, val string) {
 	paramKey := q.nextParamKey(s.Name)
+
+	sv, _ := NewSchemaValue(s.Name, []string{val})
 
 	if s.IndexType == "fts" {
 		// TODO Escapse %
@@ -45,21 +49,25 @@ func (s *Schema) EqualityMatch(q *Query, val string) {
 			}
 		}
 	}
-	q.Params[paramKey] = val
+	q.Params[paramKey] = sv.GetNorm()[0]
 }
 
 func (s *Schema) GreaterOrEqualMatch(q *Query, val string) {
 	paramKey := q.nextParamKey(s.Name)
 
+	sv, _ := NewSchemaValue(s.Name, []string{val})
+
 	q.Query += fmt.Sprintf("(attrs_norm->>'%s')::numeric >= :%s", s.Name, paramKey)
-	q.Params[paramKey] = val
+	q.Params[paramKey] = sv.GetNorm()[0]
 }
 
 func (s *Schema) LessOrEqualMatch(q *Query, val string) {
 	paramKey := q.nextParamKey(s.Name)
 
+	sv, _ := NewSchemaValue(s.Name, []string{val})
+
 	q.Query += fmt.Sprintf("(attrs_norm->>'%s')::numeric <= :%s", s.Name, paramKey)
-	q.Params[paramKey] = val
+	q.Params[paramKey] = sv.GetNorm()[0]
 }
 
 func (s *Schema) PresentMatch(q *Query) {
@@ -73,8 +81,10 @@ func (s *Schema) PresentMatch(q *Query) {
 func (s *Schema) ApproxMatch(q *Query, val string) {
 	paramKey := q.nextParamKey(s.Name)
 
+	sv, _ := NewSchemaValue(s.Name, []string{val})
+
 	q.Query += fmt.Sprintf("attrs_norm->>'%s' ILIKE :%s", s.Name, paramKey)
-	q.Params[paramKey] = val
+	q.Params[paramKey] = sv.GetNorm()[0]
 }
 
 type Query struct {

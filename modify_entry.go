@@ -141,7 +141,13 @@ func (j *ModifyEntry) deletesv(value *SchemaValue) error {
 		delete(j.attributes, value.Name())
 		return nil
 	} else {
-		current.Delete(value)
+		err := current.Delete(value)
+		if err != nil {
+			return err
+		}
+		if current.IsEmpty() {
+			delete(j.attributes, value.Name())
+		}
 		return nil
 	}
 }

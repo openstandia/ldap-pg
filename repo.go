@@ -275,6 +275,9 @@ func deleteByDN(tx *sqlx.Tx, dn *DN) error {
 		"dnNorm": dn.DNNorm,
 	})
 	if err != nil {
+		if strings.Contains(err.Error(), "sql: no rows in result set") {
+			return NewNoSuchObject()
+		}
 		return xerrors.Errorf("Faild to delete entry. dn: %s, err: %w", dn.DNNorm, err)
 	}
 	if id == 0 {

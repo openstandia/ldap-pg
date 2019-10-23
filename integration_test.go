@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -139,16 +140,82 @@ func TestLDAPCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Can't modify/add: %v", err)
 	}
+
+	sr, err := searchEntry(c, "", ldap.ScopeWholeSubtree, "(uid=user1)", nil)
+	if err != nil {
+		t.Fatalf("Can't search: %v", err)
+	}
+	if len(sr.Entries) != 1 {
+		t.Fatalf("Can't search: %v", sr)
+	}
+	for _, entry := range sr.Entries {
+		if entry.DN != "uid=user1,ou=users,"+server.GetSuffix() {
+			t.Fatalf("want = uid=user1,ou=users,"+server.GetSuffix()+" got = %v", entry.DN)
+		}
+		gn := entry.GetAttributeValues("givenName")
+		if !reflect.DeepEqual(gn, []string{"foo"}) {
+			t.Fatalf("want = [foo] got = %v", gn)
+		}
+	}
+
 	err = modifyEntry(c, "uid=user1,ou=Users", []change{
 		{
-			changetype: "replace",
+			changetype: "add",
 			attrName:   "givenName",
 			attrValue:  []string{"bar"},
 		},
 	})
 	if err != nil {
+		t.Fatalf("Can't modify/add: %v", err)
+	}
+
+	sr, err = searchEntry(c, "", ldap.ScopeWholeSubtree, "(uid=user1)", nil)
+	if err != nil {
+		t.Fatalf("Can't search: %v", err)
+	}
+	if len(sr.Entries) != 1 {
+		t.Fatalf("Can't search: %v", sr)
+	}
+	for _, entry := range sr.Entries {
+		if entry.DN != "uid=user1,ou=users,"+server.GetSuffix() {
+			t.Fatalf("want = uid=user1,ou=users,"+server.GetSuffix()+" got = %v", entry.DN)
+		}
+		entry.PrettyPrint(2)
+		gn := entry.GetAttributeValues("givenName")
+		log.Printf("gn: %v\n", gn)
+		if !reflect.DeepEqual(gn, []string{"foo", "bar"}) {
+			t.Fatalf("want = [foo bar] got = %v", gn)
+		}
+	}
+
+	err = modifyEntry(c, "uid=user1,ou=Users", []change{
+		{
+			changetype: "replace",
+			attrName:   "givenName",
+			attrValue:  []string{"hoge"},
+		},
+	})
+	if err != nil {
 		t.Fatalf("Can't modify/replace: %v", err)
 	}
+
+	sr, err = searchEntry(c, "", ldap.ScopeWholeSubtree, "(uid=user1)", nil)
+	if err != nil {
+		t.Fatalf("Can't search: %v", err)
+	}
+	if len(sr.Entries) != 1 {
+		t.Fatalf("Can't search: %v", sr)
+	}
+	for _, entry := range sr.Entries {
+		if entry.DN != "uid=user1,ou=users,"+server.GetSuffix() {
+			t.Fatalf("want = uid=user1,ou=users,"+server.GetSuffix()+" got = %v", entry.DN)
+		}
+		gn := entry.GetAttributeValues("givenName")
+		if !reflect.DeepEqual(gn, []string{"hoge"}) {
+			t.Fatalf("want = [hoge] got = %v", gn)
+		}
+	}
+
 	err = modifyEntry(c, "uid=user1,ou=Users", []change{
 		{
 			changetype: "delete",
@@ -159,9 +226,78 @@ func TestLDAPCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Can't modify/delete: %v", err)
 	}
-	err = deleteEntry(c, "uid=user1,ou=Users")
+
+	sr, err = searchEntry(c, "", ldap.ScopeWholeSubtree, "(uid=user1)", nil)
 	if err != nil {
-		t.Fatalf("Can't modify/delete: %v", err)
+		t.Fatalf("Can't search: %v", err)
+	}
+	if len(sr.Entries) != 1 {
+		t.Fatalf("Can't search: %v", sr)
+	}
+	for _, entry := range sr.Entries {
+		if entry.DN != "uid=user1,ou=users,"+server.GetSuffix() {
+			t.Fatalf("want = uid=user1,ou=users,"+server.GetSuffix()+" got = %v", entry.DN)
+		}
+		gn := entry.GetAttributeValues("givenName")
+		if !reflect.DeepEqual(gn, []string{}) {
+			t.Fatalf("want = [] got = %v", gn)
+		}
+	}
+
+	err = modifyDNEntry(c, "uid=user1,ou=Users", "uid=user1-rename")
+	if err != nil {
+		t.Fatalf("Can't modifydn: %v", err)
+	}
+
+	sr, err = searchEntry(c, "", ldap.ScopeWholeSubtree, "(cn=A_1)", nil)
+	if err != nil {
+		t.Fatalf("Can't search: %v", err)
+	}
+	if len(sr.Entries) != 1 {
+		t.Fatalf("Can't search: %v", sr)
+	}
+	for _, entry := range sr.Entries {
+		if entry.DN != "cn=a_1,ou=groups,"+server.GetSuffix() {
+			t.Fatalf("want = cn=a_1,ou=groups,"+server.GetSuffix()+" got = %v", entry.DN)
+		}
+		entry.PrettyPrint(2)
+		av := entry.GetAttributeValues("member")
+		if !reflect.DeepEqual(av, []string{"uid=user1-rename,ou=Users," + server.GetSuffix()}) {
+			t.Fatalf("want = [] got = %v", av)
+		}
+	}
+
+	err = deleteEntry(c, "uid=user1,ou=Users")
+	if !ldap.IsErrorWithCode(err, 32) {
+		t.Fatalf("want = 32, got = %v", err)
+	}
+
+	err = deleteEntry(c, "uid=user1-rename,ou=Users")
+	if err != nil {
+		t.Fatalf("Can't delete: %v", err)
+	}
+
+	sr, err = searchEntry(c, "", ldap.ScopeWholeSubtree, "(uid=user1-rename)", nil)
+	if !ldap.IsErrorWithCode(err, 32) {
+		t.Fatalf("want = 32, got = %v", err)
+	}
+
+	sr, err = searchEntry(c, "", ldap.ScopeWholeSubtree, "(cn=A_1)", nil)
+	if err != nil {
+		t.Fatalf("Can't search: %v", err)
+	}
+	if len(sr.Entries) != 1 {
+		t.Fatalf("Can't search: %v", sr)
+	}
+	for _, entry := range sr.Entries {
+		if entry.DN != "cn=a_1,ou=groups,"+server.GetSuffix() {
+			t.Fatalf("want = cn=a_1,ou=groups,"+server.GetSuffix()+" got = %v", entry.DN)
+		}
+		entry.PrettyPrint(2)
+		av := entry.GetAttributeValues("member")
+		if !reflect.DeepEqual(av, []string{}) {
+			t.Fatalf("want = [] got = %v", av)
+		}
 	}
 }
 
@@ -219,12 +355,29 @@ func deleteEntry(c *ldap.Conn, rdn string) error {
 	return c.Del(del)
 }
 
-func searchEntry(c *ldap.Conn, rdn string, attrs map[string][]string) error {
-	add := ldap.NewAddRequest(rdn+","+server.GetSuffix(), nil)
-	for k, v := range attrs {
-		add.Attribute(k, v)
+func searchEntry(c *ldap.Conn, rdn string, scope int, filter string, attrs []string) (*ldap.SearchResult, error) {
+	baseDN := server.GetSuffix()
+	if rdn != "" {
+		baseDN = rdn + "," + baseDN
 	}
-	return c.Add(add)
+
+	search := ldap.NewSearchRequest(
+		baseDN,
+		scope,
+		ldap.NeverDerefAliases,
+		0, // Size Limit
+		0, // Time Limit
+		false,
+		filter, // The filter to apply
+		attrs,  // A list attributes to retrieve
+		nil,
+	)
+	sr, err := c.Search(search)
+	if err != nil {
+		return nil, err
+	}
+
+	return sr, nil
 }
 
 func setupLDAPServer() {
