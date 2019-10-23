@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/jsimonetti/pwscheme/ssha"
@@ -9,7 +10,17 @@ import (
 	ldap "github.com/openstandia/ldapserver"
 )
 
-func handleBind(w ldap.ResponseWriter, m *ldap.Message) {
+type BindHandler struct {
+	server *Server
+}
+
+func NewBindHandler(s *Server) *BindHandler {
+	return &BindHandler{
+		server: s,
+	}
+}
+
+func (h *BindHandler) HandleBind(w ldap.ResponseWriter, m *ldap.Message) {
 	r := m.GetBindRequest()
 	res := ldap.NewBindResponse(ldap.LDAPResultSuccess)
 	if r.AuthenticationChoice() == "simple" {
@@ -26,8 +37,8 @@ func handleBind(w ldap.ResponseWriter, m *ldap.Message) {
 			return
 		}
 
-		if dn.Equal(getRootDN()) {
-			if ok := validateCred(pass, getRootPW()); !ok {
+		if dn.Equal(h.server.GetRootDN()) {
+			if ok := validateCred(pass, h.server.GetRootPW()); !ok {
 				log.Printf("info: Bind failed. DN: %s", name)
 				res.SetResultCode(ldap.LDAPResultInvalidCredentials)
 				res.SetDiagnosticMessage("invalid credentials")
@@ -35,11 +46,20 @@ func handleBind(w ldap.ResponseWriter, m *ldap.Message) {
 				return
 			}
 			log.Printf("info: Bind ok. DN: %s", name)
+
+			err := saveAuthencatedDN(m, dn)
+			if err != nil {
+				res.SetResultCode(ldap.LDAPResultInvalidCredentials)
+				res.SetDiagnosticMessage("invalid credentials")
+				w.Write(res)
+				return
+			}
+
 			w.Write(res)
 			return
 		}
 
-		log.Printf("info: Find bind user. DN: %s", dn.DN)
+		log.Printf("info: Find bind user. DN: %s", dn.DNNorm)
 
 		bindUserCred, err := findCredByDN(dn)
 		if err == nil && bindUserCred != "" {
@@ -53,6 +73,15 @@ func handleBind(w ldap.ResponseWriter, m *ldap.Message) {
 			}
 
 			log.Printf("info: Bind ok. DN: %s", name)
+
+			err := saveAuthencatedDN(m, dn)
+			if err != nil {
+				res.SetResultCode(ldap.LDAPResultInvalidCredentials)
+				res.SetDiagnosticMessage("invalid credentials")
+				w.Write(res)
+				return
+			}
+
 			w.Write(res)
 			return
 		}
@@ -96,4 +125,15 @@ func validateCred(input, cred string) bool {
 	}
 
 	return ok
+}
+
+func saveAuthencatedDN(m *ldap.Message, dn *DN) error {
+	session := getAuthSession(m)
+	if v, ok := session["dn"]; ok {
+		log.Printf("warn: Already authenticated: %s <- %s", v.DNNorm, dn.DNNorm)
+		return fmt.Errorf("Already authenticated: %s <- %s", v.DNNorm, dn.DNNorm)
+	}
+	session["dn"] = dn
+	log.Printf("Saved authenticated DN: %s", dn.DNNorm)
+	return nil
 }

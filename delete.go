@@ -18,13 +18,18 @@ func handleDelete(w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	log.Printf("info: Deleting entry: %s", dn.DN)
+	if !requiredAuthz(m, "delete", dn) {
+		responseDeleteError(w, NewInsufficientAccess())
+		return
+	}
+
+	log.Printf("info: Deleting entry: %s", dn.DNNorm)
 
 	tx := db.MustBegin()
 
-	err = deleteWithAssociationByDNWithLock(tx, dn)
+	err = deleteByDN(tx, dn)
 	if err != nil {
-		log.Printf("info: Failed to lock and delete entry: %#v", err)
+		log.Printf("info: Failed to delete entry: %#v", err)
 		tx.Rollback()
 
 		responseDeleteError(w, err)
@@ -33,7 +38,7 @@ func handleDelete(w ldap.ResponseWriter, m *ldap.Message) {
 
 	tx.Commit()
 
-	log.Printf("info: Deleted. dn: %s", dn.DN)
+	log.Printf("info: Deleted. dn: %s", dn.DNNorm)
 
 	res := ldap.NewDeleteResponse(ldap.LDAPResultSuccess)
 	w.Write(res)

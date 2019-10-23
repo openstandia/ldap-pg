@@ -18,16 +18,21 @@ func handleModifyDN(w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
+	if !requiredAuthz(m, "modrdn", dn) {
+		responseModifyDNError(w, NewInsufficientAccess())
+		return
+	}
+
 	newDN, err := dn.Modify(string(r.NewRDN()))
 
 	if err != nil {
 		// TODO return correct error
-		log.Printf("info: Invalid newrdn. dn: %s newrdn: %s err: %#v", dn.DN, r.NewRDN(), err)
+		log.Printf("info: Invalid newrdn. dn: %s newrdn: %s err: %#v", dn.DNNorm, r.NewRDN(), err)
 		responseModifyDNError(w, err)
 		return
 	}
 
-	log.Printf("info: Modify entry: %s", dn.DN)
+	log.Printf("info: Modify entry: %s", dn.DNNorm)
 
 	tx := db.MustBegin()
 
@@ -43,11 +48,11 @@ func handleModifyDN(w ldap.ResponseWriter, m *ldap.Message) {
 		log.Printf("error: Not implemented DeleteOldRDN false")
 	}
 
-	err = updateDNWithAssociationWithLock(tx, dn, newDN)
+	err = updateDN(tx, dn, newDN)
 	if err != nil {
 		tx.Rollback()
 
-		log.Printf("warn: Failed to modify dn: %s err: %s", dn.DN, err)
+		log.Printf("warn: Failed to modify dn: %s err: %s", dn.DNNorm, err)
 		// TODO error code
 		responseModifyDNError(w, err)
 		return

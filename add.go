@@ -2,7 +2,9 @@ package main
 
 import (
 	"log"
+	"time"
 
+	"github.com/google/uuid"
 	ldap "github.com/openstandia/ldapserver"
 )
 
@@ -15,35 +17,37 @@ func handleAdd(w ldap.ResponseWriter, m *ldap.Message) {
 	if err != nil {
 		log.Printf("warn: Invalid DN: %s err: %s", r.Entry(), err)
 
-		// TODO return correct code
-		res := ldap.NewAddResponse(ldap.LDAPResultOperationsError)
-		w.Write(res)
+		responseAddError(w, err)
 		return
 	}
 
-	entry, err := mapper.ToEntry(dn, r.Attributes())
+	if !requiredAuthz(m, "add", dn) {
+		responseAddError(w, NewInsufficientAccess())
+		return
+	}
+
+	addEntry, err := mapper.LDAPMessageToAddEntry(dn, r.Attributes())
 	if err != nil {
 		responseAddError(w, err)
 		return
 	}
 
-	if err := validateNewEntry(entry); err != nil {
-		responseAddError(w, err)
-		return
+	// TODO strict mode
+	if _, ok := addEntry.GetAttrNorm("entryUUID"); !ok {
+		uuid, _ := uuid.NewRandom()
+		addEntry.Add("entryUUID", []string{uuid.String()})
+	}
+	now := time.Now()
+	if _, ok := addEntry.GetAttrNorm("createTimestamp"); !ok {
+		addEntry.Add("createTimestamp", []string{now.Format(TIMESTAMP_FORMAT)})
+	}
+	if _, ok := addEntry.GetAttrNorm("modifyTimestamp"); !ok {
+		addEntry.Add("modifyTimestamp", []string{now.Format(TIMESTAMP_FORMAT)})
 	}
 
 	tx := db.MustBegin()
 
-	id, err := insert(tx, entry)
-	if err != nil {
-		tx.Rollback()
-
-		responseAddError(w, err)
-		return
-	}
-
-	// Resolve member/memberOf
-	err = addAssociation(tx, entry)
+	id, err := insert(tx, addEntry)
 	if err != nil {
 		tx.Rollback()
 
@@ -53,7 +57,7 @@ func handleAdd(w ldap.ResponseWriter, m *ldap.Message) {
 
 	tx.Commit()
 
-	log.Printf("Added. %d", id)
+	log.Printf("Added. Id: %d", id)
 
 	res := ldap.NewAddResponse(ldap.LDAPResultSuccess)
 	w.Write(res)
@@ -74,14 +78,4 @@ func responseAddError(w ldap.ResponseWriter, err error) {
 		res := ldap.NewAddResponse(ldap.LDAPResultProtocolError)
 		w.Write(res)
 	}
-}
-
-func validateNewEntry(entry *Entry) error {
-	if !entry.HasAttr("objectClass") {
-		return NewObjectClassViolation()
-	}
-	// TODO more validation
-
-	return nil
-
 }

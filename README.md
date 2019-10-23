@@ -9,13 +9,13 @@
 ## Features
 
 * Basic LDAP operations 
-  * [x] Bind
+  * Bind
     * [x] PLAIN
     * [x] SSHA
     * [x] SSHA256
     * [x] SSHA512
     * [ ] Pass-through authentication (Support `{SASL}foo@domain`)
-  * [x] Search
+  * Search
     * [x] base
     * [x] one
     * [x] sub
@@ -23,15 +23,22 @@
   * [x] Add
   * [x] Modify
   * [x] Delete
-  * [ ] ModifyDN
+  * ModifyDN
+    * [x] Rename RDN
+    * [ ] Support deleteoldrdn with 0
+    * [ ] Support newsuperior
   * [ ] Compare
   * [ ] Extended
 * LDAP Controls
   * [x] Simple Paged Results Control
 * [ ] SSL/StartTLS
-* [ ] Automatic member-memberOf relation
-* [ ] Schema checking
-* [ ] User defined schema
+* Support memberOf overlay
+  * [x] Return memberOf attribute as operational attribute
+  * [x] Maintain member when modifydn and delete entry
+  * [ ] Search filter using memberOf
+* Schema
+  * [x] Basic schema processing
+  * [ ] User defined schema
 * [ ] Prometheus metrics
 * [ ] Auto create/migrate table for PostgreSQL 
 
@@ -41,7 +48,13 @@ PostgreSQL 10 or later.
 
 ## Install
 
-There is no binary release now. Please build from the source. `ldap-pg` is written by Golang. Install Golang then build `ldap-pg`:  
+### From bainary
+
+Please download it from [release page](/releases).
+
+### From source
+
+`ldap-pg` is written by Golang. Install Golang then build `ldap-pg`:  
 
 ```
 make
@@ -100,7 +113,7 @@ Options:
 
 ```
 ldap-pg -h localhost -u testuser -w testpass -d testdb \
- -suffix dc=example,dc=org -root-dn cn=Manager -root-pw secret \
+ -suffix dc=example,dc=com -root-dn cn=Manager -root-pw secret \
  -log-level info
 
 [  info ] 2019/10/03 15:13:37 main.go:169: Setup GOMAXPROCS with NumCPU: 8

@@ -1,3 +1,5 @@
+// +build !integration
+
 package main
 
 import (
@@ -44,7 +46,7 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 			},
 			filter: message.NewFilterEqualityMatch("cn", "foo"),
 			out: &Query{
-				Query: "attrs->>'cn' = :0_cn",
+				Query: "attrs_norm->>'cn' = :0_cn",
 				Params: map[string]interface{}{
 					"0_cn": "foo",
 				},
@@ -70,7 +72,7 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 				message.NewFilterEqualityMatch("uid", "bar"),
 			},
 			out: &Query{
-				Query: "(attrs->>'cn' = :0_cn AND attrs->>'uid' = :1_uid)",
+				Query: "(attrs_norm->>'cn' = :0_cn AND attrs_norm->>'uid' = :1_uid)",
 				Params: map[string]interface{}{
 					"0_cn":  "foo",
 					"1_uid": "bar",
@@ -92,7 +94,7 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 				message.NewFilterEqualityMatch("cn", "bar"),
 			},
 			out: &Query{
-				Query: "(attrs->>'cn' = :0_cn OR attrs->>'cn' = :1_cn)",
+				Query: "(attrs_norm->>'cn' = :0_cn OR attrs_norm->>'cn' = :1_cn)",
 				Params: map[string]interface{}{
 					"0_cn": "foo",
 					"1_cn": "bar",
@@ -115,7 +117,7 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 				message.NewFilterEqualityMatch("cn", "hoge"),
 			},
 			out: &Query{
-				Query: "(attrs->>'cn' = :0_cn OR attrs->>'cn' = :1_cn OR attrs->>'cn' = :2_cn)",
+				Query: "(attrs_norm->>'cn' = :0_cn OR attrs_norm->>'cn' = :1_cn OR attrs_norm->>'cn' = :2_cn)",
 				Params: map[string]interface{}{
 					"0_cn": "foo",
 					"1_cn": "bar",
@@ -151,7 +153,7 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 				},
 			},
 			out: &Query{
-				Query: "(attrs->>'cn' = :0_cn OR (attrs->>'uid' = :1_uid AND attrs->>'sn' = :2_sn))",
+				Query: "(attrs_norm->>'cn' = :0_cn OR (attrs_norm->>'uid' = :1_uid AND attrs_norm->>'sn' = :2_sn))",
 				Params: map[string]interface{}{
 					"0_cn":  "foo",
 					"1_uid": "bar",
@@ -173,7 +175,7 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 				message.NewFilterEqualityMatch("cn", "foo"),
 			},
 			out: &Query{
-				Query: "NOT (attrs->>'cn' = :0_cn)",
+				Query: "NOT (attrs_norm->>'cn' = :0_cn)",
 				Params: map[string]interface{}{
 					"0_cn": "foo",
 				},

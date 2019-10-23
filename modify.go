@@ -21,7 +21,12 @@ func handleModify(w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	log.Printf("info: Modify entry: %s", dn.DN)
+	if !requiredAuthz(m, "modify", dn) {
+		responseModifyError(w, NewInsufficientAccess())
+		return
+	}
+
+	log.Printf("info: Modify entry: %s", dn.DNNorm)
 
 	tx := db.MustBegin()
 
@@ -32,7 +37,7 @@ func handleModify(w ldap.ResponseWriter, m *ldap.Message) {
 			responseModifyError(w, NewNoSuchObject())
 			return
 		} else {
-			responseModifyError(w, fmt.Errorf("Failed to fetch the entry. dn: %s err: %#v", dn.DN, err))
+			responseModifyError(w, fmt.Errorf("Failed to fetch the current entry for modification. dn: %s err: %#v", dn.DNNorm, err))
 			return
 		}
 	}
@@ -55,19 +60,19 @@ func handleModify(w ldap.ResponseWriter, m *ldap.Message) {
 
 		switch change.Operation() {
 		case ldap.ModifyRequestChangeOperationAdd:
-			err = newEntry.AddAttrs(attrName, values)
+			err = newEntry.Add(attrName, values)
 
 		case ldap.ModifyRequestChangeOperationDelete:
-			err = newEntry.DeleteAttrs(attrName, values)
+			err = newEntry.Delete(attrName, values)
 
 		case ldap.ModifyRequestChangeOperationReplace:
-			err = newEntry.ReplaceAttrs(attrName, values)
+			err = newEntry.Replace(attrName, values)
 		}
 
 		if err != nil {
 			tx.Rollback()
 
-			log.Printf("warn: Failed to modify. dn: %s err: %s", dn.DN, err)
+			log.Printf("warn: Failed to modify. dn: %s err: %s", dn.DNNorm, err)
 			responseModifyError(w, err)
 			return
 		}
@@ -81,16 +86,7 @@ func handleModify(w ldap.ResponseWriter, m *ldap.Message) {
 		tx.Rollback()
 
 		// TODO error code
-		responseModifyError(w, fmt.Errorf("Failed to modify the entry. dn: %s entry: %#v err: %#v", dn.DN, newEntry, err))
-		return
-	}
-
-	// resolve member
-	err = modifyAssociation(tx, oldEntry, newEntry)
-	if err != nil {
-		tx.Rollback()
-
-		responseModifyError(w, err)
+		responseModifyError(w, fmt.Errorf("Failed to modify the entry. dn: %s entry: %#v err: %#v", dn.DNNorm, newEntry, err))
 		return
 	}
 
