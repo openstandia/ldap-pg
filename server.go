@@ -180,6 +180,9 @@ func (s *Server) Start() {
 	//Attach routes to server
 	server.Handle(routes)
 
+	// Optional config
+	server.MaxRequestSize = 5 * 1024 * 1024 // 5MB
+
 	log.Printf("info: Starting ldap-pg on %s", *bindAddress)
 
 	// listen and serve
