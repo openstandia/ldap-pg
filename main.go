@@ -79,6 +79,11 @@ var (
 		0,
 		"GOMAXPROCS (Use CPU num with default)",
 	)
+	twowayEnabled = fs.Bool(
+		"two-way",
+		false,
+		"Two-way support for member-memberOf association (Default: false)",
+	)
 )
 
 func main() {

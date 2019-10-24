@@ -40,6 +40,13 @@ func NewMultipleValuesConstraintViolation(attr string) *LDAPError {
 	}
 }
 
+func NewNoUserModificationAllowedConstraintViolation(attr string) *LDAPError {
+	return &LDAPError{
+		Code: 19,
+		Msg:  fmt.Sprintf("%s: no user modification allowed", attr),
+	}
+}
+
 func NewTypeOrValueExists(op, attr string, valueidx int) *LDAPError {
 	return &LDAPError{
 		Code: 20,

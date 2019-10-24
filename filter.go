@@ -39,13 +39,13 @@ func (s *Schema) EqualityMatch(q *Query, val string) {
 			if s.SingleValue {
 				q.Query += fmt.Sprintf("attrs_norm->>'%s' = :%s", s.Name, paramKey)
 			} else {
-				q.Query += fmt.Sprintf("attrs_norm->'%s' @> jsonb_build_array(CAST(:%s AS text))", s.Name, paramKey)
+				q.Query += fmt.Sprintf("attrs_norm->'%s' @> jsonb_build_array(:%s ::::text)", s.Name, paramKey)
 			}
 		} else {
 			if s.SingleValue {
 				q.Query += fmt.Sprintf("attrs_norm->>'%s' = :%s", s.Name, paramKey)
 			} else {
-				q.Query += fmt.Sprintf("attrs_norm->'%s' @> jsonb_build_array(CAST(:%s AS TEXT))", s.Name, paramKey)
+				q.Query += fmt.Sprintf("attrs_norm->'%s' @> jsonb_build_array(:%s ::::text)", s.Name, paramKey)
 			}
 		}
 	}
