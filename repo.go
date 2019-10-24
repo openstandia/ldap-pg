@@ -13,16 +13,18 @@ import (
 )
 
 var (
-	findByDNStmt               *sqlx.NamedStmt
-	findByDNWithMemberOfStmt   *sqlx.NamedStmt
-	findByDNWithLockStmt       *sqlx.NamedStmt
-	findCredByDNStmt           *sqlx.NamedStmt
-	findByMemberOfWithLockStmt *sqlx.NamedStmt
-	findByMemberWithLockStmt   *sqlx.NamedStmt
-	addStmt                    *sqlx.NamedStmt
-	updateAttrsByIdStmt        *sqlx.NamedStmt
-	updateDNByIdStmt           *sqlx.NamedStmt
-	deleteByDNStmt             *sqlx.NamedStmt
+	findByDNStmt                     *sqlx.NamedStmt
+	findByDNWithMemberOfStmt         *sqlx.NamedStmt
+	findByDNWithLockStmt             *sqlx.NamedStmt
+	findCredByDNStmt                 *sqlx.NamedStmt
+	findByMemberWithLockStmt         *sqlx.NamedStmt
+	findByMemberOfWithLockStmt       *sqlx.NamedStmt
+	addStmt                          *sqlx.NamedStmt
+	addMemberOfByDNNormStmt          *sqlx.NamedStmt
+	updateAttrsByIdStmt              *sqlx.NamedStmt
+	updateAttrsWithNoUpdatedByIdStmt *sqlx.NamedStmt
+	updateDNByIdStmt                 *sqlx.NamedStmt
+	deleteByDNStmt                   *sqlx.NamedStmt
 )
 
 // For generic filter
@@ -70,12 +72,12 @@ func initStmt(db *sqlx.DB) error {
 		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
 	}
 
-	findByMemberOfWithLockStmt, err = db.PrepareNamed(`SELECT id, dn_norm, attrs_orig FROM ldap_entry WHERE attrs_norm->'memberOf' @> jsonb_build_array(CAST(:dnNorm AS text)) FOR UPDATE`)
+	findByMemberWithLockStmt, err = db.PrepareNamed(`SELECT id, dn_norm, attrs_orig FROM ldap_entry WHERE attrs_norm->'member' @> jsonb_build_array(:dnNorm ::::text) FOR UPDATE`)
 	if err != nil {
 		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
 	}
 
-	findByMemberWithLockStmt, err = db.PrepareNamed(`SELECT id, dn_norm, attrs_orig FROM ldap_entry WHERE attrs_norm->'member' @> jsonb_build_array(CAST(:dnNorm AS text)) FOR UPDATE`)
+	findByMemberOfWithLockStmt, err = db.PrepareNamed(`SELECT id, dn_norm, attrs_orig FROM ldap_entry WHERE attrs_norm->'memberOf' @> jsonb_build_array(:dnNorm ::::text) FOR UPDATE`)
 	if err != nil {
 		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
 	}
@@ -85,7 +87,18 @@ func initStmt(db *sqlx.DB) error {
 		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
 	}
 
+	addMemberOfByDNNormStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET attrs_norm = jsonb_set(attrs_norm, array['memberOf'], coalesce(attrs_norm->'memberOf', '[]'::::jsonb) || jsonb_build_array(:memberOfDNNorm ::::text)), attrs_orig = jsonb_set(attrs_orig, array['memberOf'], coalesce(attrs_orig->'memberOf', '[]'::::jsonb) || jsonb_build_array(:memberOfDNOrig ::::text)) WHERE dn_norm = :dnNorm`)
+	if err != nil {
+		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+	}
+
 	updateAttrsByIdStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET updated = now(), attrs_norm = :attrsNorm, attrs_orig = :attrsOrig WHERE id = :id`)
+	if err != nil {
+		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+	}
+
+	// When updating memberOf, don't update 'updated'
+	updateAttrsWithNoUpdatedByIdStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET attrs_norm = :attrsNorm, attrs_orig = :attrsOrig WHERE id = :id`)
 	if err != nil {
 		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
 	}
@@ -151,6 +164,21 @@ type DBEntry struct {
 }
 
 func insert(tx *sqlx.Tx, entry *AddEntry) (int64, error) {
+	if *twowayEnabled {
+		hasMemberEntries, err := findByMemberDNWithLock(tx, entry.GetDN())
+		if err != nil {
+			return 0, err
+		}
+		memberOfDNsOrig := make([]string, len(hasMemberEntries))
+		for i, v := range hasMemberEntries {
+			memberOfDNsOrig[i] = v.GetDNOrig()
+		}
+		err = entry.Add("memberOf", memberOfDNsOrig)
+		if err != nil {
+			return 0, err
+		}
+	}
+
 	dbEntry, err := mapper.AddEntryToDBEntry(entry)
 	if err != nil {
 		return 0, err
@@ -166,9 +194,9 @@ func insert(tx *sqlx.Tx, entry *AddEntry) (int64, error) {
 		"attrsOrig": dbEntry.AttrsOrig,
 	})
 	if err != nil {
-		log.Printf("error: Failed to insert entry record. entry: %#v err: %v", entry, err)
-		return 0, err
+		return 0, xerrors.Errorf("Failed to insert entry record. entry: %v, err: %w", entry, err)
 	}
+	defer rows.Close()
 
 	var id int64
 	if rows.Next() {
@@ -177,15 +205,56 @@ func insert(tx *sqlx.Tx, entry *AddEntry) (int64, error) {
 		return 0, NewAlreadyExists()
 	}
 
+	// work around to avoid "pq: unexpected Bind response 'C'"
+	rows.Close()
+
+	if *twowayEnabled {
+		if members, ok := entry.GetAttrNorm("member"); ok {
+			for _, dnNorm := range members {
+				err := addMemberOfByDNNorm(tx, dnNorm, entry.GetDN())
+				if err != nil {
+					return 0, xerrors.Errorf("Faild to add memberOf. err: %w", err)
+				}
+			}
+		}
+	}
+
 	return id, nil
 }
 
-func update(tx *sqlx.Tx, entry *ModifyEntry) error {
-	if entry.dbEntryId == 0 {
-		return fmt.Errorf("Invalid dbEntryId for update DBEntry.")
+func addMemberOfByDNNorm(tx *sqlx.Tx, dnNorm string, addMemberOfDN *DN) error {
+	// This query doesn't update updated
+	_, err := tx.NamedStmt(addMemberOfByDNNormStmt).Exec(map[string]interface{}{
+		"dnNorm":         dnNorm,
+		"memberOfDNNorm": addMemberOfDN.DNNorm,
+		"memberOfDNOrig": addMemberOfDN.DNOrig,
+	})
+	if err != nil {
+		return xerrors.Errorf("Failed to add memberOf. dn: %s, memberOf: %s, err: %w", dnNorm, addMemberOfDN.DNOrig, err)
+	}
+	return nil
+}
+
+func deleteMemberOfByDNNorm(tx *sqlx.Tx, dnNorm string, deleteMemberOfDN *DN) error {
+	modifyEntry, err := findByDNNormWithLock(tx, dnNorm)
+	if err != nil {
+		return err
+	}
+	modifyEntry.Delete("member", []string{deleteMemberOfDN.DNOrig})
+
+	err = update(tx, nil, modifyEntry)
+	if err != nil {
+		return xerrors.Errorf("Failed to delete memberOf. dn: %s, memberOf: %s, err: %w", dnNorm, deleteMemberOfDN.DNNorm, err)
+	}
+	return nil
+}
+
+func update(tx *sqlx.Tx, oldEntry, newEntry *ModifyEntry) error {
+	if newEntry.dbEntryId == 0 {
+		return xerrors.Errorf("Invalid dbEntryId for update DBEntry.")
 	}
 
-	dbEntry, err := mapper.ModifyEntryToDBEntry(entry)
+	dbEntry, err := mapper.ModifyEntryToDBEntry(newEntry)
 	if err != nil {
 		return err
 	}
@@ -196,8 +265,48 @@ func update(tx *sqlx.Tx, entry *ModifyEntry) error {
 		"attrsOrig": dbEntry.AttrsOrig,
 	})
 	if err != nil {
-		log.Printf("error: Failed to update entry record. entry: %#v err: %v", entry, err)
+		return xerrors.Errorf("Failed to update entry. entry: %v, err: %w", newEntry, err)
+	}
+
+	if *twowayEnabled {
+		if oldEntry != nil {
+			diff := calcDiffAttr(oldEntry, newEntry, "member")
+
+			for _, dnNorm := range diff.add {
+				err := addMemberOfByDNNorm(tx, dnNorm, oldEntry.GetDN())
+				if err != nil {
+					return err
+				}
+			}
+			for _, dnNorm := range diff.del {
+				err := deleteMemberOfByDNNorm(tx, dnNorm, oldEntry.GetDN())
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func updateWithNoUpdated(tx *sqlx.Tx, modifyEntry *ModifyEntry) error {
+	if modifyEntry.dbEntryId == 0 {
+		return xerrors.Errorf("Invalid dbEntryId for update DBEntry.")
+	}
+
+	dbEntry, err := mapper.ModifyEntryToDBEntry(modifyEntry)
+	if err != nil {
 		return err
+	}
+
+	_, err = tx.NamedStmt(updateAttrsWithNoUpdatedByIdStmt).Exec(map[string]interface{}{
+		"id":        dbEntry.Id,
+		"attrsNorm": dbEntry.AttrsNorm,
+		"attrsOrig": dbEntry.AttrsOrig,
+	})
+	if err != nil {
+		return xerrors.Errorf("Failed to update entry with no updated. entry: %v, err: %w", modifyEntry, err)
 	}
 
 	return nil
@@ -236,6 +345,13 @@ func updateDN(tx *sqlx.Tx, oldDN, newDN *DN) error {
 		return xerrors.Errorf("Faild to update entry DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNorm, newDN.DNNorm, err)
 	}
 
+	if *twowayEnabled {
+		err := renameMemberOfByMemberOfDN(tx, oldDN, newDN)
+		if err != nil {
+			return xerrors.Errorf("Faild to rename memberOf. err: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -256,7 +372,32 @@ func renameMemberByMemberDN(tx *sqlx.Tx, oldMemberDN, newMemberDN *DN) error {
 		modifyEntry.Delete("member", []string{oldMemberDN.DNOrig})
 		modifyEntry.Add("member", []string{newMemberDN.DNOrig})
 
-		err := update(tx, modifyEntry)
+		err := update(tx, nil, modifyEntry)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func renameMemberOfByMemberOfDN(tx *sqlx.Tx, oldMemberOfDN, newMemberOfDN *DN) error {
+	// We need to fetch all rows and close before updating due to avoiding "pq: unexpected Parse response" error.
+	// https://github.com/lib/pq/issues/635
+	modifyEntries, err := findByMemberOfDNWithLock(tx, oldMemberOfDN)
+	if err != nil {
+		return err
+	}
+
+	if len(modifyEntries) == 0 {
+		log.Printf("No entries which have memberOf for rename. memberOfDN: %s", oldMemberOfDN.DNNorm)
+		return nil
+	}
+
+	for _, modifyEntry := range modifyEntries {
+		modifyEntry.Delete("memberOf", []string{oldMemberOfDN.DNOrig})
+		modifyEntry.Add("memberOf", []string{newMemberOfDN.DNOrig})
+
+		err := updateWithNoUpdated(tx, modifyEntry)
 		if err != nil {
 			return err
 		}
@@ -283,6 +424,14 @@ func deleteByDN(tx *sqlx.Tx, dn *DN) error {
 	if id == 0 {
 		return NewNoSuchObject()
 	}
+
+	if *twowayEnabled {
+		err := deleteMemberOfByMemberOfDN(tx, dn)
+		if err != nil {
+			return xerrors.Errorf("Faild to delete memberOf. err: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -302,7 +451,31 @@ func deleteMemberByMemberDN(tx *sqlx.Tx, memberDN *DN) error {
 	for _, modifyEntry := range modifyEntries {
 		modifyEntry.Delete("member", []string{memberDN.DNOrig})
 
-		err := update(tx, modifyEntry)
+		err := update(tx, nil, modifyEntry)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func deleteMemberOfByMemberOfDN(tx *sqlx.Tx, memberOfDN *DN) error {
+	// We need to fetch all rows and close before updating due to avoiding "pq: unexpected Parse response" error.
+	// https://github.com/lib/pq/issues/635
+	modifyEntries, err := findByMemberOfDNWithLock(tx, memberOfDN)
+	if err != nil {
+		return err
+	}
+
+	if len(modifyEntries) == 0 {
+		log.Printf("No entries which have memberOf for delete. memberOfDN: %s", memberOfDN.DNNorm)
+		return nil
+	}
+
+	for _, modifyEntry := range modifyEntries {
+		modifyEntry.Delete("memberOf", []string{memberOfDN.DNOrig})
+
+		err := updateWithNoUpdated(tx, modifyEntry)
 		if err != nil {
 			return err
 		}
@@ -312,6 +485,41 @@ func deleteMemberByMemberDN(tx *sqlx.Tx, memberDN *DN) error {
 
 func findByMemberDNWithLock(tx *sqlx.Tx, memberDN *DN) ([]*ModifyEntry, error) {
 	rows, err := tx.NamedStmt(findByMemberWithLockStmt).Queryx(map[string]interface{}{
+		"dnNorm": memberDN.DNNorm,
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	dbEntry := FetchedDBEntry{}
+	modifyEntries := []*ModifyEntry{}
+
+	for rows.Next() {
+		err := rows.StructScan(&dbEntry)
+		if err != nil {
+			return nil, err
+		}
+		modifyEntry, err := mapper.FetchedDBEntryToModifyEntry(&dbEntry)
+		if err != nil {
+			return nil, err
+		}
+
+		modifyEntries = append(modifyEntries, modifyEntry)
+
+		dbEntry.Clear()
+	}
+
+	err = rows.Err()
+	if err != nil {
+		return nil, err
+	}
+
+	return modifyEntries, nil
+}
+
+func findByMemberOfDNWithLock(tx *sqlx.Tx, memberDN *DN) ([]*ModifyEntry, error) {
+	rows, err := tx.NamedStmt(findByMemberOfWithLockStmt).Queryx(map[string]interface{}{
 		"dnNorm": memberDN.DNNorm,
 	})
 	if err != nil {
@@ -391,7 +599,7 @@ func findByFilter(pathQuery string, q *Query, reqMemberOf bool, handler func(ent
 	}
 
 	var fetchQuery string
-	if reqMemberOf {
+	if reqMemberOf && !*twowayEnabled {
 		fetchQuery = fmt.Sprintf(`SELECT id, dn_norm, attrs_orig, (select jsonb_agg(e2.dn_norm) AS memberOf FROM ldap_entry e2 WHERE e2.attrs_norm->'member' @> jsonb_build_array(e1.dn_norm)) AS memberOf, count(id) over() AS count FROM ldap_entry e1 WHERE %s %s LIMIT :pageSize OFFSET :offset`, pathQuery, query)
 	} else {
 		fetchQuery = fmt.Sprintf(`SELECT id, dn_norm, attrs_orig, count(id) over() AS count FROM ldap_entry WHERE %s %s LIMIT :pageSize OFFSET :offset`, pathQuery, query)

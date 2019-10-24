@@ -73,7 +73,7 @@ func responseAddError(w ldap.ResponseWriter, err error) {
 		}
 		w.Write(res)
 	} else {
-		log.Printf("error: %s", err)
+		log.Printf("error: %+v", err)
 		// TODO
 		res := ldap.NewAddResponse(ldap.LDAPResultProtocolError)
 		w.Write(res)

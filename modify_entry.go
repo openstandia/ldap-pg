@@ -67,6 +67,10 @@ func (j *ModifyEntry) GetDNNorm() string {
 	return j.dn.DNNorm
 }
 
+func (j *ModifyEntry) GetDNOrig() string {
+	return j.dn.DNOrig
+}
+
 func (j *ModifyEntry) Validate() error {
 	if !j.HasAttr("objectClass") {
 		return NewObjectClassViolation()

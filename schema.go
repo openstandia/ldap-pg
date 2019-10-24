@@ -60,17 +60,18 @@ func (s SchemaMap) Resolve() error {
 }
 
 type Schema struct {
-	Name        string
-	AName       string
-	Oid         string
-	Equality    string
-	Ordering    string
-	Substr      string
-	Syntax      string
-	Sup         string
-	Usage       string
-	IndexType   string
-	SingleValue bool
+	Name               string
+	AName              string
+	Oid                string
+	Equality           string
+	Ordering           string
+	Substr             string
+	Syntax             string
+	Sup                string
+	Usage              string
+	IndexType          string
+	SingleValue        bool
+	NoUserModification bool
 }
 
 func InitSchemaMap() SchemaMap {
@@ -139,6 +140,9 @@ func InitSchemaMap() SchemaMap {
 
 			if strings.Contains(line, "SINGLE-VALUE") {
 				s.SingleValue = true
+			}
+			if strings.Contains(line, "NO_USER_MODIFICATION") {
+				s.NoUserModification = true
 			}
 
 			m.Put(s.Name, s)
@@ -246,6 +250,10 @@ func (s *SchemaValue) IsSingle() bool {
 	return s.schema.SingleValue
 }
 
+func (s *SchemaValue) IsNoUserModification() bool {
+	return s.schema.NoUserModification
+}
+
 func (s *SchemaValue) IsEmpty() bool {
 	return len(s.value) == 0
 }
@@ -283,6 +291,9 @@ func (s *SchemaValue) Equals(value *SchemaValue) bool {
 }
 
 func (s *SchemaValue) Add(value *SchemaValue) error {
+	if s.IsNoUserModification() {
+		return NewNoUserModificationAllowedConstraintViolation(s.Name())
+	}
 	if s.IsSingle() {
 		return NewMultipleValuesConstraintViolation(value.Name())
 
@@ -300,6 +311,9 @@ func (s *SchemaValue) Add(value *SchemaValue) error {
 }
 
 func (s *SchemaValue) Delete(value *SchemaValue) error {
+	if s.IsNoUserModification() {
+		return NewNoUserModificationAllowedConstraintViolation(s.Name())
+	}
 	s.Normalize()
 	value.Normalize()
 
@@ -330,12 +344,6 @@ func (s *SchemaValue) Delete(value *SchemaValue) error {
 	s.cachedNormIndex = nil
 
 	return nil
-}
-
-func (s *SchemaValue) Replace(value *SchemaValue) {
-	s.value = value.value
-	s.cachedNorm = nil
-	s.cachedNormIndex = nil
 }
 
 func (s *SchemaValue) GetOrig() []string {

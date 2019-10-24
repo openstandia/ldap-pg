@@ -1,10 +1,5 @@
 package main
 
-import (
-	"log"
-	"time"
-)
-
 type AddEntry struct {
 	schemaMap  *SchemaMap
 	dn         *DN
@@ -60,14 +55,20 @@ func (j *AddEntry) Validate() error {
 
 // Append to current value(s).
 func (j *AddEntry) Add(attrName string, attrValue []string) error {
+	if len(attrValue) == 0 {
+		return nil
+	}
 	sv, err := NewSchemaValue(attrName, attrValue)
 	if err != nil {
 		return err
 	}
-	return j.AddSV(sv)
+	if sv.IsNoUserModification() {
+		return NewNoUserModificationAllowedConstraintViolation(sv.Name())
+	}
+	return j.addsv(sv)
 }
 
-func (j *AddEntry) AddSV(value *SchemaValue) error {
+func (j *AddEntry) addsv(value *SchemaValue) error {
 	name := value.Name()
 
 	current, ok := j.attributes[name]
@@ -76,64 +77,6 @@ func (j *AddEntry) AddSV(value *SchemaValue) error {
 	} else {
 		current.Add(value)
 	}
-	return nil
-}
-
-// Replace with the value(s).
-func (j *AddEntry) Replace(attrName string, attrValue []string) error {
-	sv, err := NewSchemaValue(attrName, attrValue)
-	if err != nil {
-		return err
-	}
-	return j.ReplaceSV(sv)
-}
-
-func (j *AddEntry) ReplaceSV(value *SchemaValue) error {
-	name := value.Name()
-
-	if value.IsEmpty() {
-		delete(j.attributes, name)
-	} else {
-		j.attributes[name] = value
-	}
-	return nil
-}
-
-// Delete from current value(s) if the value matchs.
-func (j *AddEntry) Delete(attrName string, attrValue []string) error {
-	sv, err := NewSchemaValue(attrName, attrValue)
-	if err != nil {
-		return err
-	}
-	return j.DeleteSV(sv)
-}
-
-func (j *AddEntry) DeleteSV(value *SchemaValue) error {
-	if value.IsEmpty() {
-		return j.DeleteAll(value.schema)
-	}
-
-	current, ok := j.attributes[value.Name()]
-	if !ok {
-		log.Printf("warn: Failed to modify/delete because of no attribute. dn: %s", j.GetDN().DNNorm)
-		return NewNoSuchAttribute("modify/delete", value.Name())
-	}
-
-	if current.IsSingle() {
-		delete(j.attributes, value.Name())
-		return nil
-	} else {
-		current.Delete(value)
-		return nil
-	}
-}
-
-func (j *AddEntry) DeleteAll(s *Schema) error {
-	if !j.HasAttr(s.Name) {
-		log.Printf("warn: Failed to modify/delete because of no attribute. dn: %s", j.GetDN().DNNorm)
-		return NewNoSuchAttribute("modify/delete", s.Name)
-	}
-	delete(j.attributes, s.Name)
 	return nil
 }
 
@@ -148,27 +91,6 @@ func (j *AddEntry) GetAttrNorm(attrName string) ([]string, bool) {
 		return nil, false
 	}
 	return v.GetNorm(), true
-}
-
-func (j *AddEntry) GetAttrNormAsTime(attrName string) ([]time.Time, bool) {
-	s, ok := j.schemaMap.Get(attrName)
-	if !ok {
-		return nil, false
-	}
-
-	v, ok := j.attributes[s.Name]
-	if !ok {
-		return nil, false
-	}
-	return v.GetAsTime(), true
-}
-
-func (j *AddEntry) GetAttrsOrig() map[string][]string {
-	orig := make(map[string][]string, len(j.attributes))
-	for k, v := range j.attributes {
-		orig[k] = v.GetOrig()
-	}
-	return orig
 }
 
 func (j *AddEntry) GetAttrs() (map[string]interface{}, map[string][]string) {
