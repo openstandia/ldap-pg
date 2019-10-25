@@ -14,7 +14,7 @@
     * [x] SSHA
     * [x] SSHA256
     * [x] SSHA512
-    * [ ] Pass-through authentication (Support `{SASL}foo@domain`)
+    * [x] Pass-through authentication (Support `{SASL}foo@domain`)
   * Search
     * [x] base
     * [x] one
@@ -32,10 +32,15 @@
 * LDAP Controls
   * [x] Simple Paged Results Control
 * [ ] SSL/StartTLS
-* Support memberOf overlay
-  * [x] Return memberOf attribute as operational attribute
-  * [x] Maintain member when modifydn and delete entry
-  * [ ] Search filter using memberOf
+* Support member/memberOf association (like OpenLDAP memberOf overlay)
+  * One-way mode
+    * [x] Return memberOf attribute as operational attribute
+    * [x] Maintain member when modifydn and delete entry
+    * [ ] Search filter using memberOf
+  * Two-way mode
+    * [x] Return memberOf attribute as operational attribute
+    * [x] Maintain member/memberOf
+    * [x] Search filter using memberOf
 * Schema
   * [x] Basic schema processing
   * [ ] User defined schema
