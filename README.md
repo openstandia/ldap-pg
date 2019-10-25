@@ -98,8 +98,26 @@ Options:
         DB Hostname (default "localhost")
   -log-level string
         Log level, on of: debug, info, warn, error, fatal (default "info")
+  -migration
+        Enable migration mode which means LDAP server accepts add/modify operational attributes (Default: false)
   -p int
         DB Port (default 5432)
+  -pass-through-ldap-bind-dn string
+        Pass-through/LDAP: Bind DN
+  -pass-through-ldap-domain string
+        Pass-through/LDAP: Domain for pass-through/LDAP
+  -pass-through-ldap-filter string
+        Pass-through/LDAP: Filter for finding an user (ex. (cn=%u))
+  -pass-through-ldap-password string
+        Pass-through/LDAP: Bind password
+  -pass-through-ldap-scope string
+        Pass-through/LDAP: Search scope, on of: base, one, sub (Default: sub) (default "sub")
+  -pass-through-ldap-search-base string
+        Pass-through/LDAP: Search base
+  -pass-through-ldap-server string
+        Pass-through/LDAP: Server address and port (ex. myldap:389)
+  -pass-through-ldap-timeout int
+        Pass-through/LDAP: Timeout seconds (Default: 10) (default 10)
   -pprof string
         Bind address of pprof server (Don't start the server with default)
   -root-dn string
@@ -108,6 +126,8 @@ Options:
         Root password for the LDAP
   -suffix string
         Suffix for the LDAP
+  -two-way
+        Two-way support for member-memberOf association (Default: false)
   -u string
         DB User
   -w string
