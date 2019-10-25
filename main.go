@@ -84,6 +84,46 @@ var (
 		false,
 		"Two-way support for member-memberOf association (Default: false)",
 	)
+	passThroughLDAPDomain = fs.String(
+		"pass-through-ldap-domain",
+		"",
+		"Pass-through/LDAP: Domain for pass-through/LDAP",
+	)
+	passThroughLDAPServer = fs.String(
+		"pass-through-ldap-server",
+		"",
+		"Pass-through/LDAP: Server address and port (ex. myldap:389)",
+	)
+	passThroughLDAPSearchBase = fs.String(
+		"pass-through-ldap-search-base",
+		"",
+		"Pass-through/LDAP: Search base",
+	)
+	passThroughLDAPFilter = fs.String(
+		"pass-through-ldap-filter",
+		"",
+		"Pass-through/LDAP: Filter for finding an user (ex. (cn=%u))",
+	)
+	passThroughLDAPBindDN = fs.String(
+		"pass-through-ldap-bind-dn",
+		"",
+		"Pass-through/LDAP: Bind DN",
+	)
+	passThroughLDAPPassword = fs.String(
+		"pass-through-ldap-password",
+		"",
+		"Pass-through/LDAP: Bind password",
+	)
+	passThroughLDAPScope = fs.String(
+		"pass-through-ldap-scope",
+		"sub",
+		"Pass-through/LDAP: Search scope, on of: base, one, sub (Default: sub)",
+	)
+	passThroughLDAPTimeout = fs.Int(
+		"pass-through-ldap-timeout",
+		10,
+		"Pass-through/LDAP: Timeout seconds (Default: 10)",
+	)
 )
 
 func main() {
@@ -103,20 +143,34 @@ func main() {
 	rootPW := *rootpw
 	*rootpw = ""
 
+	passThroughConfig := &PassThroughConfig{}
+	if *passThroughLDAPDomain != "" {
+		passThroughConfig.Add(*passThroughLDAPDomain, &LDAPPassThroughClient{
+			Server:     *passThroughLDAPServer,
+			SearchBase: *passThroughLDAPSearchBase,
+			Timeout:    *passThroughLDAPTimeout,
+			Filter:     *passThroughLDAPFilter,
+			BindDN:     *passThroughLDAPBindDN,
+			Password:   *passThroughLDAPPassword,
+			Scope:      *passThroughLDAPScope,
+		})
+	}
+
 	NewServer(&ServerConfig{
-		DBHostName:     *dbHostName,
-		DBPort:         *dbPort,
-		DBName:         *dbName,
-		DBUser:         *dbUser,
-		DBPassword:     *dbPassword,
-		DBMaxOpenConns: *dbMaxOpenConns,
-		DBMaxIdleConns: *dbMaxIdleConns,
-		Suffix:         *suffix,
-		RootDN:         *rootdn,
-		RootPW:         rootPW,
-		BindAddress:    *bindAddress,
-		LogLevel:       *logLevel,
-		PProfServer:    *pprofServer,
-		GoMaxProcs:     *gomaxprocs,
+		DBHostName:        *dbHostName,
+		DBPort:            *dbPort,
+		DBName:            *dbName,
+		DBUser:            *dbUser,
+		DBPassword:        *dbPassword,
+		DBMaxOpenConns:    *dbMaxOpenConns,
+		DBMaxIdleConns:    *dbMaxIdleConns,
+		Suffix:            *suffix,
+		RootDN:            *rootdn,
+		RootPW:            rootPW,
+		BindAddress:       *bindAddress,
+		PassThroughConfig: passThroughConfig,
+		LogLevel:          *logLevel,
+		PProfServer:       *pprofServer,
+		GoMaxProcs:        *gomaxprocs,
 	}).Start()
 }

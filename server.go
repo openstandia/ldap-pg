@@ -29,20 +29,21 @@ var (
 )
 
 type ServerConfig struct {
-	DBHostName     string
-	DBPort         int
-	DBName         string
-	DBUser         string
-	DBPassword     string
-	DBMaxOpenConns int
-	DBMaxIdleConns int
-	Suffix         string
-	RootDN         string
-	RootPW         string
-	BindAddress    string
-	LogLevel       string
-	PProfServer    string
-	GoMaxProcs     int
+	DBHostName        string
+	DBPort            int
+	DBName            string
+	DBUser            string
+	DBPassword        string
+	DBMaxOpenConns    int
+	DBMaxIdleConns    int
+	Suffix            string
+	RootDN            string
+	RootPW            string
+	PassThroughConfig *PassThroughConfig
+	BindAddress       string
+	LogLevel          string
+	PProfServer       string
+	GoMaxProcs        int
 }
 
 type Server struct {
