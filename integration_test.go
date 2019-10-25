@@ -21,7 +21,14 @@ import (
 var server *Server
 
 func TestMain(m *testing.M) {
-	os.Exit(IntegrationTestRunner(m))
+
+	*twowayEnabled = false
+	rtn := IntegrationTestRunner(m)
+
+	*twowayEnabled = true
+	rtn = IntegrationTestRunner(m)
+
+	os.Exit(rtn + rtn)
 }
 
 func IntegrationTestRunner(m *testing.M) int {
@@ -394,7 +401,7 @@ func setupLDAPServer() {
 			RootDN:         "cn=Manager",
 			RootPW:         "secret",
 			BindAddress:    "127.0.0.1.8389",
-			LogLevel:       "debug",
+			LogLevel:       "warn",
 			PProfServer:    "",
 			GoMaxProcs:     0,
 		})
