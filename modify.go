@@ -78,7 +78,7 @@ func handleModify(w ldap.ResponseWriter, m *ldap.Message) {
 		}
 	}
 
-	log.Printf("Update entry. oldEntry: %#v newEntry: %#v", oldEntry, newEntry)
+	log.Printf("Update entry. oldEntry: %v newEntry: %v", oldEntry, newEntry)
 
 	err = update(tx, oldEntry, newEntry)
 
@@ -104,7 +104,7 @@ func responseModifyError(w ldap.ResponseWriter, err error) {
 		}
 		w.Write(res)
 	} else {
-		log.Printf("error: %s", err)
+		log.Printf("error: Modify error. err: %+v", err)
 		// TODO
 		res := ldap.NewModifyResponse(ldap.LDAPResultProtocolError)
 		w.Write(res)

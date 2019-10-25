@@ -86,6 +86,9 @@ func (j *ModifyEntry) Add(attrName string, attrValue []string) error {
 	if err != nil {
 		return err
 	}
+	if sv.IsNoUserModification() {
+		return NewNoUserModificationAllowedConstraintViolation(sv.Name())
+	}
 	return j.addsv(sv)
 }
 
@@ -107,6 +110,9 @@ func (j *ModifyEntry) Replace(attrName string, attrValue []string) error {
 	if err != nil {
 		return err
 	}
+	if sv.IsNoUserModification() {
+		return NewNoUserModificationAllowedConstraintViolation(sv.Name())
+	}
 	return j.replacesv(sv)
 }
 
@@ -127,17 +133,20 @@ func (j *ModifyEntry) Delete(attrName string, attrValue []string) error {
 	if err != nil {
 		return err
 	}
+	if sv.IsNoUserModification() {
+		return NewNoUserModificationAllowedConstraintViolation(sv.Name())
+	}
 	return j.deletesv(sv)
 }
 
 func (j *ModifyEntry) deletesv(value *SchemaValue) error {
 	if value.IsEmpty() {
-		return j.DeleteAll(value.schema)
+		return j.deleteAll(value.schema)
 	}
 
 	current, ok := j.attributes[value.Name()]
 	if !ok {
-		log.Printf("warn: Failed to modify/delete because of no attribute. dn: %s", j.GetDN().DNNorm)
+		log.Printf("warn: Failed to modify/delete because of no attribute. dn: %s, attrName: %s", j.GetDN().DNNorm, value.Name())
 		return NewNoSuchAttribute("modify/delete", value.Name())
 	}
 
@@ -156,7 +165,7 @@ func (j *ModifyEntry) deletesv(value *SchemaValue) error {
 	}
 }
 
-func (j *ModifyEntry) DeleteAll(s *Schema) error {
+func (j *ModifyEntry) deleteAll(s *Schema) error {
 	if !j.HasAttr(s.Name) {
 		log.Printf("warn: Failed to modify/delete because of no attribute. dn: %s", j.GetDN().DNNorm)
 		return NewNoSuchAttribute("modify/delete", s.Name)

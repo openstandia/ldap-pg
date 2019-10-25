@@ -23,6 +23,8 @@ github.com/openstandia/goldap/message v0.0.0-20191023044455-8d8c8ab9f51c h1:xGPg
 github.com/openstandia/goldap/message v0.0.0-20191023044455-8d8c8ab9f51c/go.mod h1:RQfGYY+kPtrURUIm38HydsiwWCcozfzbFs7FRnzkx04=
 github.com/openstandia/ldapserver v0.0.0-20190930164349-8581cc1a444f h1:SirRPEOrEtAfKw4QyqqxUIZ4pdW8qpRRPo9MYcQk9Nw=
 github.com/openstandia/ldapserver v0.0.0-20190930164349-8581cc1a444f/go.mod h1:X82folgu0A/IROMFz9VA4HzFT59ZR0MZ9uLkA0VcGKI=
+github.com/openstandia/ldapserver v0.0.0-20191024053314-fcdfef78a11c h1:C5gUMb7SOBWdYAsUe9zaZbjZlDNXA8tWE23Wr+yoNn8=
+github.com/openstandia/ldapserver v0.0.0-20191024053314-fcdfef78a11c/go.mod h1:X82folgu0A/IROMFz9VA4HzFT59ZR0MZ9uLkA0VcGKI=
 github.com/pkg/errors v0.8.1 h1:iURUrRGxPUNPdy5/HRSm+Yj6okJ6UtLINN0Q9M4+h3I=
 github.com/pkg/errors v0.8.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
 golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2/go.mod h1:djNgcEr1/C05ACkg1iLfiJU5Ep61QUkGW8qpdssI0+w=

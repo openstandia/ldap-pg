@@ -1,5 +1,5 @@
 NAME := ldap-pg
-VERSION := v0.3.0
+VERSION := v0.4.0
 REVISION := $(shell git rev-parse --short HEAD)
 
 SRCS    := $(shell find . -type f -name '*.go')

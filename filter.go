@@ -12,7 +12,11 @@ import (
 func (s *Schema) SubstringMatch(q *Query, val string, i int) {
 	paramKey := q.nextParamKey(s.Name)
 
-	sv, _ := NewSchemaValue(s.Name, []string{val})
+	sv, err := NewSchemaValue(s.Name, []string{val})
+	if err != nil {
+		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
+		return
+	}
 
 	if s.IndexType == "fts" {
 		q.Query += fmt.Sprintf("attrs_norm->>'%s' ILIKE :%s", s.Name, paramKey)
@@ -29,7 +33,11 @@ func (s *Schema) SubstringMatch(q *Query, val string, i int) {
 func (s *Schema) EqualityMatch(q *Query, val string) {
 	paramKey := q.nextParamKey(s.Name)
 
-	sv, _ := NewSchemaValue(s.Name, []string{val})
+	sv, err := NewSchemaValue(s.Name, []string{val})
+	if err != nil {
+		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
+		return
+	}
 
 	if s.IndexType == "fts" {
 		// TODO Escapse %
@@ -55,7 +63,11 @@ func (s *Schema) EqualityMatch(q *Query, val string) {
 func (s *Schema) GreaterOrEqualMatch(q *Query, val string) {
 	paramKey := q.nextParamKey(s.Name)
 
-	sv, _ := NewSchemaValue(s.Name, []string{val})
+	sv, err := NewSchemaValue(s.Name, []string{val})
+	if err != nil {
+		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
+		return
+	}
 
 	q.Query += fmt.Sprintf("(attrs_norm->>'%s')::numeric >= :%s", s.Name, paramKey)
 	q.Params[paramKey] = sv.GetNorm()[0]
@@ -64,7 +76,11 @@ func (s *Schema) GreaterOrEqualMatch(q *Query, val string) {
 func (s *Schema) LessOrEqualMatch(q *Query, val string) {
 	paramKey := q.nextParamKey(s.Name)
 
-	sv, _ := NewSchemaValue(s.Name, []string{val})
+	sv, err := NewSchemaValue(s.Name, []string{val})
+	if err != nil {
+		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
+		return
+	}
 
 	q.Query += fmt.Sprintf("(attrs_norm->>'%s')::numeric <= :%s", s.Name, paramKey)
 	q.Params[paramKey] = sv.GetNorm()[0]
@@ -81,7 +97,11 @@ func (s *Schema) PresentMatch(q *Query) {
 func (s *Schema) ApproxMatch(q *Query, val string) {
 	paramKey := q.nextParamKey(s.Name)
 
-	sv, _ := NewSchemaValue(s.Name, []string{val})
+	sv, err := NewSchemaValue(s.Name, []string{val})
+	if err != nil {
+		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
+		return
+	}
 
 	q.Query += fmt.Sprintf("attrs_norm->>'%s' ILIKE :%s", s.Name, paramKey)
 	q.Params[paramKey] = sv.GetNorm()[0]

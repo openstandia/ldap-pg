@@ -291,9 +291,6 @@ func (s *SchemaValue) Equals(value *SchemaValue) bool {
 }
 
 func (s *SchemaValue) Add(value *SchemaValue) error {
-	if s.IsNoUserModification() {
-		return NewNoUserModificationAllowedConstraintViolation(s.Name())
-	}
 	if s.IsSingle() {
 		return NewMultipleValuesConstraintViolation(value.Name())
 
@@ -311,9 +308,6 @@ func (s *SchemaValue) Add(value *SchemaValue) error {
 }
 
 func (s *SchemaValue) Delete(value *SchemaValue) error {
-	if s.IsNoUserModification() {
-		return NewNoUserModificationAllowedConstraintViolation(s.Name())
-	}
 	s.Normalize()
 	value.Normalize()
 
@@ -336,6 +330,7 @@ func (s *SchemaValue) Delete(value *SchemaValue) error {
 		if _, ok := value.cachedNormIndex[v]; !ok {
 			newValue[i] = s.value[j]
 			newValueNorm[i] = s.cachedNorm[j]
+			i++
 		}
 	}
 

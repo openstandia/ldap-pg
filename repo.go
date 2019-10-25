@@ -240,7 +240,10 @@ func deleteMemberOfByDNNorm(tx *sqlx.Tx, dnNorm string, deleteMemberOfDN *DN) er
 	if err != nil {
 		return err
 	}
-	modifyEntry.Delete("member", []string{deleteMemberOfDN.DNOrig})
+	err = modifyEntry.Delete("memberOf", []string{deleteMemberOfDN.DNOrig})
+	if err != nil {
+		return err
+	}
 
 	err = update(tx, nil, modifyEntry)
 	if err != nil {
@@ -369,10 +372,16 @@ func renameMemberByMemberDN(tx *sqlx.Tx, oldMemberDN, newMemberDN *DN) error {
 	}
 
 	for _, modifyEntry := range modifyEntries {
-		modifyEntry.Delete("member", []string{oldMemberDN.DNOrig})
-		modifyEntry.Add("member", []string{newMemberDN.DNOrig})
+		err := modifyEntry.Delete("member", []string{oldMemberDN.DNOrig})
+		if err != nil {
+			return err
+		}
+		err = modifyEntry.Add("member", []string{newMemberDN.DNOrig})
+		if err != nil {
+			return err
+		}
 
-		err := update(tx, nil, modifyEntry)
+		err = update(tx, nil, modifyEntry)
 		if err != nil {
 			return err
 		}
@@ -394,10 +403,16 @@ func renameMemberOfByMemberOfDN(tx *sqlx.Tx, oldMemberOfDN, newMemberOfDN *DN) e
 	}
 
 	for _, modifyEntry := range modifyEntries {
-		modifyEntry.Delete("memberOf", []string{oldMemberOfDN.DNOrig})
-		modifyEntry.Add("memberOf", []string{newMemberOfDN.DNOrig})
+		err := modifyEntry.Delete("memberOf", []string{oldMemberOfDN.DNOrig})
+		if err != nil {
+			return err
+		}
+		err = modifyEntry.Add("memberOf", []string{newMemberOfDN.DNOrig})
+		if err != nil {
+			return err
+		}
 
-		err := updateWithNoUpdated(tx, modifyEntry)
+		err = updateWithNoUpdated(tx, modifyEntry)
 		if err != nil {
 			return err
 		}
@@ -449,9 +464,12 @@ func deleteMemberByMemberDN(tx *sqlx.Tx, memberDN *DN) error {
 	}
 
 	for _, modifyEntry := range modifyEntries {
-		modifyEntry.Delete("member", []string{memberDN.DNOrig})
+		err := modifyEntry.Delete("member", []string{memberDN.DNOrig})
+		if err != nil {
+			return err
+		}
 
-		err := update(tx, nil, modifyEntry)
+		err = update(tx, nil, modifyEntry)
 		if err != nil {
 			return err
 		}
@@ -473,9 +491,12 @@ func deleteMemberOfByMemberOfDN(tx *sqlx.Tx, memberOfDN *DN) error {
 	}
 
 	for _, modifyEntry := range modifyEntries {
-		modifyEntry.Delete("memberOf", []string{memberOfDN.DNOrig})
+		err := modifyEntry.Delete("memberOf", []string{memberOfDN.DNOrig})
+		if err != nil {
+			return err
+		}
 
-		err := updateWithNoUpdated(tx, modifyEntry)
+		err = updateWithNoUpdated(tx, modifyEntry)
 		if err != nil {
 			return err
 		}
