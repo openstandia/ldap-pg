@@ -49,8 +49,8 @@ var filterStmtMap FilterStmtMap
 func initStmt(db *sqlx.DB) error {
 	var err error
 
-	findByDNSQL := "SELECT id, dn_norm, attrs_orig FROM ldap_entry WHERE dn_norm = :dnNorm"
-	findByDNWithMemberOfSQL := "SELECT id, dn_norm, attrs_orig, (select jsonb_agg(e2.dn_norm) AS memberOf FROM ldap_entry e2 WHERE e2.attrs_norm->'member' @> jsonb_build_array(e1.dn_norm)) AS memberOf FROM ldap_entry e1 WHERE dn_norm = :dnNorm"
+	findByDNSQL := "SELECT id, uuid, created, updated, dn_norm, attrs_orig FROM ldap_entry WHERE dn_norm = :dnNorm"
+	findByDNWithMemberOfSQL := "SELECT id, uuid, created, updated, dn_norm, attrs_orig, (select jsonb_agg(e2.dn_norm) AS memberOf FROM ldap_entry e2 WHERE e2.attrs_norm->'member' @> jsonb_build_array(e1.dn_norm)) AS memberOf FROM ldap_entry e1 WHERE dn_norm = :dnNorm"
 
 	findByDNStmt, err = db.PrepareNamed(findByDNSQL)
 	if err != nil {
@@ -92,7 +92,7 @@ func initStmt(db *sqlx.DB) error {
 		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
 	}
 
-	updateAttrsByIdStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET updated = now(), attrs_norm = :attrsNorm, attrs_orig = :attrsOrig WHERE id = :id`)
+	updateAttrsByIdStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET updated = :updated, attrs_norm = :attrsNorm, attrs_orig = :attrsOrig WHERE id = :id`)
 	if err != nil {
 		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
 	}
@@ -103,7 +103,7 @@ func initStmt(db *sqlx.DB) error {
 		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
 	}
 
-	updateDNByIdStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET updated = now(), dn_norm = :newdnNorm, path = :newpath, attrs_norm = :attrsNorm, attrs_orig = :attrsOrig WHERE id = :id`)
+	updateDNByIdStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET updated = :updated, dn_norm = :newdnNorm, path = :newpath, attrs_norm = :attrsNorm, attrs_orig = :attrsOrig WHERE id = :id`)
 	if err != nil {
 		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
 	}
@@ -118,6 +118,9 @@ func initStmt(db *sqlx.DB) error {
 
 type FetchedDBEntry struct {
 	Id        int64          `db:"id"`
+	EntryUUID string         `db:"uuid"`
+	Created   time.Time      `db:"created"`
+	Updated   time.Time      `db:"updated"`
 	DNNorm    string         `db:"dn_norm"`
 	AttrsOrig types.JSONText `db:"attrs_orig"`
 	MemberOf  types.JSONText `db:"memberof"` // No real column in the table
@@ -264,6 +267,7 @@ func update(tx *sqlx.Tx, oldEntry, newEntry *ModifyEntry) error {
 
 	_, err = tx.NamedStmt(updateAttrsByIdStmt).Exec(map[string]interface{}{
 		"id":        dbEntry.Id,
+		"updated":   dbEntry.Updated,
 		"attrsNorm": dbEntry.AttrsNorm,
 		"attrsOrig": dbEntry.AttrsOrig,
 	})
@@ -334,6 +338,7 @@ func updateDN(tx *sqlx.Tx, oldDN, newDN *DN) error {
 
 	_, err = tx.NamedStmt(updateDNByIdStmt).Exec(map[string]interface{}{
 		"id":        newEntry.dbEntryId,
+		"updated":   dbEntry.Updated,
 		"newdnNorm": newDN.DNNorm,
 		"newpath":   newDN.ReverseParentDN,
 		"attrsNorm": dbEntry.AttrsNorm,
@@ -621,9 +626,9 @@ func findByFilter(pathQuery string, q *Query, reqMemberOf bool, handler func(ent
 
 	var fetchQuery string
 	if reqMemberOf && !*twowayEnabled {
-		fetchQuery = fmt.Sprintf(`SELECT id, dn_norm, attrs_orig, (select jsonb_agg(e2.dn_norm) AS memberOf FROM ldap_entry e2 WHERE e2.attrs_norm->'member' @> jsonb_build_array(e1.dn_norm)) AS memberOf, count(id) over() AS count FROM ldap_entry e1 WHERE %s %s LIMIT :pageSize OFFSET :offset`, pathQuery, query)
+		fetchQuery = fmt.Sprintf(`SELECT id, uuid, created, updated, dn_norm, attrs_orig, (select jsonb_agg(e2.dn_norm) AS memberOf FROM ldap_entry e2 WHERE e2.attrs_norm->'member' @> jsonb_build_array(e1.dn_norm)) AS memberOf, count(id) over() AS count FROM ldap_entry e1 WHERE %s %s LIMIT :pageSize OFFSET :offset`, pathQuery, query)
 	} else {
-		fetchQuery = fmt.Sprintf(`SELECT id, dn_norm, attrs_orig, count(id) over() AS count FROM ldap_entry WHERE %s %s LIMIT :pageSize OFFSET :offset`, pathQuery, query)
+		fetchQuery = fmt.Sprintf(`SELECT id, uuid, created, updated, dn_norm, attrs_orig, count(id) over() AS count FROM ldap_entry WHERE %s %s LIMIT :pageSize OFFSET :offset`, pathQuery, query)
 	}
 
 	log.Printf("Fetch Query: %s Params: %v", fetchQuery, q.Params)

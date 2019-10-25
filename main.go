@@ -124,6 +124,11 @@ var (
 		10,
 		"Pass-through/LDAP: Timeout seconds (Default: 10)",
 	)
+	migrationEnabled = fs.Bool(
+		"migration",
+		false,
+		"Enable migration mode which means LDAP server accepts add/modify operational attributes (Default: false)",
+	)
 )
 
 func main() {

@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx/types"
 	"github.com/openstandia/goldap/message"
 )
@@ -50,17 +51,36 @@ func (m *Mapper) LDAPMessageToAddEntry(dn *DN, ldapAttrs message.AttributeList) 
 func (m *Mapper) AddEntryToDBEntry(entry *AddEntry) (*DBEntry, error) {
 	norm, orig := entry.GetAttrs()
 
+	created := time.Now()
+	updated := created
+	if _, ok := norm["createTimestamp"]; ok {
+		// Already validated, ignore error
+		created, _ = time.Parse(TIMESTAMP_FORMAT, norm["createTimestamp"].(string))
+	}
+	if _, ok := norm["modifyTimestamp"]; ok {
+		// Already validated, ignore error
+		updated, _ = time.Parse(TIMESTAMP_FORMAT, norm["modifyTimestamp"].(string))
+	}
+
+	// TODO strict mode
+	var entryUUID string
+	if e, ok := norm["entryUUID"]; ok {
+		entryUUID = e.(string)
+	} else {
+		u, _ := uuid.NewRandom()
+		entryUUID = u.String()
+	}
+
+	delete(norm, "entryUUID")
+	delete(orig, "entryUUID")
+
 	bNorm, _ := json.Marshal(norm)
 	bOrig, _ := json.Marshal(orig)
-
-	// Already validated, ignore error
-	created, _ := time.Parse(norm["createTimestamp"].(string), TIMESTAMP_FORMAT)
-	updated, _ := time.Parse(norm["modifyTimestamp"].(string), TIMESTAMP_FORMAT)
 
 	dbEntry := &DBEntry{
 		DNNorm:    entry.GetDN().DNNorm,
 		Path:      entry.GetDN().ReverseParentDN,
-		EntryUUID: norm["entryUUID"].(string),
+		EntryUUID: entryUUID,
 		Created:   created,
 		Updated:   updated,
 		AttrsNorm: types.JSONText(string(bNorm)),
@@ -76,10 +96,11 @@ func (m *Mapper) ModifyEntryToDBEntry(entry *ModifyEntry) (*DBEntry, error) {
 	bNorm, _ := json.Marshal(norm)
 	bOrig, _ := json.Marshal(orig)
 
-	// modifyTimstamp will be updated by now() in SQL
+	updated := time.Now()
 
 	dbEntry := &DBEntry{
 		Id:        entry.dbEntryId,
+		Updated:   updated,
 		AttrsNorm: types.JSONText(string(bNorm)),
 		AttrsOrig: types.JSONText(string(bOrig)),
 	}
@@ -94,8 +115,8 @@ func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry) (*SearchEn
 	}
 	orig := dbEntry.GetAttrsOrig()
 	// orig["entryUUID"] = []string{dbEntry.EntryUUID}
-	// orig["createTimestamp"] = []string{dbEntry.Created.Format(TIMESTAMP_FORMAT)}
-	// orig["modifyTimestamp"] = []string{dbEntry.Updated.Format(TIMESTAMP_FORMAT)}
+	orig["createTimestamp"] = []string{dbEntry.Created.In(time.UTC).Format(TIMESTAMP_FORMAT)}
+	orig["modifyTimestamp"] = []string{dbEntry.Updated.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 
 	readEntry := NewSearchEntry(dn, orig)
 
@@ -108,9 +129,6 @@ func (m *Mapper) FetchedDBEntryToModifyEntry(dbEntry *FetchedDBEntry) (*ModifyEn
 		return nil, err
 	}
 	orig := dbEntry.GetAttrsOrig()
-	// orig["entryUUID"] = []string{dbEntry.EntryUUID}
-	// orig["createTimestamp"] = []string{dbEntry.Created.Format(TIMESTAMP_FORMAT)}
-	// orig["modifyTimestamp"] = []string{dbEntry.Updated.Format(TIMESTAMP_FORMAT)}
 
 	entry, err := NewModifyEntry(dn, orig)
 	if err != nil {
@@ -120,117 +138,3 @@ func (m *Mapper) FetchedDBEntryToModifyEntry(dbEntry *FetchedDBEntry) (*ModifyEn
 
 	return entry, nil
 }
-
-// func (m *Mapper) DBEntryToEntry(dbEntry *DBEntry) (*Entry, error) {
-// 	dn, err := normalizeDN(dbEntry.DNNorm)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	orig := dbEntry.GetAttrsOrig()
-// 	orig["entryUUID"] = []string{dbEntry.EntryUUID}
-// 	orig["createTimestamp"] = []string{dbEntry.Created.Format(TIMESTAMP_FORMAT)}
-// 	orig["modifyTimestamp"] = []string{dbEntry.Updated.Format(TIMESTAMP_FORMAT)}
-//
-// 	entry, err := NewEntryWithValues(dn, orig)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	entry.dbEntryId = dbEntry.Id
-//
-// 	return entry, nil
-// }
-
-// func (m *Mapper) ToEntry(dn *DN, ldapAttrs message.AttributeList) (*Entry, error) {
-// 	entryUUID, _ := uuid.NewRandom()
-// 	createTimestamp := time.Now()
-// 	modifyTimestamp := createTimestamp
-//
-// 	jsonAttrs := Entry{}
-//
-// 	// Store RDN into attrs
-// 	rdn := dn.GetRDN()
-// 	for k, v := range rdn {
-// 		s, ok := m.schemaMap.Get(k)
-// 		if !ok {
-// 			log.Printf("warn: Invalid rdn. attrName: %s", k)
-// 			return nil, NewInvalidDNSyntax()
-// 		}
-// 		if s.SingleValue {
-// 			jsonAttrs[s.Name] = v
-// 		} else {
-// 			jsonAttrs[s.Name] = []interface{}{v}
-// 		}
-// 	}
-//
-// 	for _, attr := range ldapAttrs {
-// 		k := attr.Type_()
-// 		attrName := string(k)
-//
-// 		arr := make([]string, len(attr.Vals()))
-// 		for i, v := range attr.Vals() {
-// 			arr[i] = string(v)
-// 		}
-//
-// 		sv, err := NewSchemaValue(attrName, arr)
-// 		if err != nil {
-// 			// TODO check classObject and return error response
-// 			log.Printf("warn: Invalid attribute name. attrName: %s err: %s", k, err)
-// 			return nil, fmt.Errorf("Unsupported attribute name: %s", k)
-// 		}
-//
-// 		if err := sv.Validate(); err != nil {
-// 			log.Printf("warn: Invalid syntax. attrName: %s attrValue: %s err: %s", k, sv.Get(), err)
-// 			return err
-// 		}
-//
-// 		var err error
-// 		// TODO strict mode
-// 		if s.Name == "entryUUID" {
-// 			entryUUID, err = uuid.Parse(string(attr.Vals()[0]))
-// 			if err != nil {
-// 				log.Printf("warn: Invalid entryUUID %s", attr.Vals()[0])
-// 				return nil, err
-// 			}
-// 			continue
-// 		}
-// 		// TODO strict mode
-// 		if s.Name == "createTimestamp" {
-// 			createTimestamp, err = time.Parse(TIMESTAMP_FORMAT, string(attr.Vals()[0]))
-// 			if err != nil {
-// 				log.Printf("warn: Invalid createTimestamp %s, err: %s", attr.Vals()[0], err)
-// 				return nil, err
-// 			}
-// 			continue
-// 		}
-// 		// TODO strict mode
-// 		if s.Name == "modifyTimestamp" {
-// 			modifyTimestamp, err = time.Parse(TIMESTAMP_FORMAT, string(attr.Vals()[0]))
-// 			if err != nil {
-// 				log.Printf("warn: Invalid modifyTimestamp %s, err: %s", attr.Vals()[0], err)
-// 				return nil, err
-// 			}
-// 			continue
-// 		}
-//
-// 		mapAttributeValue(s, attr, jsonAttrs)
-// 	}
-//
-// 	entry := NewEntry(dn, jsonAttrs)
-// 	entry.EntryUUID = entryUUID.String()
-// 	entry.Created = createTimestamp
-// 	entry.Updated = modifyTimestamp
-//
-// 	return entry, nil
-// }
-
-// func mapAttributeValue(s *Schema, attr message.Attribute, jsonAttrs Entry) {
-// 	if s.SingleValue {
-// 		jsonAttrs[s.Name] = string(attr.Vals()[0])
-// 	} else {
-// 		arr := []interface{}{}
-// 		for _, v := range attr.Vals() {
-// 			arr = append(arr, string(v))
-// 		}
-// 		jsonAttrs[s.Name] = arr
-// 	}
-// }

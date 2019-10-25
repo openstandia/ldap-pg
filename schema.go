@@ -141,7 +141,7 @@ func InitSchemaMap() SchemaMap {
 			if strings.Contains(line, "SINGLE-VALUE") {
 				s.SingleValue = true
 			}
-			if strings.Contains(line, "NO_USER_MODIFICATION") {
+			if !*migrationEnabled && strings.Contains(line, "NO-USER-MODIFICATION") {
 				s.NoUserModification = true
 			}
 

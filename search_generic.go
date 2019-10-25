@@ -221,9 +221,6 @@ func responseEntry(w ldap.ResponseWriter, r message.SearchRequest, searchEntry *
 				}
 			}
 		}
-		// e.AddAttribute("entryUUID", message.AttributeValue(entry.EntryUUID))
-		// e.AddAttribute("createTimestamp", message.AttributeValue(entry.Created.Format(TIMESTAMP_FORMAT)))
-		// e.AddAttribute("modifyTimestamp", message.AttributeValue(entry.Updated.Format(TIMESTAMP_FORMAT)))
 	}
 
 	w.Write(e)

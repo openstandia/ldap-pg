@@ -2,9 +2,7 @@ package main
 
 import (
 	"log"
-	"time"
 
-	"github.com/google/uuid"
 	ldap "github.com/openstandia/ldapserver"
 )
 
@@ -30,19 +28,6 @@ func handleAdd(w ldap.ResponseWriter, m *ldap.Message) {
 	if err != nil {
 		responseAddError(w, err)
 		return
-	}
-
-	// TODO strict mode
-	if _, ok := addEntry.GetAttrNorm("entryUUID"); !ok {
-		uuid, _ := uuid.NewRandom()
-		addEntry.Add("entryUUID", []string{uuid.String()})
-	}
-	now := time.Now()
-	if _, ok := addEntry.GetAttrNorm("createTimestamp"); !ok {
-		addEntry.Add("createTimestamp", []string{now.Format(TIMESTAMP_FORMAT)})
-	}
-	if _, ok := addEntry.GetAttrNorm("modifyTimestamp"); !ok {
-		addEntry.Add("modifyTimestamp", []string{now.Format(TIMESTAMP_FORMAT)})
 	}
 
 	tx := db.MustBegin()
