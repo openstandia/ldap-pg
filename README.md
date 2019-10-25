@@ -124,6 +124,8 @@ Options:
         Root dn for the LDAP
   -root-pw string
         Root password for the LDAP
+  -schema value
+        Additional/overwriting custom schema
   -suffix string
         Suffix for the LDAP
   -two-way

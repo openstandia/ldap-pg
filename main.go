@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 var (
@@ -131,7 +132,21 @@ var (
 	)
 )
 
+type arrayFlags []string
+
+func (i *arrayFlags) String() string {
+	return strings.Join(*i, "\n")
+}
+
+func (i *arrayFlags) Set(value string) error {
+	*i = append(*i, value)
+	return nil
+}
+
+var customSchema arrayFlags
+
 func main() {
+	fs.Var(&customSchema, "schema", "Additional/overwriting custom schema")
 	fs.Usage = func() {
 		_, exe := filepath.Split(os.Args[0])
 		fmt.Fprint(os.Stderr, "ldap-pg.\n\n")

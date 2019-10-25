@@ -40,7 +40,7 @@ func handleSearchSubschema(w ldap.ResponseWriter, m *ldap.Message) {
 		e.AddAttribute("cn", "Subschema")
 	}
 
-	lines := strings.Split(SCHEMA, "\n")
+	lines := strings.Split(schemaMap.Dump(), "\n")
 
 	for i, j := 0, len(lines)-1; i < j; i, j = i+1, j-1 {
 		lines[i], lines[j] = lines[j], lines[i]
