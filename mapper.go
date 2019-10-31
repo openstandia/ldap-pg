@@ -114,7 +114,7 @@ func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry) (*SearchEn
 		return nil, err
 	}
 	orig := dbEntry.GetAttrsOrig()
-	// orig["entryUUID"] = []string{dbEntry.EntryUUID}
+	orig["entryUUID"] = []string{dbEntry.EntryUUID}
 	orig["createTimestamp"] = []string{dbEntry.Created.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 	orig["modifyTimestamp"] = []string{dbEntry.Updated.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 
