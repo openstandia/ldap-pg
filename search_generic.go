@@ -186,30 +186,37 @@ func responseEntry(w ldap.ResponseWriter, r message.SearchRequest, searchEntry *
 				av[i] = message.AttributeValue(vv)
 			}
 			e.AddAttribute(message.AttributeDescription(k), av...)
+
+			sentAttrs[k] = struct{}{}
 		}
-	} else {
-		for _, attr := range r.Attributes() {
-			a := string(attr)
+	}
 
-			log.Printf("Requested attr: %s", a)
+	for _, attr := range r.Attributes() {
+		a := string(attr)
 
-			if a != "+" {
-				k, values, ok := searchEntry.GetAttrOrig(a)
-				if !ok {
-					log.Printf("No schema for requested attr, ignore. attr: %s", a)
-					continue
-				}
+		log.Printf("Requested attr: %s", a)
 
-				log.Printf("- Attribute %s=%#v", a, values)
-
-				av := make([]message.AttributeValue, len(values))
-				for i, vv := range values {
-					av[i] = message.AttributeValue(vv)
-				}
-				e.AddAttribute(message.AttributeDescription(k), av...)
-
-				sentAttrs[k] = struct{}{}
+		if a != "+" {
+			k, values, ok := searchEntry.GetAttrOrig(a)
+			if !ok {
+				log.Printf("No schema for requested attr, ignore. attr: %s", a)
+				continue
 			}
+
+			if _, ok := sentAttrs[k]; ok {
+				log.Printf("Already sent, ignore. attr: %s", a)
+				continue
+			}
+
+			log.Printf("- Attribute %s=%#v", a, values)
+
+			av := make([]message.AttributeValue, len(values))
+			for i, vv := range values {
+				av[i] = message.AttributeValue(vv)
+			}
+			e.AddAttribute(message.AttributeDescription(k), av...)
+
+			sentAttrs[k] = struct{}{}
 		}
 	}
 
