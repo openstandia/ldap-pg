@@ -35,13 +35,21 @@ func (s *Schema) EqualityMatch(q *Query, val string) {
 
 	sv, err := NewSchemaValue(s.Name, []string{val})
 	if err != nil {
-		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
+		// TODO error no entry response
+		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s, err: %+v", s.Name, val, err)
 		return
 	}
+	log.Printf("s: %+v", s)
 
 	if s.IndexType == "fts" {
 		// TODO Escapse %
 		q.Query += fmt.Sprintf("attrs_norm->>'%s' ILIKE :%s", s.Name, paramKey)
+	} else if s.IsIndependentColumn() {
+		if s.IsCaseIgnore() {
+			q.Query += fmt.Sprintf("%s = :%s", s.ColumnName, paramKey)
+		} else {
+			q.Query += fmt.Sprintf("%s = :%s", s.ColumnName, paramKey)
+		}
 	} else {
 		if s.IsCaseIgnore() {
 			if s.SingleValue {

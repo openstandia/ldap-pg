@@ -133,6 +133,15 @@ func (s *Server) Start() {
 
 	// Init schema map
 	schemaMap = InitSchemaMap()
+	if s, ok := schemaMap.Get("entryUUID"); ok {
+		s.UseIndependentColumn("uuid")
+	}
+	if s, ok := schemaMap.Get("createTimestamp"); ok {
+		s.UseIndependentColumn("created")
+	}
+	if s, ok := schemaMap.Get("modifyTimestamp"); ok {
+		s.UseIndependentColumn("updated")
+	}
 
 	// Init mapper
 	mapper = NewMapper(schemaMap)

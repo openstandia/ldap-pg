@@ -77,6 +77,7 @@ type Schema struct {
 	Sup                string
 	Usage              string
 	IndexType          string
+	ColumnName         string
 	SingleValue        bool
 	NoUserModification bool
 }
@@ -546,4 +547,12 @@ func (s *Schema) IsOperationalAttribute() bool {
 	}
 	// TODO check other case
 	return false
+}
+
+func (s *Schema) IsIndependentColumn() bool {
+	return s.ColumnName != ""
+}
+
+func (s *Schema) UseIndependentColumn(c string) {
+	s.ColumnName = c
 }
