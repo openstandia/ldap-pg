@@ -42,10 +42,6 @@ func handleSearchSubschema(w ldap.ResponseWriter, m *ldap.Message) {
 
 	lines := strings.Split(schemaMap.Dump(), "\n")
 
-	for i, j := 0, len(lines)-1; i < j; i, j = i+1, j-1 {
-		lines[i], lines[j] = lines[j], lines[i]
-	}
-
 	valuesMap := map[string][]message.AttributeValue{}
 
 	log.Printf("size: %d", len(lines))
@@ -67,7 +63,10 @@ func handleSearchSubschema(w ldap.ResponseWriter, m *ldap.Message) {
 
 	// log.Printf("v: %v", valuesMap)
 
-	for k, v := range valuesMap {
+	attrNames := []string{"ldapSyntaxes", "matchingRules", "matchingRuleUse", "attributeTypes", "objectClasses"}
+
+	for _, k := range attrNames {
+		v := valuesMap[k]
 		e.AddAttribute(message.AttributeDescription(k), v...)
 	}
 	w.Write(e)

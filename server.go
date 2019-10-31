@@ -47,8 +47,9 @@ type ServerConfig struct {
 }
 
 type Server struct {
-	config *ServerConfig
-	rootDN *DN
+	config   *ServerConfig
+	rootDN   *DN
+	internal *ldap.Server
 }
 
 func NewServer(c *ServerConfig) *Server {
@@ -144,6 +145,7 @@ func (s *Server) Start() {
 
 	//Create a new LDAP Server
 	server := ldap.NewServer()
+	s.internal = server
 
 	//Create routes bindings
 	routes := ldap.NewRouteMux()
@@ -197,6 +199,10 @@ func (s *Server) Start() {
 	close(ch)
 
 	server.Stop()
+}
+
+func (s *Server) Stop() {
+	s.internal.Stop()
 }
 
 func handleNotFound(w ldap.ResponseWriter, r *ldap.Message) {
