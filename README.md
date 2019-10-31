@@ -31,7 +31,6 @@
   * [ ] Extended
 * LDAP Controls
   * [x] Simple Paged Results Control
-* [ ] SSL/StartTLS
 * Support member/memberOf association (like OpenLDAP memberOf overlay)
   * One-way mode
     * [x] Return memberOf attribute as operational attribute
@@ -43,7 +42,10 @@
     * [x] Search filter using memberOf
 * Schema
   * [x] Basic schema processing
-  * [ ] User defined schema
+  * [ ] More schema processing
+  * [x] User defined schema
+* Network
+  * [ ] SSL/StartTLS
 * [ ] Prometheus metrics
 * [ ] Auto create/migrate table for PostgreSQL 
 
@@ -55,7 +57,7 @@ PostgreSQL 10 or later.
 
 ### From bainary
 
-Please download it from [release page](/releases).
+Please download it from [release page](../../releases).
 
 ### From source
 
