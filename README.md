@@ -67,7 +67,7 @@ Please download it from [release page](../../releases).
 make
 ```
 
-You can find the binary in './bin/' directory.
+You can find the binary in `./bin/` directory.
 
 ## Usage
 
