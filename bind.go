@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"strings"
 
@@ -64,9 +63,9 @@ func (h *BindHandler) HandleBind(w ldap.ResponseWriter, m *ldap.Message) {
 		log.Printf("info: Find bind user. DN: %s", dn.DNNorm)
 
 		bindUserCred, err := findCredByDN(dn)
-		if err == nil && bindUserCred != "" {
-			log.Printf("Fetched userPassword: %s", bindUserCred)
-			if ok := h.validateCred(pass, bindUserCred); !ok {
+		if err == nil && len(bindUserCred) > 0 {
+			log.Printf("Fetched userPassword: %v", bindUserCred)
+			if ok := h.validateCreds(pass, bindUserCred); !ok {
 				log.Printf("info: Bind failed. DN: %s", name)
 				res.SetResultCode(ldap.LDAPResultInvalidCredentials)
 				res.SetDiagnosticMessage("invalid credentials")
@@ -101,6 +100,15 @@ func (h *BindHandler) HandleBind(w ldap.ResponseWriter, m *ldap.Message) {
 	w.Write(res)
 }
 
+func (h *BindHandler) validateCreds(input string, cred []string) bool {
+	for _, v := range cred {
+		if ok := h.validateCred(input, v); ok {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *BindHandler) validateCred(input, cred string) bool {
 	var ok bool
 	var err error
@@ -121,7 +129,7 @@ func (h *BindHandler) validateCred(input, cred string) bool {
 	}
 
 	if err != nil {
-		if _, ok := err.(InvalidCredentials); ok {
+		if err.Error() == "hash does not match password" {
 			log.Printf("info: Invalid bindDN/credential. err: %+v", err)
 		} else {
 			log.Printf("error: Failed to authenticate. err: %+v", err)
@@ -166,8 +174,7 @@ func (h *BindHandler) doPassThrough(input, passThroughKey string) (bool, error) 
 func saveAuthencatedDN(m *ldap.Message, dn *DN) error {
 	session := getAuthSession(m)
 	if v, ok := session["dn"]; ok {
-		log.Printf("warn: Already authenticated: %s <- %s", v.DNNorm, dn.DNNorm)
-		return fmt.Errorf("Already authenticated: %s <- %s", v.DNNorm, dn.DNNorm)
+		log.Printf("info: Switching authenticated user: %s -> %s", v.DNNorm, dn.DNNorm)
 	}
 	session["dn"] = dn
 	log.Printf("Saved authenticated DN: %s", dn.DNNorm)

@@ -607,13 +607,18 @@ func findByDNNormWithLock(tx *sqlx.Tx, dnNorm string) (*ModifyEntry, error) {
 	return mapper.FetchedDBEntryToModifyEntry(&dbEntry)
 }
 
-func findCredByDN(dn *DN) (string, error) {
-	var bindUserCred string
-	err := findCredByDNStmt.Get(&bindUserCred, map[string]interface{}{
+func findCredByDN(dn *DN) ([]string, error) {
+	var j types.JSONText
+	err := findCredByDNStmt.Get(&j, map[string]interface{}{
 		"dnNorm": dn.DNNorm,
 	})
 	if err != nil {
-		return "", err
+		return nil, xerrors.Errorf("Faild to find cred by DN. dn: %s, err: %w", dn.DNNorm, err)
+	}
+	var bindUserCred []string
+	err = j.Unmarshal(&bindUserCred)
+	if err != nil {
+		return nil, xerrors.Errorf("Faild to unmarshal cred. dn: %s, err: %w", dn.DNNorm, err)
 	}
 	return bindUserCred, nil
 }
