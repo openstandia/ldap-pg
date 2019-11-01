@@ -60,6 +60,14 @@ func (h *BindHandler) HandleBind(w ldap.ResponseWriter, m *ldap.Message) {
 			return
 		}
 
+		// Anonymous
+		if dn.DNNorm == "" {
+			log.Printf("info: Bind anonymous user.")
+
+			w.Write(res)
+			return
+		}
+
 		log.Printf("info: Find bind user. DN: %s", dn.DNNorm)
 
 		bindUserCred, err := findCredByDN(dn)

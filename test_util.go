@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -103,6 +104,20 @@ func (c Bind) Run(conn *ldap.Conn) (*ldap.Conn, error) {
 	return conn, err
 }
 
+func AddOU(ou string) Add {
+	type A []string
+	type M map[string][]string
+
+	return Add{
+		"ou=" + ou,
+		"",
+		M{
+			"objectClass": A{"organizationalUnit"},
+		},
+		&AssertEntry{},
+	}
+}
+
 type Add struct {
 	rdn    string
 	baseDN string
@@ -151,16 +166,33 @@ type Search struct {
 	filter string
 	scope  int
 	attrs  []string
+	assert *AssertEntries
 }
 
 func (s Search) Run(conn *ldap.Conn) (*ldap.Conn, error) {
-	sr, err := searchEntry(conn, "", s.baseDN, s.scope, fmt.Sprintf("(%s)", s.filter), nil)
+	search := ldap.NewSearchRequest(
+		s.baseDN,
+		s.scope,
+		ldap.NeverDerefAliases,
+		0, // Size Limit
+		0, // Time Limit
+		false,
+		"("+s.filter+")", // The filter to apply
+		s.attrs,          // A list attributes to retrieve
+		nil,
+	)
+	sr, err := conn.Search(search)
 	if err != nil {
 		return conn, err
 	}
-	for _, v := range sr.Entries {
-		v.PrettyPrint(4)
+
+	if s.assert != nil {
+		err = s.assert.AssertEntries(conn, err, sr)
+		if err != nil {
+			return conn, err
+		}
 	}
+
 	return conn, nil
 }
 
@@ -319,6 +351,46 @@ func (a AssertEntry) AssertEntry(conn *ldap.Conn, err error, rdn, baseDN string,
 	return nil
 }
 
+type AssertEntries []ExpectEntry
+
+func (e AssertEntries) AssertEntries(conn *ldap.Conn, err error, sr *ldap.SearchResult) error {
+	m := make(map[string]ExpectEntry, len(sr.Entries))
+	for _, expect := range e {
+		var dn string
+		if expect.rdn == "" && expect.baseDN == "" {
+			dn = ""
+		} else if expect.rdn != "" && expect.baseDN == "" {
+			dn = fmt.Sprintf("%s,%s", expect.rdn, server.GetSuffix())
+		} else if expect.rdn == "" && expect.baseDN != "" {
+			dn = fmt.Sprintf("%s", expect.baseDN)
+		} else {
+			dn = fmt.Sprintf("%s,%s,%s", expect.rdn, expect.baseDN, server.GetSuffix())
+		}
+		m[strings.ToLower(dn)] = expect
+	}
+
+	for _, v := range sr.Entries {
+		expect, ok := m[strings.ToLower(v.DN)]
+		if !ok {
+			return xerrors.Errorf("Unexpected entry. dn: %s, entry: %v", v.DN, *v)
+		}
+
+		for k, expectAttrs := range expect.attrs {
+			actual := v.GetAttributeValues(k)
+			if !reflect.DeepEqual(expectAttrs, actual) {
+				return xerrors.Errorf("Unexpected entry attr [%s]. want = [%v] got = %d", k, expectAttrs, actual)
+			}
+		}
+	}
+	return nil
+}
+
+type ExpectEntry struct {
+	rdn    string
+	baseDN string
+	attrs  map[string][]string
+}
+
 type AssertSearchOne struct {
 	baseDN      string
 	filter      string
@@ -451,7 +523,7 @@ func setupLDAPServer() *Server {
 			RootDN:         "cn=Manager,dc=example,dc=com",
 			RootPW:         "secret",
 			BindAddress:    "127.0.0.1.8389",
-			LogLevel:       "debug",
+			LogLevel:       "warn",
 			PProfServer:    "",
 			GoMaxProcs:     0,
 		})

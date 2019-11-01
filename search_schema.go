@@ -26,25 +26,16 @@ func handleSearchSubschema(w ldap.ResponseWriter, m *ldap.Message) {
 	default:
 	}
 
-	attrMap := map[string]struct{}{}
-	for _, attr := range r.Attributes() {
-		attrMap[string(attr)] = struct{}{}
-	}
-
 	e := ldap.NewSearchResultEntry(string(r.BaseObject()))
-	if _, ok := attrMap["objectclass"]; ok || (len(attrMap) == 0 && r.FilterString() == "(objectclass=*)") {
-		e.AddAttribute("objectClass", "top")
-		e.AddAttribute("objectClass", "subentry")
-		e.AddAttribute("objectClass", "subschema")
-		e.AddAttribute("objectClass", "extensibleObject")
-		e.AddAttribute("cn", "Subschema")
-	}
+
+	searchEntry := NewSearchEntry(nil, map[string][]string{
+		"objectClass": []string{"top", "subentry", "subschema", "extensibleObject"},
+		"cn":          []string{"Subschema"},
+	})
 
 	lines := strings.Split(schemaMap.Dump(), "\n")
 
-	valuesMap := map[string][]message.AttributeValue{}
-
-	log.Printf("size: %d", len(lines))
+	valuesMap := map[string][]string{}
 
 	for _, line := range lines {
 		tag := strings.Split(line, ": ")
@@ -52,23 +43,75 @@ func handleSearchSubschema(w ldap.ResponseWriter, m *ldap.Message) {
 		if len(tag) == 1 {
 			continue
 		}
-		if _, ok := attrMap[tag[0]]; !ok {
-			continue
-		}
 
 		// log.Printf("attr: %s", string(attr))
 		// log.Printf("attr: %s", tag)
-		valuesMap[tag[0]] = append(valuesMap[tag[0]], message.AttributeValue(line[len(tag[0])+2:]))
+		valuesMap[tag[0]] = append(valuesMap[tag[0]], line[len(tag[0])+2:])
 	}
 
 	// log.Printf("v: %v", valuesMap)
 
-	attrNames := []string{"ldapSyntaxes", "matchingRules", "matchingRuleUse", "attributeTypes", "objectClasses"}
+	// attrNames := []string{"ldapSyntaxes", "matchingRules", "matchingRuleUse", "attributeTypes", "objectClasses"}
 
-	for _, k := range attrNames {
-		v := valuesMap[k]
-		e.AddAttribute(message.AttributeDescription(k), v...)
+	for k, v := range valuesMap {
+		searchEntry.attributes[k] = v
 	}
+
+	sentAttrs := map[string]struct{}{}
+
+	if isAllAttributesRequested(r) {
+		for k, v := range searchEntry.GetAttrsOrigWithoutOperationalAttrs() {
+			log.Printf("- Attribute %s: %#v", k, v)
+
+			av := make([]message.AttributeValue, len(v))
+			for i, vv := range v {
+				av[i] = message.AttributeValue(vv)
+			}
+			e.AddAttribute(message.AttributeDescription(k), av...)
+
+			sentAttrs[k] = struct{}{}
+		}
+	}
+
+	for _, attr := range r.Attributes() {
+		a := string(attr)
+
+		log.Printf("Requested attr: %s", a)
+
+		if a != "+" {
+			k, values, ok := searchEntry.GetAttrOrig(a)
+			if !ok {
+				log.Printf("No schema for requested attr, ignore. attr: %s", a)
+				continue
+			}
+
+			if _, ok := sentAttrs[k]; ok {
+				log.Printf("Already sent, ignore. attr: %s", a)
+				continue
+			}
+
+			log.Printf("- Attribute %s=%#v", a, values)
+
+			av := make([]message.AttributeValue, len(values))
+			for i, vv := range values {
+				av[i] = message.AttributeValue(vv)
+			}
+			e.AddAttribute(message.AttributeDescription(k), av...)
+
+			sentAttrs[k] = struct{}{}
+		}
+	}
+
+	if isOperationalAttributesRequested(r) {
+		for k, v := range searchEntry.GetOperationalAttrsOrig() {
+			if _, ok := sentAttrs[k]; !ok {
+				for _, vv := range v {
+					e.AddAttribute(message.AttributeDescription(k), message.AttributeValue(vv))
+				}
+			}
+		}
+	}
+
 	w.Write(e)
 
 	// e.AddAttribute("mail", "valere.jeantet@gmail.com", "mail@vjeantet.fr")
