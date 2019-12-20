@@ -6,18 +6,30 @@ import (
 	ldap "github.com/openstandia/ldapserver"
 )
 
-func handleAdd(w ldap.ResponseWriter, m *ldap.Message) {
+type AddHandler struct {
+	server *Server
+}
+
+func NewAddHandler(s *Server) *AddHandler {
+	return &AddHandler{
+		server: s,
+	}
+}
+
+func (h *AddHandler) HandleAdd(w ldap.ResponseWriter, m *ldap.Message) {
 	r := m.GetAddRequest()
 	log.Printf("info: Adding entry: %s", r.Entry())
 	//attributes values
 
-	dn, err := normalizeDN(string(r.Entry()))
+	dn, err := normalizeDN2(h.server.SuffixNorm(), string(r.Entry()))
 	if err != nil {
 		log.Printf("warn: Invalid DN: %s err: %s", r.Entry(), err)
 
 		responseAddError(w, err)
 		return
 	}
+
+	log.Printf("debug: Adding Internal DN: %v", dn)
 
 	if !requiredAuthz(m, "add", dn) {
 		responseAddError(w, NewInsufficientAccess())

@@ -19,12 +19,15 @@ var (
 	findCredByDNStmt                 *sqlx.NamedStmt
 	findByMemberWithLockStmt         *sqlx.NamedStmt
 	findByMemberOfWithLockStmt       *sqlx.NamedStmt
+	findParentIDByDNWithLockStmt     *sqlx.NamedStmt
+	addTreeStmt                      *sqlx.NamedStmt
 	addStmt                          *sqlx.NamedStmt
 	addMemberOfByDNNormStmt          *sqlx.NamedStmt
 	updateAttrsByIdStmt              *sqlx.NamedStmt
 	updateAttrsWithNoUpdatedByIdStmt *sqlx.NamedStmt
 	updateDNByIdStmt                 *sqlx.NamedStmt
 	deleteByDNStmt                   *sqlx.NamedStmt
+	ROOT_ID                          int64 = 0
 )
 
 // For generic filter
@@ -82,7 +85,34 @@ func initStmt(db *sqlx.DB) error {
 		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
 	}
 
-	addStmt, err = db.PrepareNamed(`INSERT INTO ldap_entry (dn_norm, path, uuid, created, updated, attrs_norm, attrs_orig) SELECT :dnNorm, :path, :uuid, :created, :updated, :attrsNorm, :attrsOrig WHERE NOT EXISTS (SELECT id FROM ldap_entry WHERE dn_norm = :dnNorm) RETURNING id`)
+	findParentIDByDNWithLockStmt, err = db.PrepareNamed(`WITH RECURSIVE child (dn_norm, id, parent_id, rdn_norm) AS
+	(
+		SELECT e.rdn_norm::::TEXT AS dn_norm, e.id, e.parent_id, e.rdn_norm FROM
+		ldap_tree e WHERE e.parent_id = 0
+		UNION ALL
+			SELECT
+				e.rdn_norm || ',' || child.dn_norm,
+				e.id,
+				e.parent_id,
+				e.rdn_norm
+			FROM ldap_tree e, child
+			WHERE e.parent_id = child.id
+	)
+	SELECT id from child WHERE dn_norm = :dn_norm`)
+	if err != nil {
+		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+	}
+
+	addTreeStmt, err = db.PrepareNamed(`INSERT INTO ldap_tree (id, parent_id, rdn_norm)
+		VALUES (:id, :parent_id, :rdn_norm)`)
+	if err != nil {
+		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+	}
+
+	addStmt, err = db.PrepareNamed(`INSERT INTO ldap_entry (parent_id, rdn_norm, dn_norm, path, uuid, created, updated, attrs_norm, attrs_orig)
+		SELECT :parent_id, :rdn_norm, :dnNorm, :path, :uuid, :created, :updated, :attrsNorm, :attrsOrig
+			WHERE NOT EXISTS (SELECT id FROM ldap_entry WHERE parent_id = :parent_id AND rdn_norm = :rdn_norm)
+		RETURNING id`)
 	if err != nil {
 		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
 	}
@@ -151,6 +181,12 @@ func (e *FetchedDBEntry) Clear() {
 	e.Count = 0
 }
 
+type DBTree struct {
+	ID       int64  `db:"id"`
+	parentID int64  `db:"parent_id"`
+	RDNNorm  string `db:"rdn_norm"`
+}
+
 type DBEntry struct {
 	Id            int64          `db:"id"`
 	DNNorm        string         `db:"dn_norm"`
@@ -187,7 +223,19 @@ func insert(tx *sqlx.Tx, entry *AddEntry) (int64, error) {
 		return 0, err
 	}
 
+	var parentID int64
+	if entry.GetDN().ParentDNNorm == "" {
+		parentID = ROOT_ID
+	} else {
+		parentID, err = findParentIDbyDNWithLock(tx, entry.GetDN())
+		if err != nil {
+			return 0, err
+		}
+	}
+
 	rows, err := tx.NamedStmt(addStmt).Queryx(map[string]interface{}{
+		"rdn_norm":  entry.RDNNorm(),
+		"parent_id": parentID,
 		"dnNorm":    dbEntry.DNNorm,
 		"path":      dbEntry.Path,
 		"uuid":      dbEntry.EntryUUID,
@@ -205,11 +253,23 @@ func insert(tx *sqlx.Tx, entry *AddEntry) (int64, error) {
 	if rows.Next() {
 		rows.Scan(&id)
 	} else {
+		log.Printf("debug: Already exists. parentID: %d, rdn_norm: %s", parentID, entry.RDNNorm())
 		return 0, NewAlreadyExists()
 	}
 
 	// work around to avoid "pq: unexpected Bind response 'C'"
 	rows.Close()
+
+	if entry.IsContainer() {
+		_, err := tx.NamedStmt(addTreeStmt).Exec(map[string]interface{}{
+			"id":        id,
+			"parent_id": parentID,
+			"rdn_norm":  entry.RDNNorm(),
+		})
+		if err != nil {
+			return 0, xerrors.Errorf("Failed to insert tree record. parent_id: %s, rdn_norm: %s err: %w", parentID, entry.RDNNorm(), err)
+		}
+	}
 
 	if *twowayEnabled {
 		if members, ok := entry.GetAttrNorm("member"); ok {
@@ -577,6 +637,24 @@ func findByMemberOfDNWithLock(tx *sqlx.Tx, memberDN *DN) ([]*ModifyEntry, error)
 	}
 
 	return modifyEntries, nil
+}
+
+func findParentIDbyDNWithLock(tx *sqlx.Tx, dn *DN) (int64, error) {
+	rows, err := tx.NamedStmt(findParentIDByDNWithLockStmt).Queryx(map[string]interface{}{
+		"dn_norm": dn.ParentDNNorm,
+	})
+	if err != nil {
+		return 0, xerrors.Errorf("Failed to fetch parentID by DN: %s, err: %w", dn.DNOrig, err)
+	}
+	defer rows.Close()
+	if rows.Next() {
+		var id int64
+		rows.Scan(&id)
+		return id, nil
+	}
+	log.Printf("debug: Not found parent DN. dn_norm: %s", dn.ParentDNNorm)
+	// TODO check LDAP error code
+	return 0, NewNoSuchObject()
 }
 
 func findByDN(tx *sqlx.Tx, dn *DN) (*SearchEntry, error) {

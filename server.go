@@ -47,9 +47,10 @@ type ServerConfig struct {
 }
 
 type Server struct {
-	config   *ServerConfig
-	rootDN   *DN
-	internal *ldap.Server
+	config     *ServerConfig
+	rootDN     *DN
+	internal   *ldap.Server
+	suffixNorm []string
 }
 
 func NewServer(c *ServerConfig) *Server {
@@ -59,8 +60,15 @@ func NewServer(c *ServerConfig) *Server {
 	}
 	c.RootPW = hashedRootPW
 
+	s := strings.Split(c.Suffix, ",")
+	sn := make([]string, len(s))
+	for i := 0; i < len(s); i++ {
+		sn[i] = strings.TrimSpace(strings.ToLower(s[i]))
+	}
+
 	return &Server{
-		config: c,
+		config:     c,
+		suffixNorm: sn,
 	}
 }
 
@@ -162,7 +170,7 @@ func (s *Server) Start() {
 	routes.Abandon(handleAbandon)
 	routes.Bind(NewBindHandler(s).HandleBind)
 	routes.Compare(handleCompare)
-	routes.Add(handleAdd)
+	routes.Add(NewAddHandler(s).HandleAdd)
 	routes.Delete(handleDelete)
 	routes.Modify(handleModify)
 	routes.ModifyDN(handleModifyDN)
@@ -212,6 +220,10 @@ func (s *Server) Start() {
 
 func (s *Server) Stop() {
 	s.internal.Stop()
+}
+
+func (s *Server) SuffixNorm() []string {
+	return s.suffixNorm
 }
 
 func handleNotFound(w ldap.ResponseWriter, r *ldap.Message) {

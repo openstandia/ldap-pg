@@ -1,11 +1,24 @@
 CREATE EXTENSION pgcrypto;
 CREATE EXTENSION pg_trgm;
 
-DROP TABLE ldap_entry;
+
+DROP TABLE IF EXISTS ldap_tree;
+
+CREATE TABLE ldap_tree (
+    id BIGSERIAL PRIMARY KEY,
+    parent_id BIGINT,
+    rdn_norm VARCHAR(255) NOT NULL
+);
+CREATE UNIQUE INDEX idx_ldap_tree_rdn_norm ON ldap_tree (parent_id, rdn_norm);
+
+
+DROP TABLE IF EXISTS ldap_entry;
 
 CREATE TABLE ldap_entry (
     id BIGSERIAL PRIMARY KEY,
-    path VARCHAR(255) NOT NULL,
+    path VARCHAR(255),
+    parent_id BIGINT,
+    rdn_norm VARCHAR(255) NOT NULL,
     dn_norm VARCHAR(255) NOT NULL,
     uuid VARCHAR(36) NOT NULL,
     created TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -14,10 +27,12 @@ CREATE TABLE ldap_entry (
     attrs_orig JSONB NOT NULL
 );
 
+-- ALTER TABLE ldap_entry ADD CONSTRAINT SET FOREIGN KEY (parent_id) REFERENCES ldap_tree(id);
+
 -- basic index
-CREATE INDEX idx_ldap_entry_path ON ldap_entry (path);
+CREATE INDEX idx_ldap_entry_path ON ldap_entry (path varchar_pattern_ops);
+CREATE UNIQUE INDEX idx_ldap_entry_rdn_norm ON ldap_entry (parent_id, rdn_norm);
 CREATE UNIQUE INDEX idx_ldap_entry_uuid ON ldap_entry (uuid);
-CREATE UNIQUE INDEX idx_ldap_entry_dn_norm ON ldap_entry (dn_norm);
 CREATE INDEX idx_ldap_entry_created ON ldap_entry (created);
 CREATE INDEX idx_ldap_entry_updated ON ldap_entry (updated);
 
@@ -33,3 +48,8 @@ CREATE INDEX idx_ldap_entry_attrs_object_class ON ldap_entry USING gin ((attrs_n
 CREATE INDEX idx_ldap_entry_attrs_member ON ldap_entry USING gin ((attrs_norm->'member') jsonb_path_ops);
 CREATE INDEX idx_ldap_entry_attrs_memberOf ON ldap_entry USING gin ((attrs_norm->'memberOf') jsonb_path_ops);
 
+-- insert into ldap_entry values
+--     (0, '/', NULL, 'ou=people', gen_random_uuid(), NOW(), NOW(), '{"ou":"people"}', '{"ou":"people"}'),
+--     (1, '/', NULL, 'ou=group', gen_random_uuid(), NOW(), NOW(), '{"ou":"group"}', '{"ou":"group"}');
+
+-- SELECT setval('ldap_entry_id_seq', max(id)) FROM ldap_entry;

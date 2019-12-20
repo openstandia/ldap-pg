@@ -4,14 +4,52 @@ import (
 	"fmt"
 	"strings"
 
+	"golang.org/x/xerrors"
 	goldap "gopkg.in/ldap.v3"
 )
 
 type DN struct {
 	DNNorm          string
 	DNOrig          string
+	ParentDNNorm    string
+	RDNNorm         string
 	ReverseParentDN string
 	cachedRDN       map[string]string
+}
+
+func normalizeDN2(suffix []string, dn string) (*DN, error) {
+	d, err := parseDN(dn)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(d)-len(suffix) < 0 {
+		return nil, xerrors.Errorf("Invalid DN. It must have suffix. DN: %s", dn)
+	}
+
+	for i, s := range suffix {
+		if d[len(d)-len(suffix)+i] != s {
+			return nil, xerrors.Errorf("Invalid DN. It must have suffix. DN: %s", dn)
+		}
+	}
+
+	d = d[:len(d)-len(suffix)]
+
+	reverse := toReverseDN(d)
+
+	var parentDN string
+	if len(d) > 1 {
+		p := d[1:]
+		parentDN = strings.Join(p, ",")
+	}
+
+	return &DN{
+		DNNorm:          strings.Join(d, ","),
+		ReverseParentDN: reverse,
+		DNOrig:          dn,
+		RDNNorm:         d[0],
+		ParentDNNorm:    parentDN,
+	}, nil
 }
 
 func normalizeDN(dn string) (*DN, error) {
@@ -21,11 +59,15 @@ func normalizeDN(dn string) (*DN, error) {
 	}
 
 	reverse := toReverseDN(d)
+	p := d[:len(d)-1]
+	parentDN := strings.Join(p, ",")
 
 	return &DN{
 		DNNorm:          strings.Join(d, ","),
 		ReverseParentDN: reverse,
 		DNOrig:          dn,
+		RDNNorm:         d[0],
+		ParentDNNorm:    parentDN,
 	}, nil
 }
 

@@ -1,5 +1,7 @@
 package main
 
+import "strings"
+
 type AddEntry struct {
 	schemaMap  *SchemaMap
 	dn         *DN
@@ -34,6 +36,15 @@ func (j *AddEntry) SetDN(dn *DN) {
 		// rdn is validated already
 		j.attributes[k], _ = NewSchemaValue(k, []string{v})
 	}
+}
+
+func (j *AddEntry) IsContainer() bool {
+	// TODO check other container?
+	return strings.HasPrefix(j.dn.RDNNorm, "ou=")
+}
+
+func (j *AddEntry) RDNNorm() string {
+	return j.dn.RDNNorm
 }
 
 func (j *AddEntry) GetDN() *DN {
