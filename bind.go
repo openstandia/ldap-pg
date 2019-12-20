@@ -11,17 +11,7 @@ import (
 	"golang.org/x/xerrors"
 )
 
-type BindHandler struct {
-	server *Server
-}
-
-func NewBindHandler(s *Server) *BindHandler {
-	return &BindHandler{
-		server: s,
-	}
-}
-
-func (h *BindHandler) HandleBind(w ldap.ResponseWriter, m *ldap.Message) {
+func handleBind(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	r := m.GetBindRequest()
 	res := ldap.NewBindResponse(ldap.LDAPResultSuccess)
 	if r.AuthenticationChoice() == "simple" {
@@ -38,8 +28,8 @@ func (h *BindHandler) HandleBind(w ldap.ResponseWriter, m *ldap.Message) {
 			return
 		}
 
-		if dn.Equal(h.server.GetRootDN()) {
-			if ok := h.validateCred(pass, h.server.GetRootPW()); !ok {
+		if dn.Equal(s.GetRootDN()) {
+			if ok := validateCred(s, pass, s.GetRootPW()); !ok {
 				log.Printf("info: Bind failed. DN: %s", name)
 				res.SetResultCode(ldap.LDAPResultInvalidCredentials)
 				res.SetDiagnosticMessage("invalid credentials")
@@ -73,7 +63,7 @@ func (h *BindHandler) HandleBind(w ldap.ResponseWriter, m *ldap.Message) {
 		bindUserCred, err := findCredByDN(dn)
 		if err == nil && len(bindUserCred) > 0 {
 			log.Printf("Fetched userPassword: %v", bindUserCred)
-			if ok := h.validateCreds(pass, bindUserCred); !ok {
+			if ok := validateCreds(s, pass, bindUserCred); !ok {
 				log.Printf("info: Bind failed. DN: %s", name)
 				res.SetResultCode(ldap.LDAPResultInvalidCredentials)
 				res.SetDiagnosticMessage("invalid credentials")
@@ -108,16 +98,16 @@ func (h *BindHandler) HandleBind(w ldap.ResponseWriter, m *ldap.Message) {
 	w.Write(res)
 }
 
-func (h *BindHandler) validateCreds(input string, cred []string) bool {
+func validateCreds(s *Server, input string, cred []string) bool {
 	for _, v := range cred {
-		if ok := h.validateCred(input, v); ok {
+		if ok := validateCred(s, input, v); ok {
 			return true
 		}
 	}
 	return false
 }
 
-func (h *BindHandler) validateCred(input, cred string) bool {
+func validateCred(s *Server, input, cred string) bool {
 	var ok bool
 	var err error
 	if len(cred) > 7 && string(cred[0:6]) == "{SSHA}" {
@@ -130,7 +120,7 @@ func (h *BindHandler) validateCred(input, cred string) bool {
 		ok, err = ssha512.Validate(input, cred)
 
 	} else if len(cred) > 7 && string(cred[0:6]) == "{SASL}" {
-		ok, err = h.doPassThrough(input, cred[6:])
+		ok, err = doPassThrough(s, input, cred[6:])
 	} else {
 		// Plain
 		ok = input == cred
@@ -155,7 +145,7 @@ func (i InvalidCredentials) Error() string {
 	return i.err.Error()
 }
 
-func (h *BindHandler) doPassThrough(input, passThroughKey string) (bool, error) {
+func doPassThrough(s *Server, input, passThroughKey string) (bool, error) {
 	log.Printf("Handle pass-through authentication: %s", passThroughKey)
 
 	i := strings.LastIndex(passThroughKey, "@")
@@ -170,7 +160,7 @@ func (h *BindHandler) doPassThrough(input, passThroughKey string) (bool, error) 
 		return false, xerrors.Errorf("Invalid stored credential. It isn't '<ID>@<DOMAIN>' format. cred: %s", passThroughKey)
 	}
 
-	if c, ok := h.server.config.PassThroughConfig.Get(domain); ok {
+	if c, ok := s.config.PassThroughConfig.Get(domain); ok {
 		return c.Authenticate(domain, uid, input)
 	}
 

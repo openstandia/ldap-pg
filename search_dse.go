@@ -7,17 +7,7 @@ import (
 	ldap "github.com/openstandia/ldapserver"
 )
 
-type SearchDSEHandler struct {
-	server *Server
-}
-
-func NewSearchDSEHandler(s *Server) *SearchDSEHandler {
-	return &SearchDSEHandler{
-		server: s,
-	}
-}
-
-func (h SearchDSEHandler) HandleSearchDSE(w ldap.ResponseWriter, m *ldap.Message) {
+func handleSearchDSE(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	r := m.GetSearchRequest()
 
 	log.Printf("info: handleSearchDSE")
@@ -36,7 +26,7 @@ func (h SearchDSEHandler) HandleSearchDSE(w ldap.ResponseWriter, m *ldap.Message
 	searchEntry := NewSearchEntry(nil, map[string][]string{
 		"objectClass":          []string{"top"},
 		"subschemaSubentry":    []string{"cn=Subschema"},
-		"namingContexts":       []string{h.server.GetSuffix()},
+		"namingContexts":       []string{s.GetSuffix()},
 		"supportedLDAPVersion": []string{"3"},
 		"supportedFeatures": []string{
 			"1.3.6.1.4.1.4203.1.5.1",

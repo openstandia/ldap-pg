@@ -168,9 +168,9 @@ func (s *Server) Start() {
 	routes := ldap.NewRouteMux()
 	routes.NotFound(handleNotFound)
 	routes.Abandon(handleAbandon)
-	routes.Bind(NewBindHandler(s).HandleBind)
+	routes.Bind(NewHandler(s, handleBind))
 	routes.Compare(handleCompare)
-	routes.Add(NewAddHandler(s).HandleAdd)
+	routes.Add(NewHandler(s, handleAdd))
 	routes.Delete(handleDelete)
 	routes.Modify(handleModify)
 	routes.ModifyDN(handleModifyDN)
@@ -183,7 +183,7 @@ func (s *Server) Start() {
 
 	routes.Extended(handleExtended).Label("Ext - Generic")
 
-	routes.Search(NewSearchDSEHandler(s).HandleSearchDSE).
+	routes.Search(NewHandler(s, handleSearchDSE)).
 		BaseDn("").
 		Scope(ldap.SearchRequestScopeBaseObject).
 		Filter("(objectclass=*)").
@@ -224,6 +224,12 @@ func (s *Server) Stop() {
 
 func (s *Server) SuffixNorm() []string {
 	return s.suffixNorm
+}
+
+func NewHandler(s *Server, handler func(s *Server, w ldap.ResponseWriter, r *ldap.Message)) func(w ldap.ResponseWriter, r *ldap.Message) {
+	return func(w ldap.ResponseWriter, r *ldap.Message) {
+		handler(s, w, r)
+	}
 }
 
 func handleNotFound(w ldap.ResponseWriter, r *ldap.Message) {

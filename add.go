@@ -6,22 +6,12 @@ import (
 	ldap "github.com/openstandia/ldapserver"
 )
 
-type AddHandler struct {
-	server *Server
-}
-
-func NewAddHandler(s *Server) *AddHandler {
-	return &AddHandler{
-		server: s,
-	}
-}
-
-func (h *AddHandler) HandleAdd(w ldap.ResponseWriter, m *ldap.Message) {
+func handleAdd(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	r := m.GetAddRequest()
 	log.Printf("info: Adding entry: %s", r.Entry())
 	//attributes values
 
-	dn, err := normalizeDN2(h.server.SuffixNorm(), string(r.Entry()))
+	dn, err := normalizeDN2(s.SuffixNorm(), string(r.Entry()))
 	if err != nil {
 		log.Printf("warn: Invalid DN: %s err: %s", r.Entry(), err)
 
