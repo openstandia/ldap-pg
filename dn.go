@@ -43,11 +43,16 @@ func normalizeDN2(suffix []string, dn string) (*DN, error) {
 		parentDN = strings.Join(p, ",")
 	}
 
+	var rdnNorm string
+	if len(d) > 0 {
+		rdnNorm = d[0]
+	}
+
 	return &DN{
 		DNNorm:          strings.Join(d, ","),
 		ReverseParentDN: reverse,
 		DNOrig:          dn,
-		RDNNorm:         d[0],
+		RDNNorm:         rdnNorm,
 		ParentDNNorm:    parentDN,
 	}, nil
 }
@@ -138,4 +143,13 @@ func (d *DN) ToPath() string {
 		path += strings.ToLower(parts[i]) + "/"
 	}
 	return path
+}
+
+func (d *DN) IsRoot() bool {
+	return d.RDNNorm == ""
+}
+
+func (d *DN) IsContainer() bool {
+	// TODO Check other container?
+	return strings.HasPrefix(d.RDNNorm, "ou=")
 }

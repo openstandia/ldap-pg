@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+
+	ldap "github.com/openstandia/ldapserver"
 )
 
 type LDAPError struct {
@@ -70,7 +72,7 @@ func NewInvalidPerSyntax(attr string, valueidx int) *LDAPError {
 
 func NewNoSuchObject() *LDAPError {
 	return &LDAPError{
-		Code: 32,
+		Code: ldap.LDAPResultNoSuchObject,
 	}
 }
 

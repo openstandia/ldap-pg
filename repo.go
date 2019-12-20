@@ -13,21 +13,23 @@ import (
 )
 
 var (
-	findByDNStmt                     *sqlx.NamedStmt
-	findByDNWithMemberOfStmt         *sqlx.NamedStmt
-	findByDNWithLockStmt             *sqlx.NamedStmt
-	findCredByDNStmt                 *sqlx.NamedStmt
-	findByMemberWithLockStmt         *sqlx.NamedStmt
-	findByMemberOfWithLockStmt       *sqlx.NamedStmt
-	findParentIDByDNWithLockStmt     *sqlx.NamedStmt
-	addTreeStmt                      *sqlx.NamedStmt
-	addStmt                          *sqlx.NamedStmt
-	addMemberOfByDNNormStmt          *sqlx.NamedStmt
-	updateAttrsByIdStmt              *sqlx.NamedStmt
-	updateAttrsWithNoUpdatedByIdStmt *sqlx.NamedStmt
-	updateDNByIdStmt                 *sqlx.NamedStmt
-	deleteByDNStmt                   *sqlx.NamedStmt
-	ROOT_ID                          int64 = 0
+	findByDNStmt                      *sqlx.NamedStmt
+	findByDNWithMemberOfStmt          *sqlx.NamedStmt
+	findByDNWithLockStmt              *sqlx.NamedStmt
+	findCredByDNStmt                  *sqlx.NamedStmt
+	findByMemberWithLockStmt          *sqlx.NamedStmt
+	findByMemberOfWithLockStmt        *sqlx.NamedStmt
+	findParentIDByDNWithLockStmt      *sqlx.NamedStmt
+	findIDbyParentContainerDNNormStmt *sqlx.NamedStmt
+	findChildIDByParentIDStmt         *sqlx.NamedStmt
+	addTreeStmt                       *sqlx.NamedStmt
+	addStmt                           *sqlx.NamedStmt
+	addMemberOfByDNNormStmt           *sqlx.NamedStmt
+	updateAttrsByIdStmt               *sqlx.NamedStmt
+	updateAttrsWithNoUpdatedByIdStmt  *sqlx.NamedStmt
+	updateDNByIdStmt                  *sqlx.NamedStmt
+	deleteByDNStmt                    *sqlx.NamedStmt
+	ROOT_ID                           int64 = 0
 )
 
 // For generic filter
@@ -99,6 +101,47 @@ func initStmt(db *sqlx.DB) error {
 			WHERE e.parent_id = child.id
 	)
 	SELECT id from child WHERE dn_norm = :dn_norm`)
+	if err != nil {
+		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+	}
+
+	findIDbyParentContainerDNNormStmt, err = db.PrepareNamed(`WITH t AS
+	(
+		WITH RECURSIVE child (dn_norm, id, parent_id, rdn_norm) AS
+		(
+			SELECT e.rdn_norm::::TEXT AS dn_norm, e.id, e.parent_id, e.rdn_norm FROM
+			ldap_tree e WHERE e.parent_id = 0
+			UNION ALL
+				SELECT
+					e.rdn_norm || ',' || child.dn_norm,
+					e.id,
+					e.parent_id,
+					e.rdn_norm
+				FROM ldap_tree e, child
+				WHERE e.parent_id = child.id
+		)
+		SELECT id from child WHERE dn_norm = :dn_norm
+	)
+	SELECT e.id from ldap_entry e LEFT JOIN t ON e.parent_id = t.id
+		WHERE e.rdn_norm = :rdn_norm`)
+	if err != nil {
+		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+	}
+
+	findChildIDByParentIDStmt, err = db.PrepareNamed(`WITH RECURSIVE child (dn_norm, id, parent_id, rdn_norm) AS
+	(
+		SELECT e.rdn_norm::::TEXT AS dn_norm, e.id, e.parent_id, e.rdn_norm FROM
+		ldap_tree e WHERE e.parent_id = :parent_id 
+		UNION ALL
+			SELECT
+				e.rdn_norm || ',' || child.dn_norm,
+				e.id,
+				e.parent_id,
+				e.rdn_norm
+			FROM ldap_tree e, child
+			WHERE e.parent_id = child.id
+	)
+	SELECT id from child`)
 	if err != nil {
 		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
 	}
@@ -655,6 +698,86 @@ func findParentIDbyDNWithLock(tx *sqlx.Tx, dn *DN) (int64, error) {
 	log.Printf("debug: Not found parent DN. dn_norm: %s", dn.ParentDNNorm)
 	// TODO check LDAP error code
 	return 0, NewNoSuchObject()
+}
+
+func findParentIDbyDN(dn *DN) (int64, error) {
+	rows, err := findParentIDByDNWithLockStmt.Queryx(map[string]interface{}{
+		"dn_norm": dn.ParentDNNorm,
+	})
+	if err != nil {
+		return 0, xerrors.Errorf("Failed to fetch parentID by DN: %s, err: %w", dn.DNOrig, err)
+	}
+	defer rows.Close()
+	if rows.Next() {
+		var id int64
+		rows.Scan(&id)
+		return id, nil
+	}
+	log.Printf("debug: Not found parent DN. dn_norm: %s", dn.ParentDNNorm)
+	// TODO check LDAP error code
+	return 0, NewNoSuchObject()
+}
+
+func findIDbyContainerDNNorm(containerDNNorm string) (int64, error) {
+	rows, err := findParentIDByDNWithLockStmt.Queryx(map[string]interface{}{
+		"dn_norm": containerDNNorm,
+	})
+	if err != nil {
+		return 0, xerrors.Errorf("Failed to find ID by container DNNorm: %s, err: %w", containerDNNorm, err)
+	}
+	defer rows.Close()
+	if rows.Next() {
+		var id int64
+		rows.Scan(&id)
+		return id, nil
+	}
+	log.Printf("debug: Not found container DN. container DNNorm: %s", containerDNNorm)
+	// TODO check LDAP error code
+	return 0, NewNoSuchObject()
+}
+
+func findIDbyParentContainerDNNorm(parentContainerDNNorm, rdnNorm string) (int64, error) {
+	rows, err := findIDbyParentContainerDNNormStmt.Queryx(map[string]interface{}{
+		"dn_norm":  parentContainerDNNorm,
+		"rdn_norm": rdnNorm,
+	})
+	if err != nil {
+		return 0, xerrors.Errorf("Failed to find ID by parent container DNNorm: %s, rdnNorm: %s err: %w", parentContainerDNNorm, rdnNorm, err)
+	}
+	defer rows.Close()
+	if rows.Next() {
+		var id int64
+		rows.Scan(&id)
+		return id, nil
+	}
+	log.Printf("debug: Not found ID. parent container DNNorm: %s, rdnNorm: %s", parentContainerDNNorm, rdnNorm)
+	// TODO check LDAP error code
+	return 0, NewNoSuchObject()
+}
+
+func findChildIDByParentID(parentID int64) ([]int64, error) {
+	rows, err := findChildIDByParentIDStmt.Queryx(map[string]interface{}{
+		"parent_id": parentID,
+	})
+	if err != nil {
+		return nil, xerrors.Errorf("Failed to fetch child ID by parentID: %s, err: %w", parentID, err)
+	}
+	defer rows.Close()
+
+	list := []int64{}
+	for rows.Next() {
+		var i int64
+		rows.Scan(&i)
+		list = append(list, i)
+	}
+
+	err = rows.Err()
+	if err != nil {
+		log.Printf("error: Search children error: %#v", err)
+		return nil, err
+	}
+
+	return list, nil
 }
 
 func findByDN(tx *sqlx.Tx, dn *DN) (*SearchEntry, error) {

@@ -50,6 +50,7 @@ type Server struct {
 	config     *ServerConfig
 	rootDN     *DN
 	internal   *ldap.Server
+	suffixOrig []string
 	suffixNorm []string
 }
 
@@ -62,12 +63,15 @@ func NewServer(c *ServerConfig) *Server {
 
 	s := strings.Split(c.Suffix, ",")
 	sn := make([]string, len(s))
+	so := make([]string, len(s))
 	for i := 0; i < len(s); i++ {
-		sn[i] = strings.TrimSpace(strings.ToLower(s[i]))
+		so[i] = strings.TrimSpace(s[i])
+		sn[i] = strings.ToLower(so[i])
 	}
 
 	return &Server{
 		config:     c,
+		suffixOrig: sn,
 		suffixNorm: sn,
 	}
 }
@@ -195,7 +199,7 @@ func (s *Server) Start() {
 		Filter("(objectclass=*)").
 		Label("Search - Subschema")
 
-	routes.Search(handleSearch).Label("Search - Generic")
+	routes.Search(NewHandler(s, handleSearch)).Label("Search - Generic")
 
 	//Attach routes to server
 	server.Handle(routes)
@@ -220,6 +224,14 @@ func (s *Server) Start() {
 
 func (s *Server) Stop() {
 	s.internal.Stop()
+}
+
+func (s *Server) SuffixOrigStr() string {
+	return strings.Join(s.suffixOrig, ",")
+}
+
+func (s *Server) SuffixOrig() []string {
+	return s.suffixOrig
 }
 
 func (s *Server) SuffixNorm() []string {
@@ -332,6 +344,10 @@ func handleStartTLS(w ldap.ResponseWriter, m *ldap.Message) {
 
 func (s *Server) GetSuffix() string {
 	return s.config.Suffix
+}
+
+func (s *Server) DCRDN() string {
+	return strings.Split(s.SuffixNorm()[0], "=")[1]
 }
 
 func (s *Server) GetRootDN() *DN {
