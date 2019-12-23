@@ -146,17 +146,17 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	var pathQuery string
 	// path := baseDN.ToPath()
 	if scope == 0 {
-		pathQuery = "id = :baseDNID"
+		pathQuery = "e.id = :baseDNID"
 		q.Params["baseDNID"] = baseDNID
 
 	} else if scope == 1 {
-		pathQuery = "parent_id = :baseDNID"
+		pathQuery = "e.parent_id = :baseDNID"
 		q.Params["baseDNID"] = baseDNID
 
 	} else if scope == 2 {
 		cid = append(cid, baseDNID)
 		in, params := expandIn(cid)
-		pathQuery = "(id = :baseDNID OR parent_id IN (" + in + "))"
+		pathQuery = "(e.id = :baseDNID OR e.parent_id IN (" + in + "))"
 		q.Params["baseDNID"] = baseDNID
 		for k, v := range params {
 			q.Params[k] = v
@@ -165,7 +165,7 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	} else if scope == 3 {
 		cid = append(cid, baseDNID)
 		in, params := expandIn(cid)
-		pathQuery = "parent_id IN (" + in + ")"
+		pathQuery = "e.parent_id IN (" + in + ")"
 		for k, v := range params {
 			q.Params[k] = v
 		}
@@ -265,7 +265,7 @@ func responseDCEntry(w ldap.ResponseWriter, r message.SearchRequest, dcDNOrig, o
 func responseEntry(w ldap.ResponseWriter, r message.SearchRequest, searchEntry *SearchEntry) {
 	log.Printf("Response Entry: %+v", searchEntry)
 
-	e := ldap.NewSearchResultEntry(searchEntry.GetDNNorm())
+	e := ldap.NewSearchResultEntry(searchEntry.DNOrigStr())
 
 	sentAttrs := map[string]struct{}{}
 
@@ -324,7 +324,7 @@ func responseEntry(w ldap.ResponseWriter, r message.SearchRequest, searchEntry *
 
 	w.Write(e)
 
-	log.Printf("Response an entry. dn: %s", searchEntry.GetDNNorm())
+	log.Printf("Response an entry. dn: %s", searchEntry.DNOrigStr())
 }
 
 func responseSearchError(w ldap.ResponseWriter, err error) {

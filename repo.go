@@ -196,14 +196,15 @@ func initStmt(db *sqlx.DB) error {
 }
 
 type FetchedDBEntry struct {
-	Id        int64          `db:"id"`
-	EntryUUID string         `db:"uuid"`
-	Created   time.Time      `db:"created"`
-	Updated   time.Time      `db:"updated"`
-	DNNorm    string         `db:"dn_norm"`
-	AttrsOrig types.JSONText `db:"attrs_orig"`
-	MemberOf  types.JSONText `db:"memberof"` // No real column in the table
-	Count     int32          `db:"count"`    // No real column in the table
+	Id            int64          `db:"id"`
+	EntryUUID     string         `db:"uuid"`
+	Created       time.Time      `db:"created"`
+	Updated       time.Time      `db:"updated"`
+	DNNorm        string         `db:"dn_norm"`
+	ParentRDNNorm *string        `db:"parent_rdn_norm"`
+	AttrsOrig     types.JSONText `db:"attrs_orig"`
+	MemberOf      types.JSONText `db:"memberof"` // No real column in the table
+	Count         int32          `db:"count"`    // No real column in the table
 }
 
 func (e *FetchedDBEntry) GetAttrsOrig() map[string][]string {
@@ -231,9 +232,8 @@ func (e *FetchedDBEntry) Clear() {
 }
 
 type FetchedParent struct {
-	ID           int64  `db:"id"`
-	RDNOrig      string `db:"rdn_orig"`
-	ParentDNOrig string `db:"parent_dn_orig"`
+	ID     int64  `db:"id"`
+	DNOrig string `db:"dn_orig"`
 }
 
 type DBTree struct {
@@ -705,11 +705,16 @@ func findParentIDbyDNWithLock(tx *sqlx.Tx, dn *DN) (*FetchedParent, error) {
 		return nil, xerrors.Errorf("Failed to fetch parentID by DN: %s, err: %w", dn.DNOrigStr(), err)
 	}
 	defer rows.Close()
+
+	parent := FetchedParent{}
 	if rows.Next() {
-		var parent FetchedParent
-		rows.StructScan(&parent)
+		err := rows.StructScan(&parent)
+		if err != nil {
+			return nil, xerrors.Errorf("Failed to map to FetchecParent when fetching parentID by DN: %s, err: %w", dn.DNOrigStr(), err)
+		}
 		return &parent, nil
 	}
+
 	log.Printf("debug: Not found parent DN. dn_norm: %s", dn.ParentDN().DNNormStr())
 	// TODO check LDAP error code
 	return nil, NewNoSuchObject()
@@ -847,9 +852,22 @@ func findByFilter(pathQuery string, q *Query, reqMemberOf bool, handler func(ent
 
 	var fetchQuery string
 	if reqMemberOf && !*twowayEnabled {
-		fetchQuery = fmt.Sprintf(`SELECT id, uuid, created, updated, dn_norm, attrs_orig, (select jsonb_agg(e2.dn_norm) AS memberOf FROM ldap_entry e2 WHERE e2.attrs_norm->'member' @> jsonb_build_array(e1.dn_norm)) AS memberOf, count(id) over() AS count FROM ldap_entry e1 WHERE %s %s LIMIT :pageSize OFFSET :offset`, pathQuery, query)
+		fetchQuery = fmt.Sprintf(`SELECT id, uuid, created, updated, dn_norm, attrs_orig,
+				(select jsonb_agg(e2.dn_norm) AS memberOf
+				FROM ldap_entry e2
+				WHERE e2.attrs_norm->'member' @> jsonb_build_array(e1.dn_norm)) AS memberOf,
+				count(id) over() AS count
+			FROM ldap_entry e1
+			WHERE %s %s
+			LIMIT :pageSize OFFSET :offset`, pathQuery, query)
 	} else {
-		fetchQuery = fmt.Sprintf(`SELECT id, uuid, created, updated, dn_norm, attrs_orig, count(id) over() AS count FROM ldap_entry WHERE %s %s LIMIT :pageSize OFFSET :offset`, pathQuery, query)
+		fetchQuery = fmt.Sprintf(`SELECT e.id, e.uuid, e.created, e.updated, e.dn_norm, e.attrs_orig, p.rdn_norm as parent_rdn_norm, count(e.id) over() AS count
+			FROM ldap_entry e
+			LEFT JOIN LATERAL(
+					SELECT t.rdn_norm, t.rdn_orig FROM ldap_tree t WHERE t.id = e.parent_id
+				) p ON true
+			WHERE %s %s
+			LIMIT :pageSize OFFSET :offset`, pathQuery, query)
 	}
 
 	log.Printf("Fetch Query: %s Params: %v", fetchQuery, q.Params)

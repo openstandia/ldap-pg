@@ -19,12 +19,12 @@ func (s *Schema) SubstringMatch(q *Query, val string, i int) {
 	}
 
 	if s.IndexType == "fts" {
-		q.Query += fmt.Sprintf("attrs_norm->>'%s' ILIKE :%s", s.Name, paramKey)
+		q.Query += fmt.Sprintf("e.attrs_norm->>'%s' ILIKE :%s", s.Name, paramKey)
 	} else {
 		if s.IsCaseIgnoreSubstr() {
-			q.Query += fmt.Sprintf("attrs_norm->>'%s' LIKE :%s", s.Name, paramKey)
+			q.Query += fmt.Sprintf("e.attrs_norm->>'%s' LIKE :%s", s.Name, paramKey)
 		} else {
-			q.Query += fmt.Sprintf("attrs_norm->>'%s' LIKE :%s", s.Name, paramKey)
+			q.Query += fmt.Sprintf("e.attrs_norm->>'%s' LIKE :%s", s.Name, paramKey)
 		}
 	}
 	q.Params[paramKey] = sv.GetNorm()[0]
@@ -43,25 +43,25 @@ func (s *Schema) EqualityMatch(q *Query, val string) {
 
 	if s.IndexType == "fts" {
 		// TODO Escapse %
-		q.Query += fmt.Sprintf("attrs_norm->>'%s' ILIKE :%s", s.Name, paramKey)
+		q.Query += fmt.Sprintf("e.attrs_norm->>'%s' ILIKE :%s", s.Name, paramKey)
 	} else if s.IsIndependentColumn() {
 		if s.IsCaseIgnore() {
-			q.Query += fmt.Sprintf("%s = :%s", s.ColumnName, paramKey)
+			q.Query += fmt.Sprintf("e.%s = :%s", s.ColumnName, paramKey)
 		} else {
-			q.Query += fmt.Sprintf("%s = :%s", s.ColumnName, paramKey)
+			q.Query += fmt.Sprintf("e.%s = :%s", s.ColumnName, paramKey)
 		}
 	} else {
 		if s.IsCaseIgnore() {
 			if s.SingleValue {
-				q.Query += fmt.Sprintf("attrs_norm->>'%s' = :%s", s.Name, paramKey)
+				q.Query += fmt.Sprintf("e.attrs_norm->>'%s' = :%s", s.Name, paramKey)
 			} else {
-				q.Query += fmt.Sprintf("attrs_norm->'%s' @> jsonb_build_array(:%s ::::text)", s.Name, paramKey)
+				q.Query += fmt.Sprintf("e.attrs_norm->'%s' @> jsonb_build_array(:%s ::::text)", s.Name, paramKey)
 			}
 		} else {
 			if s.SingleValue {
-				q.Query += fmt.Sprintf("attrs_norm->>'%s' = :%s", s.Name, paramKey)
+				q.Query += fmt.Sprintf("e.attrs_norm->>'%s' = :%s", s.Name, paramKey)
 			} else {
-				q.Query += fmt.Sprintf("attrs_norm->'%s' @> jsonb_build_array(:%s ::::text)", s.Name, paramKey)
+				q.Query += fmt.Sprintf("e.attrs_norm->'%s' @> jsonb_build_array(:%s ::::text)", s.Name, paramKey)
 			}
 		}
 	}
@@ -77,7 +77,7 @@ func (s *Schema) GreaterOrEqualMatch(q *Query, val string) {
 		return
 	}
 
-	q.Query += fmt.Sprintf("(attrs_norm->>'%s')::numeric >= :%s", s.Name, paramKey)
+	q.Query += fmt.Sprintf("(e.attrs_norm->>'%s')::::numeric >= :%s", s.Name, paramKey)
 	q.Params[paramKey] = sv.GetNorm()[0]
 }
 
@@ -90,15 +90,15 @@ func (s *Schema) LessOrEqualMatch(q *Query, val string) {
 		return
 	}
 
-	q.Query += fmt.Sprintf("(attrs_norm->>'%s')::numeric <= :%s", s.Name, paramKey)
+	q.Query += fmt.Sprintf("(e.attrs_norm->>'%s')::::numeric <= :%s", s.Name, paramKey)
 	q.Params[paramKey] = sv.GetNorm()[0]
 }
 
 func (s *Schema) PresentMatch(q *Query) {
 	if s.IndexType == "jsonb_ops" {
-		q.Query += fmt.Sprintf("attrs_norm ? '%s'", s.Name)
+		q.Query += fmt.Sprintf("e.attrs_norm ? '%s'", s.Name)
 	} else {
-		q.Query += fmt.Sprintf("(attrs_norm->>'%s') IS NOT NULL", s.Name)
+		q.Query += fmt.Sprintf("(e.attrs_norm->>'%s') IS NOT NULL", s.Name)
 	}
 }
 
@@ -111,7 +111,7 @@ func (s *Schema) ApproxMatch(q *Query, val string) {
 		return
 	}
 
-	q.Query += fmt.Sprintf("attrs_norm->>'%s' ILIKE :%s", s.Name, paramKey)
+	q.Query += fmt.Sprintf("e.attrs_norm->>'%s' ILIKE :%s", s.Name, paramKey)
 	q.Params[paramKey] = sv.GetNorm()[0]
 }
 

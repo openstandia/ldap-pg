@@ -13,8 +13,12 @@ func NewSearchEntry(dn *DN, valuesOrig map[string][]string) *SearchEntry {
 	return readEntry
 }
 
-func (j *SearchEntry) GetDNNorm() string {
+func (j *SearchEntry) DNNormStr() string {
 	return j.dn.DNNormStr()
+}
+
+func (j *SearchEntry) DNOrigStr() string {
+	return j.dn.DNOrigStr()
 }
 
 func (j *SearchEntry) GetAttrsOrig() map[string][]string {

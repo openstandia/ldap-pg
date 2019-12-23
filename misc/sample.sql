@@ -23,6 +23,7 @@ CREATE TABLE ldap_member (
     member_of_id BIGINT NOT NULL,
     PRIMARY KEY(member_id, rdn_norm, member_of_id)
 );
+CREATE UNIQUE INDEX idx_ldap_member_member_of_id ON ldap_member (member_of_id, rdn_norm, member_id);
 
 DROP TABLE IF EXISTS ldap_entry;
 
