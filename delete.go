@@ -23,7 +23,7 @@ func handleDelete(w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	log.Printf("info: Deleting entry: %s", dn.DNNorm)
+	log.Printf("info: Deleting entry: %s", dn.DNNormStr())
 
 	tx := db.MustBegin()
 
@@ -38,7 +38,7 @@ func handleDelete(w ldap.ResponseWriter, m *ldap.Message) {
 
 	tx.Commit()
 
-	log.Printf("info: Deleted. dn: %s", dn.DNNorm)
+	log.Printf("info: Deleted. dn: %s", dn.DNNormStr())
 
 	res := ldap.NewDeleteResponse(ldap.LDAPResultSuccess)
 	w.Write(res)

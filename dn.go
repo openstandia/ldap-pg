@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"strings"
 
 	"golang.org/x/xerrors"
@@ -9,70 +8,72 @@ import (
 )
 
 type DN struct {
-	DNNorm          string
-	DNOrig          string
-	ParentDNNorm    string
-	RDNNorm         string
+	dn              *goldap.DN
+	dnNorm          []string
+	dnOrig          []string
+	suffix          []string
 	ReverseParentDN string
 	cachedRDN       map[string]string
 }
 
+var anonymousDN = &DN{
+	dn:              &goldap.DN{RDNs: nil},
+	dnNorm:          nil,
+	dnOrig:          nil,
+	suffix:          nil,
+	ReverseParentDN: "",
+}
+
 func normalizeDN2(suffix []string, dn string) (*DN, error) {
-	d, err := parseDN(dn)
+	// Anonymous
+	if dn == "" {
+		return anonymousDN, nil
+	}
+
+	d, dnNorm, dnOrig, err := parseDN(dn)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(d)-len(suffix) < 0 {
+	if len(dnNorm)-len(suffix) < 0 {
 		return nil, xerrors.Errorf("Invalid DN. It must have suffix. DN: %s", dn)
 	}
 
 	for i, s := range suffix {
-		if d[len(d)-len(suffix)+i] != s {
+		if dnNorm[len(dnNorm)-len(suffix)+i] != s {
 			return nil, xerrors.Errorf("Invalid DN. It must have suffix. DN: %s", dn)
 		}
 	}
 
-	d = d[:len(d)-len(suffix)]
+	// Remove suffix DN
+	d.RDNs = d.RDNs[:len(d.RDNs)-len(suffix)]
+	dnNorm = dnNorm[:len(dnNorm)-len(suffix)]
+	dnOrig = dnOrig[:len(dnOrig)-len(suffix)]
 
-	reverse := toReverseDN(d)
-
-	var parentDN string
-	if len(d) > 1 {
-		p := d[1:]
-		parentDN = strings.Join(p, ",")
-	}
-
-	var rdnNorm string
-	if len(d) > 0 {
-		rdnNorm = d[0]
-	}
+	reverse := toReverseDN(dnNorm)
 
 	return &DN{
-		DNNorm:          strings.Join(d, ","),
+		dn:              d,
+		dnNorm:          dnNorm,
+		dnOrig:          dnOrig,
+		suffix:          suffix,
 		ReverseParentDN: reverse,
-		DNOrig:          dn,
-		RDNNorm:         rdnNorm,
-		ParentDNNorm:    parentDN,
 	}, nil
 }
 
 func normalizeDN(dn string) (*DN, error) {
-	d, err := parseDN(dn)
+	d, dnNorm, dnOrig, err := parseDN(dn)
 	if err != nil {
 		return nil, err
 	}
 
-	reverse := toReverseDN(d)
-	p := d[:len(d)-1]
-	parentDN := strings.Join(p, ",")
+	reverse := toReverseDN(dnNorm)
 
 	return &DN{
-		DNNorm:          strings.Join(d, ","),
+		dn:              d,
+		dnNorm:          dnNorm,
+		dnOrig:          dnOrig,
 		ReverseParentDN: reverse,
-		DNOrig:          dn,
-		RDNNorm:         d[0],
-		ParentDNNorm:    parentDN,
 	}, nil
 }
 
@@ -85,19 +86,34 @@ func toReverseDN(dn []string) string {
 	return path
 }
 
+func (d *DN) DNNormStr() string {
+	return strings.Join(d.dnNorm, ",")
+}
+
+func (d *DN) DNOrigStr() string {
+	return strings.Join(d.dnOrig, ",")
+}
+
+func (d *DN) RDNNormStr() string {
+	return d.dnNorm[0]
+}
+
+func (d *DN) RDNOrigStr() string {
+	return d.dnOrig[0]
+}
+
 func (d *DN) Equal(o *DN) bool {
-	return d.DNNorm == o.DNNorm
+	return d.DNNormStr() == o.DNNormStr()
 }
 
 func (d *DN) GetRDN() map[string]string {
 	if len(d.cachedRDN) > 0 {
 		return d.cachedRDN
 	}
-	dn, _ := goldap.ParseDN(d.DNNorm)
 
-	m := make(map[string]string, len(dn.RDNs[0].Attributes))
+	m := make(map[string]string, len(d.dn.RDNs[0].Attributes))
 
-	for _, a := range dn.RDNs[0].Attributes {
+	for _, a := range d.dn.RDNs[0].Attributes {
 		m[a.Type] = a.Value
 	}
 
@@ -107,36 +123,20 @@ func (d *DN) GetRDN() map[string]string {
 }
 
 func (d *DN) Modify(newRDN string) (*DN, error) {
-	nd, err := goldap.ParseDN(newRDN)
-	if err != nil {
-		return nil, err
-	}
-
-	dn, _ := goldap.ParseDN(d.DNOrig)
-
-	var n []string
-
-	for _, v := range nd.RDNs {
-		for _, a := range v.Attributes {
-			n = append(n, fmt.Sprintf("%s=%s", a.Type, a.Value))
-			// TODO multiple RDN using +
+	nd := make([]string, len(d.dnOrig)+len(d.suffix))
+	for i, v := range d.dnOrig {
+		if i == 0 {
+			nd[i] = newRDN
 		}
+		nd[i] = v
 	}
+	nd = append(nd, d.suffix...)
 
-	for i := 1; i < len(dn.RDNs); i++ {
-		for _, a := range dn.RDNs[i].Attributes {
-			n = append(n, fmt.Sprintf("%s=%s", a.Type, a.Value))
-			// TODO multiple RDN using +
-		}
-	}
-
-	newDNOrig := strings.Join(n, ",")
-
-	return normalizeDN(newDNOrig)
+	return normalizeDN2(d.suffix, strings.Join(nd, ","))
 }
 
 func (d *DN) ToPath() string {
-	parts := strings.Split(d.DNNorm, ",")
+	parts := strings.Split(d.DNNormStr(), ",")
 
 	var path string
 	for i := len(parts) - 1; i >= 0; i-- {
@@ -145,11 +145,32 @@ func (d *DN) ToPath() string {
 	return path
 }
 
-func (d *DN) IsRoot() bool {
-	return d.RDNNorm == ""
+func (d *DN) ParentDN() *DN {
+	if d.IsDC() {
+		return nil
+	}
+	var p *DN
+	if len(d.dnOrig) == 1 {
+		// Parent is DC
+		p, _ = normalizeDN2(d.suffix, strings.Join(d.suffix, ","))
+	}
+
+	nd := d.dnOrig[1:]
+	nd = append(nd, d.suffix...)
+	p, _ = normalizeDN2(d.suffix, strings.Join(nd, ","))
+
+	return p
+}
+
+func (d *DN) IsDC() bool {
+	return len(d.suffix) > 0 && len(d.dnNorm) == 0
 }
 
 func (d *DN) IsContainer() bool {
 	// TODO Check other container?
-	return strings.HasPrefix(d.RDNNorm, "ou=")
+	return d.IsDC() || strings.HasPrefix(d.dnNorm[0], "ou=")
+}
+
+func (d *DN) IsAnonymous() bool {
+	return len(d.suffix) == 0 && len(d.dnNorm) == 0
 }

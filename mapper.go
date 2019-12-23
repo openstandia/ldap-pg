@@ -78,8 +78,8 @@ func (m *Mapper) AddEntryToDBEntry(entry *AddEntry) (*DBEntry, error) {
 	bOrig, _ := json.Marshal(orig)
 
 	dbEntry := &DBEntry{
-		DNNorm:    entry.GetDN().DNNorm,
-		Path:      entry.GetDN().ReverseParentDN,
+		DNNorm:    entry.DN().DNNormStr(),
+		Path:      entry.DN().ReverseParentDN,
 		EntryUUID: entryUUID,
 		Created:   created,
 		Updated:   updated,

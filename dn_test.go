@@ -25,12 +25,12 @@ func TestDNNormalize(t *testing.T) {
 			t.Errorf("Unexpected error on %d:\n'%s' -> '%s' expected, got err: %+v\n", i, tc.Value, tc.Expected, err)
 			continue
 		}
-		if dn.DNNorm != tc.Expected {
-			t.Errorf("Unexpected error on %d:\nDNNorm:\n'%s' -> %s' expected, got '%s'\n", i, tc.Value, tc.Expected, dn.DNNorm)
+		if dn.DNNormStr() != tc.Expected {
+			t.Errorf("Unexpected error on %d:\nDNNorm:\n'%s' -> %s' expected, got '%s'\n", i, tc.Value, tc.Expected, dn.DNNormStr())
 			continue
 		}
-		if dn.DNOrig != tc.Value {
-			t.Errorf("Unexpected error on %d:\nDNOrig:\n'%s' -> %s' expected, got '%s'\n", i, tc.Value, tc.Value, dn.DNNorm)
+		if dn.DNOrigStr() != tc.Value {
+			t.Errorf("Unexpected error on %d:\nDNOrig:\n'%s' -> %s' expected, got '%s'\n", i, tc.Value, tc.Value, dn.DNOrigStr())
 			continue
 		}
 	}

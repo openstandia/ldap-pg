@@ -83,9 +83,9 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	// Phase 4: detect parent ID(s)
 	// TODO: optimize based on the requested scope
-	var baseDNID int64 = ROOT_ID
+	var baseDNID int64 = DCID
 	var cid []int64
-	if baseDN.IsRoot() {
+	if baseDN.IsDC() {
 		cid, err = findChildIDByParentID(baseDNID)
 		if err != nil {
 			if lerr, ok := err.(*LDAPError); ok {
@@ -99,7 +99,7 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		}
 	} else {
 		if baseDN.IsContainer() {
-			baseDNID, err = findIDbyContainerDNNorm(baseDN.DNNorm)
+			baseDNID, err = findIDbyContainerDNNorm(baseDN.DNNormStr())
 			if err != nil {
 				if lerr, ok := err.(*LDAPError); ok {
 					res := ldap.NewSearchResultDoneResponse(lerr.Code)
@@ -123,7 +123,7 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 				}
 			}
 		} else {
-			baseDNID, err = findIDbyParentContainerDNNorm(baseDN.ParentDNNorm, baseDN.RDNNorm)
+			baseDNID, err = findIDbyParentContainerDNNorm(baseDN.ParentDN().DNNormStr(), baseDN.RDNNormStr())
 			if err != nil {
 				if lerr, ok := err.(*LDAPError); ok {
 					res := ldap.NewSearchResultDoneResponse(lerr.Code)

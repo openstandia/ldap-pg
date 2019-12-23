@@ -217,43 +217,48 @@ func removeAllSpace(value string) string {
 	return str
 }
 
-func parseDN(value string) ([]string, error) {
+func parseDN(value string) (*goldap.DN, []string, []string, error) {
 	d, err := goldap.ParseDN(value)
 	if err != nil {
 		log.Printf("warn: Invalid DN syntax. dn: %s", value)
-		return nil, NewInvalidDNSyntax()
+		return nil, nil, nil, NewInvalidDNSyntax()
 	}
 
 	n := make([]string, len(d.RDNs))
+	no := make([]string, len(d.RDNs))
 	for i, v := range d.RDNs {
 		nn := make([]string, len(v.Attributes))
+		nno := make([]string, len(v.Attributes))
 		for j, a := range v.Attributes {
 			sv, err := NewSchemaValue(a.Type, []string{a.Value})
 			if err != nil {
 				log.Printf("warn: Invalid DN syntax. Not found in schema. dn: %s err: %+v", value, err)
-				return nil, NewInvalidDNSyntax()
+				return nil, nil, nil, NewInvalidDNSyntax()
 			}
 
 			vv, err := sv.Normalize()
 			if err != nil {
 				log.Printf("warn: Invalid RDN of DN syntax. dn: %s", value)
-				return nil, NewInvalidDNSyntax()
+				return nil, nil, nil, NewInvalidDNSyntax()
 			}
 
+			// TODO normalize type
 			nn[j] = fmt.Sprintf("%s=%s", strings.ToLower(a.Type), vv[0])
+			nno[j] = fmt.Sprintf("%s=%s", strings.ToLower(a.Type), a.Value)
 		}
 		n[i] = strings.Join(nn, ",")
+		no[i] = strings.Join(nno, ",")
 	}
-	return n, nil
+	return d, n, no, nil
 }
 
 func normalizeDistinguishedName(value string) (string, error) {
-	d, err := parseDN(value)
+	_, dnNorm, _, err := parseDN(value)
 	if err != nil {
 		return "", err
 	}
 
-	return strings.Join(d, ","), nil
+	return strings.Join(dnNorm, ","), nil
 }
 
 func normalizeGeneralizedTime(value string) (string, error) {

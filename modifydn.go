@@ -27,12 +27,12 @@ func handleModifyDN(w ldap.ResponseWriter, m *ldap.Message) {
 
 	if err != nil {
 		// TODO return correct error
-		log.Printf("info: Invalid newrdn. dn: %s newrdn: %s err: %#v", dn.DNNorm, r.NewRDN(), err)
+		log.Printf("info: Invalid newrdn. dn: %s newrdn: %s err: %#v", dn.DNNormStr(), r.NewRDN(), err)
 		responseModifyDNError(w, err)
 		return
 	}
 
-	log.Printf("info: Modify entry: %s", dn.DNNorm)
+	log.Printf("info: Modify entry: %s", dn.DNNormStr())
 
 	tx := db.MustBegin()
 
@@ -52,7 +52,7 @@ func handleModifyDN(w ldap.ResponseWriter, m *ldap.Message) {
 	if err != nil {
 		tx.Rollback()
 
-		log.Printf("warn: Failed to modify dn: %s err: %s", dn.DNNorm, err)
+		log.Printf("warn: Failed to modify dn: %s err: %s", dn.DNNormStr(), err)
 		// TODO error code
 		responseModifyDNError(w, err)
 		return

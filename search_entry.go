@@ -14,7 +14,7 @@ func NewSearchEntry(dn *DN, valuesOrig map[string][]string) *SearchEntry {
 }
 
 func (j *SearchEntry) GetDNNorm() string {
-	return j.dn.DNNorm
+	return j.dn.DNNormStr()
 }
 
 func (j *SearchEntry) GetAttrsOrig() map[string][]string {

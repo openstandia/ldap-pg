@@ -26,7 +26,7 @@ func handleModify(w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	log.Printf("info: Modify entry: %s", dn.DNNorm)
+	log.Printf("info: Modify entry: %s", dn.DNNormStr())
 
 	tx := db.MustBegin()
 
@@ -37,7 +37,7 @@ func handleModify(w ldap.ResponseWriter, m *ldap.Message) {
 			responseModifyError(w, NewNoSuchObject())
 			return
 		} else {
-			responseModifyError(w, fmt.Errorf("Failed to fetch the current entry for modification. dn: %s err: %#v", dn.DNNorm, err))
+			responseModifyError(w, fmt.Errorf("Failed to fetch the current entry for modification. dn: %s err: %#v", dn.DNNormStr(), err))
 			return
 		}
 	}
@@ -72,7 +72,7 @@ func handleModify(w ldap.ResponseWriter, m *ldap.Message) {
 		if err != nil {
 			tx.Rollback()
 
-			log.Printf("warn: Failed to modify. dn: %s err: %s", dn.DNNorm, err)
+			log.Printf("warn: Failed to modify. dn: %s err: %s", dn.DNNormStr(), err)
 			responseModifyError(w, err)
 			return
 		}
@@ -86,7 +86,7 @@ func handleModify(w ldap.ResponseWriter, m *ldap.Message) {
 		tx.Rollback()
 
 		// TODO error code
-		responseModifyError(w, fmt.Errorf("Failed to modify the entry. dn: %s entry: %#v err: %#v", dn.DNNorm, newEntry, err))
+		responseModifyError(w, fmt.Errorf("Failed to modify the entry. dn: %s entry: %#v err: %#v", dn.DNNormStr(), newEntry, err))
 		return
 	}
 

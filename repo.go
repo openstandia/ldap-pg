@@ -29,7 +29,7 @@ var (
 	updateAttrsWithNoUpdatedByIdStmt  *sqlx.NamedStmt
 	updateDNByIdStmt                  *sqlx.NamedStmt
 	deleteByDNStmt                    *sqlx.NamedStmt
-	ROOT_ID                           int64 = 0
+	DCID                              int64 = 0
 )
 
 // For generic filter
@@ -87,23 +87,29 @@ func initStmt(db *sqlx.DB) error {
 		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
 	}
 
-	findParentIDByDNWithLockStmt, err = db.PrepareNamed(`WITH RECURSIVE child (dn_norm, id, parent_id, rdn_norm) AS
+	findParentIDByDNWithLockStmt, err = db.PrepareNamed(`WITH RECURSIVE child (dn_norm, dn_orig, id, parent_id) AS
 	(
-		SELECT e.rdn_norm::::TEXT AS dn_norm, e.id, e.parent_id, e.rdn_norm FROM
+		SELECT e.rdn_norm::::TEXT AS dn_norm, e.rdn_orig::::TEXT AS dn_orig, e.id, e.parent_id FROM
 		ldap_tree e WHERE e.parent_id = 0
 		UNION ALL
 			SELECT
 				e.rdn_norm || ',' || child.dn_norm,
+				e.rdn_orig || ',' || child.dn_orig,
 				e.id,
-				e.parent_id,
-				e.rdn_norm
+				e.parent_id
 			FROM ldap_tree e, child
 			WHERE e.parent_id = child.id
 	)
-	SELECT id from child WHERE dn_norm = :dn_norm`)
+	SELECT id, dn_orig from child WHERE dn_norm = :dn_norm`)
 	if err != nil {
 		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
 	}
+
+	// findParentIDByDNWithLockStmt, err = db.PrepareNamed(`SELECT id, rdn_orig, parent_dn_orig FROM ldap_tree
+	// 	WHERE rdn_norm = :rdn_norm AND parent_dn_norm = :parent_dn_norm`)
+	// if err != nil {
+	// 	return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+	// }
 
 	findIDbyParentContainerDNNormStmt, err = db.PrepareNamed(`WITH t AS
 	(
@@ -146,8 +152,8 @@ func initStmt(db *sqlx.DB) error {
 		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
 	}
 
-	addTreeStmt, err = db.PrepareNamed(`INSERT INTO ldap_tree (id, parent_id, rdn_norm)
-		VALUES (:id, :parent_id, :rdn_norm)`)
+	addTreeStmt, err = db.PrepareNamed(`INSERT INTO ldap_tree (id, parent_id, rdn_norm, rdn_orig)
+		VALUES (:id, :parent_id, :rdn_norm, :rdn_orig)`)
 	if err != nil {
 		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
 	}
@@ -224,10 +230,17 @@ func (e *FetchedDBEntry) Clear() {
 	e.Count = 0
 }
 
+type FetchedParent struct {
+	ID           int64  `db:"id"`
+	RDNOrig      string `db:"rdn_orig"`
+	ParentDNOrig string `db:"parent_dn_orig"`
+}
+
 type DBTree struct {
 	ID       int64  `db:"id"`
-	parentID int64  `db:"parent_id"`
+	ParentID int64  `db:"parent_id"`
 	RDNNorm  string `db:"rdn_norm"`
+	RDNOrig  string `db:"rdn_orig"`
 }
 
 type DBEntry struct {
@@ -247,7 +260,7 @@ type DBEntry struct {
 
 func insert(tx *sqlx.Tx, entry *AddEntry) (int64, error) {
 	if *twowayEnabled {
-		hasMemberEntries, err := findByMemberDNWithLock(tx, entry.GetDN())
+		hasMemberEntries, err := findByMemberDNWithLock(tx, entry.DN())
 		if err != nil {
 			return 0, err
 		}
@@ -267,13 +280,14 @@ func insert(tx *sqlx.Tx, entry *AddEntry) (int64, error) {
 	}
 
 	var parentID int64
-	if entry.GetDN().ParentDNNorm == "" {
-		parentID = ROOT_ID
+	if entry.ParentDN().IsDC() {
+		parentID = DCID
 	} else {
-		parentID, err = findParentIDbyDNWithLock(tx, entry.GetDN())
+		parent, err := findParentIDbyDNWithLock(tx, entry.DN())
 		if err != nil {
 			return 0, err
 		}
+		parentID = parent.ID
 	}
 
 	rows, err := tx.NamedStmt(addStmt).Queryx(map[string]interface{}{
@@ -307,17 +321,18 @@ func insert(tx *sqlx.Tx, entry *AddEntry) (int64, error) {
 		_, err := tx.NamedStmt(addTreeStmt).Exec(map[string]interface{}{
 			"id":        id,
 			"parent_id": parentID,
-			"rdn_norm":  entry.RDNNorm(),
+			"rdn_norm":  entry.dn.RDNNormStr(),
+			"rdn_orig":  entry.dn.RDNOrigStr(),
 		})
 		if err != nil {
-			return 0, xerrors.Errorf("Failed to insert tree record. parent_id: %s, rdn_norm: %s err: %w", parentID, entry.RDNNorm(), err)
+			return 0, xerrors.Errorf("Failed to insert tree record. parent_id: %d, rdn_norm: %s err: %w", parentID, entry.RDNNorm(), err)
 		}
 	}
 
 	if *twowayEnabled {
 		if members, ok := entry.GetAttrNorm("member"); ok {
 			for _, dnNorm := range members {
-				err := addMemberOfByDNNorm(tx, dnNorm, entry.GetDN())
+				err := addMemberOfByDNNorm(tx, dnNorm, entry.DN())
 				if err != nil {
 					return 0, xerrors.Errorf("Faild to add memberOf. err: %w", err)
 				}
@@ -332,11 +347,11 @@ func addMemberOfByDNNorm(tx *sqlx.Tx, dnNorm string, addMemberOfDN *DN) error {
 	// This query doesn't update updated
 	_, err := tx.NamedStmt(addMemberOfByDNNormStmt).Exec(map[string]interface{}{
 		"dnNorm":         dnNorm,
-		"memberOfDNNorm": addMemberOfDN.DNNorm,
-		"memberOfDNOrig": addMemberOfDN.DNOrig,
+		"memberOfDNNorm": addMemberOfDN.DNNormStr(),
+		"memberOfDNOrig": addMemberOfDN.DNOrigStr(),
 	})
 	if err != nil {
-		return xerrors.Errorf("Failed to add memberOf. dn: %s, memberOf: %s, err: %w", dnNorm, addMemberOfDN.DNOrig, err)
+		return xerrors.Errorf("Failed to add memberOf. dn: %s, memberOf: %s, err: %w", dnNorm, addMemberOfDN.DNOrigStr(), err)
 	}
 	return nil
 }
@@ -346,14 +361,14 @@ func deleteMemberOfByDNNorm(tx *sqlx.Tx, dnNorm string, deleteMemberOfDN *DN) er
 	if err != nil {
 		return err
 	}
-	err = modifyEntry.Delete("memberOf", []string{deleteMemberOfDN.DNOrig})
+	err = modifyEntry.Delete("memberOf", []string{deleteMemberOfDN.DNOrigStr()})
 	if err != nil {
 		return err
 	}
 
 	err = update(tx, nil, modifyEntry)
 	if err != nil {
-		return xerrors.Errorf("Failed to delete memberOf. dn: %s, memberOf: %s, err: %w", dnNorm, deleteMemberOfDN.DNNorm, err)
+		return xerrors.Errorf("Failed to delete memberOf. dn: %s, memberOf: %s, err: %w", dnNorm, deleteMemberOfDN.DNOrigStr(), err)
 	}
 	return nil
 }
@@ -442,7 +457,7 @@ func updateDN(tx *sqlx.Tx, oldDN, newDN *DN) error {
 	_, err = tx.NamedStmt(updateDNByIdStmt).Exec(map[string]interface{}{
 		"id":        newEntry.dbEntryId,
 		"updated":   dbEntry.Updated,
-		"newdnNorm": newDN.DNNorm,
+		"newdnNorm": newDN.DNNormStr(),
 		"newpath":   newDN.ReverseParentDN,
 		"attrsNorm": dbEntry.AttrsNorm,
 		"attrsOrig": dbEntry.AttrsOrig,
@@ -450,10 +465,10 @@ func updateDN(tx *sqlx.Tx, oldDN, newDN *DN) error {
 
 	if err != nil {
 		if strings.Contains(err.Error(), "duplicate key value violates unique constraint") {
-			log.Printf("warn: Failed to update entry DN because of already exists. oldDN: %s newDN: %s err: %v", oldDN.DNNorm, newDN.DNNorm, err)
+			log.Printf("warn: Failed to update entry DN because of already exists. oldDN: %s newDN: %s err: %v", oldDN.DNNormStr(), newDN.DNNormStr(), err)
 			return NewAlreadyExists()
 		}
-		return xerrors.Errorf("Faild to update entry DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNorm, newDN.DNNorm, err)
+		return xerrors.Errorf("Faild to update entry DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
 	}
 
 	if *twowayEnabled {
@@ -475,16 +490,16 @@ func renameMemberByMemberDN(tx *sqlx.Tx, oldMemberDN, newMemberDN *DN) error {
 	}
 
 	if len(modifyEntries) == 0 {
-		log.Printf("No entries which have member for rename. memberDN: %s", oldMemberDN.DNNorm)
+		log.Printf("No entries which have member for rename. memberDN: %s", oldMemberDN.DNNormStr())
 		return nil
 	}
 
 	for _, modifyEntry := range modifyEntries {
-		err := modifyEntry.Delete("member", []string{oldMemberDN.DNOrig})
+		err := modifyEntry.Delete("member", []string{oldMemberDN.DNOrigStr()})
 		if err != nil {
 			return err
 		}
-		err = modifyEntry.Add("member", []string{newMemberDN.DNOrig})
+		err = modifyEntry.Add("member", []string{newMemberDN.DNOrigStr()})
 		if err != nil {
 			return err
 		}
@@ -506,16 +521,16 @@ func renameMemberOfByMemberOfDN(tx *sqlx.Tx, oldMemberOfDN, newMemberOfDN *DN) e
 	}
 
 	if len(modifyEntries) == 0 {
-		log.Printf("No entries which have memberOf for rename. memberOfDN: %s", oldMemberOfDN.DNNorm)
+		log.Printf("No entries which have memberOf for rename. memberOfDN: %s", oldMemberOfDN.DNNormStr())
 		return nil
 	}
 
 	for _, modifyEntry := range modifyEntries {
-		err := modifyEntry.Delete("memberOf", []string{oldMemberOfDN.DNOrig})
+		err := modifyEntry.Delete("memberOf", []string{oldMemberOfDN.DNOrigStr()})
 		if err != nil {
 			return err
 		}
-		err = modifyEntry.Add("memberOf", []string{newMemberOfDN.DNOrig})
+		err = modifyEntry.Add("memberOf", []string{newMemberOfDN.DNOrigStr()})
 		if err != nil {
 			return err
 		}
@@ -536,13 +551,13 @@ func deleteByDN(tx *sqlx.Tx, dn *DN) error {
 
 	var id int = 0
 	err = tx.NamedStmt(deleteByDNStmt).Get(&id, map[string]interface{}{
-		"dnNorm": dn.DNNorm,
+		"dnNorm": dn.DNNormStr(),
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "sql: no rows in result set") {
 			return NewNoSuchObject()
 		}
-		return xerrors.Errorf("Faild to delete entry. dn: %s, err: %w", dn.DNNorm, err)
+		return xerrors.Errorf("Faild to delete entry. dn: %s, err: %w", dn.DNNormStr(), err)
 	}
 	if id == 0 {
 		return NewNoSuchObject()
@@ -567,12 +582,12 @@ func deleteMemberByMemberDN(tx *sqlx.Tx, memberDN *DN) error {
 	}
 
 	if len(modifyEntries) == 0 {
-		log.Printf("No entries which have member for delete. memberDN: %s", memberDN.DNNorm)
+		log.Printf("No entries which have member for delete. memberDN: %s", memberDN.DNNormStr())
 		return nil
 	}
 
 	for _, modifyEntry := range modifyEntries {
-		err := modifyEntry.Delete("member", []string{memberDN.DNOrig})
+		err := modifyEntry.Delete("member", []string{memberDN.DNOrigStr()})
 		if err != nil {
 			return err
 		}
@@ -594,12 +609,12 @@ func deleteMemberOfByMemberOfDN(tx *sqlx.Tx, memberOfDN *DN) error {
 	}
 
 	if len(modifyEntries) == 0 {
-		log.Printf("No entries which have memberOf for delete. memberOfDN: %s", memberOfDN.DNNorm)
+		log.Printf("No entries which have memberOf for delete. memberOfDN: %s", memberOfDN.DNNormStr())
 		return nil
 	}
 
 	for _, modifyEntry := range modifyEntries {
-		err := modifyEntry.Delete("memberOf", []string{memberOfDN.DNOrig})
+		err := modifyEntry.Delete("memberOf", []string{memberOfDN.DNOrigStr()})
 		if err != nil {
 			return err
 		}
@@ -614,7 +629,7 @@ func deleteMemberOfByMemberOfDN(tx *sqlx.Tx, memberOfDN *DN) error {
 
 func findByMemberDNWithLock(tx *sqlx.Tx, memberDN *DN) ([]*ModifyEntry, error) {
 	rows, err := tx.NamedStmt(findByMemberWithLockStmt).Queryx(map[string]interface{}{
-		"dnNorm": memberDN.DNNorm,
+		"dnNorm": memberDN.DNNormStr(),
 	})
 	if err != nil {
 		return nil, err
@@ -649,7 +664,7 @@ func findByMemberDNWithLock(tx *sqlx.Tx, memberDN *DN) ([]*ModifyEntry, error) {
 
 func findByMemberOfDNWithLock(tx *sqlx.Tx, memberDN *DN) ([]*ModifyEntry, error) {
 	rows, err := tx.NamedStmt(findByMemberOfWithLockStmt).Queryx(map[string]interface{}{
-		"dnNorm": memberDN.DNNorm,
+		"dnNorm": memberDN.DNNormStr(),
 	})
 	if err != nil {
 		return nil, err
@@ -682,30 +697,30 @@ func findByMemberOfDNWithLock(tx *sqlx.Tx, memberDN *DN) ([]*ModifyEntry, error)
 	return modifyEntries, nil
 }
 
-func findParentIDbyDNWithLock(tx *sqlx.Tx, dn *DN) (int64, error) {
+func findParentIDbyDNWithLock(tx *sqlx.Tx, dn *DN) (*FetchedParent, error) {
 	rows, err := tx.NamedStmt(findParentIDByDNWithLockStmt).Queryx(map[string]interface{}{
-		"dn_norm": dn.ParentDNNorm,
+		"dn_norm": dn.ParentDN().DNNormStr(),
 	})
 	if err != nil {
-		return 0, xerrors.Errorf("Failed to fetch parentID by DN: %s, err: %w", dn.DNOrig, err)
+		return nil, xerrors.Errorf("Failed to fetch parentID by DN: %s, err: %w", dn.DNOrigStr(), err)
 	}
 	defer rows.Close()
 	if rows.Next() {
-		var id int64
-		rows.Scan(&id)
-		return id, nil
+		var parent FetchedParent
+		rows.StructScan(&parent)
+		return &parent, nil
 	}
-	log.Printf("debug: Not found parent DN. dn_norm: %s", dn.ParentDNNorm)
+	log.Printf("debug: Not found parent DN. dn_norm: %s", dn.ParentDN().DNNormStr())
 	// TODO check LDAP error code
-	return 0, NewNoSuchObject()
+	return nil, NewNoSuchObject()
 }
 
 func findParentIDbyDN(dn *DN) (int64, error) {
 	rows, err := findParentIDByDNWithLockStmt.Queryx(map[string]interface{}{
-		"dn_norm": dn.ParentDNNorm,
+		"dn_norm": dn.ParentDN().DNNormStr(),
 	})
 	if err != nil {
-		return 0, xerrors.Errorf("Failed to fetch parentID by DN: %s, err: %w", dn.DNOrig, err)
+		return 0, xerrors.Errorf("Failed to fetch parentID by DN: %s, err: %w", dn.DNOrigStr(), err)
 	}
 	defer rows.Close()
 	if rows.Next() {
@@ -713,7 +728,7 @@ func findParentIDbyDN(dn *DN) (int64, error) {
 		rows.Scan(&id)
 		return id, nil
 	}
-	log.Printf("debug: Not found parent DN. dn_norm: %s", dn.ParentDNNorm)
+	log.Printf("debug: Not found parent DN. dn_norm: %s", dn.ParentDN().DNNormStr())
 	// TODO check LDAP error code
 	return 0, NewNoSuchObject()
 }
@@ -783,7 +798,7 @@ func findChildIDByParentID(parentID int64) ([]int64, error) {
 func findByDN(tx *sqlx.Tx, dn *DN) (*SearchEntry, error) {
 	dbEntry := FetchedDBEntry{}
 	err := tx.NamedStmt(findByDNStmt).Get(&dbEntry, map[string]interface{}{
-		"dnNorm": dn.DNNorm,
+		"dnNorm": dn.DNNormStr(),
 	})
 	if err != nil {
 		return nil, err
@@ -793,7 +808,7 @@ func findByDN(tx *sqlx.Tx, dn *DN) (*SearchEntry, error) {
 }
 
 func findByDNWithLock(tx *sqlx.Tx, dn *DN) (*ModifyEntry, error) {
-	return findByDNNormWithLock(tx, dn.DNNorm)
+	return findByDNNormWithLock(tx, dn.DNNormStr())
 }
 
 func findByDNNormWithLock(tx *sqlx.Tx, dnNorm string) (*ModifyEntry, error) {
@@ -811,15 +826,15 @@ func findByDNNormWithLock(tx *sqlx.Tx, dnNorm string) (*ModifyEntry, error) {
 func findCredByDN(dn *DN) ([]string, error) {
 	var j types.JSONText
 	err := findCredByDNStmt.Get(&j, map[string]interface{}{
-		"dnNorm": dn.DNNorm,
+		"dnNorm": dn.DNNormStr(),
 	})
 	if err != nil {
-		return nil, xerrors.Errorf("Faild to find cred by DN. dn: %s, err: %w", dn.DNNorm, err)
+		return nil, xerrors.Errorf("Faild to find cred by DN. dn: %s, err: %w", dn.DNNormStr(), err)
 	}
 	var bindUserCred []string
 	err = j.Unmarshal(&bindUserCred)
 	if err != nil {
-		return nil, xerrors.Errorf("Faild to unmarshal cred. dn: %s, err: %w", dn.DNNorm, err)
+		return nil, xerrors.Errorf("Faild to unmarshal cred. dn: %s, err: %w", dn.DNNormStr(), err)
 	}
 	return bindUserCred, nil
 }

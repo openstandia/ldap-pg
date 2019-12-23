@@ -1,7 +1,5 @@
 package main
 
-import "strings"
-
 type AddEntry struct {
 	schemaMap  *SchemaMap
 	dn         *DN
@@ -39,20 +37,31 @@ func (j *AddEntry) SetDN(dn *DN) {
 }
 
 func (j *AddEntry) IsContainer() bool {
-	// TODO check other container?
-	return strings.HasPrefix(j.dn.RDNNorm, "ou=")
+	return j.dn.IsContainer()
 }
 
 func (j *AddEntry) RDNNorm() string {
-	return j.dn.RDNNorm
+	return j.dn.RDNNormStr()
 }
 
-func (j *AddEntry) GetDN() *DN {
+func (j *AddEntry) RDNOrig() string {
+	return j.dn.RDNOrigStr()
+}
+
+func (j *AddEntry) DN() *DN {
 	return j.dn
 }
 
+func (j *AddEntry) ParentDN() *DN {
+	return j.dn.ParentDN()
+}
+
+func (j *AddEntry) IsDC() bool {
+	return j.dn.IsDC()
+}
+
 func (j *AddEntry) GetDNNorm() string {
-	return j.dn.DNNorm
+	return j.dn.DNNormStr()
 }
 
 func (j *AddEntry) Validate() error {

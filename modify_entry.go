@@ -64,11 +64,11 @@ func (j *ModifyEntry) GetDN() *DN {
 }
 
 func (j *ModifyEntry) GetDNNorm() string {
-	return j.dn.DNNorm
+	return j.dn.DNNormStr()
 }
 
 func (j *ModifyEntry) GetDNOrig() string {
-	return j.dn.DNOrig
+	return j.dn.DNOrigStr()
 }
 
 func (j *ModifyEntry) Validate() error {
@@ -146,7 +146,7 @@ func (j *ModifyEntry) deletesv(value *SchemaValue) error {
 
 	current, ok := j.attributes[value.Name()]
 	if !ok {
-		log.Printf("warn: Failed to modify/delete because of no attribute. dn: %s, attrName: %s", j.GetDN().DNNorm, value.Name())
+		log.Printf("warn: Failed to modify/delete because of no attribute. dn: %s, attrName: %s", j.GetDN().DNNormStr(), value.Name())
 		return NewNoSuchAttribute("modify/delete", value.Name())
 	}
 
@@ -167,7 +167,7 @@ func (j *ModifyEntry) deletesv(value *SchemaValue) error {
 
 func (j *ModifyEntry) deleteAll(s *Schema) error {
 	if !j.HasAttr(s.Name) {
-		log.Printf("warn: Failed to modify/delete because of no attribute. dn: %s", j.GetDN().DNNorm)
+		log.Printf("warn: Failed to modify/delete because of no attribute. dn: %s", j.GetDN().DNNormStr())
 		return NewNoSuchAttribute("modify/delete", s.Name)
 	}
 	delete(j.attributes, s.Name)

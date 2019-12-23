@@ -51,14 +51,14 @@ func handleBind(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		}
 
 		// Anonymous
-		if dn.DNNorm == "" {
+		if dn.IsAnonymous() {
 			log.Printf("info: Bind anonymous user.")
 
 			w.Write(res)
 			return
 		}
 
-		log.Printf("info: Find bind user. DN: %s", dn.DNNorm)
+		log.Printf("info: Find bind user. DN: %s", dn.DNNormStr())
 
 		bindUserCred, err := findCredByDN(dn)
 		if err == nil && len(bindUserCred) > 0 {
@@ -172,9 +172,9 @@ func doPassThrough(s *Server, input, passThroughKey string) (bool, error) {
 func saveAuthencatedDN(m *ldap.Message, dn *DN) error {
 	session := getAuthSession(m)
 	if v, ok := session["dn"]; ok {
-		log.Printf("info: Switching authenticated user: %s -> %s", v.DNNorm, dn.DNNorm)
+		log.Printf("info: Switching authenticated user: %s -> %s", v.DNNormStr(), dn.DNNormStr())
 	}
 	session["dn"] = dn
-	log.Printf("Saved authenticated DN: %s", dn.DNNorm)
+	log.Printf("Saved authenticated DN: %s", dn.DNNormStr())
 	return nil
 }
