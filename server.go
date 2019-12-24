@@ -11,10 +11,12 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/comail/colog"
-	"github.com/jsimonetti/pwscheme/ssha512"
 	"net/http"
 	_ "net/http/pprof"
+
+	"github.com/comail/colog"
+	"github.com/jsimonetti/pwscheme/ssha512"
+
 	//"github.com/hashicorp/logutils"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -52,6 +54,7 @@ type Server struct {
 	internal   *ldap.Server
 	suffixOrig []string
 	suffixNorm []string
+	repo       *Repository
 }
 
 func NewServer(c *ServerConfig) *Server {
@@ -74,6 +77,10 @@ func NewServer(c *ServerConfig) *Server {
 		suffixOrig: sn,
 		suffixNorm: sn,
 	}
+}
+
+func (s *Server) Repo() *Repository {
+	return s.repo
 }
 
 func (s *Server) Start() {
@@ -138,10 +145,12 @@ func (s *Server) Start() {
 	// db.SetConnMaxLifetime(time.Hour)
 
 	// Init prepared statement
-	err = initStmt(db)
+	repo := NewRepository(s)
+	err = repo.initStmt(db)
 	if err != nil {
 		log.Fatalf("fatal: Prepare statement error:  %+v", err)
 	}
+	s.repo = repo // TODO Remove bidirectional dependency
 
 	// Init schema map
 	schemaMap = InitSchemaMap()
@@ -156,10 +165,10 @@ func (s *Server) Start() {
 	}
 
 	// Init mapper
-	mapper = NewMapper(schemaMap)
+	mapper = NewMapper(s, schemaMap)
 
 	// Init rootDN
-	s.rootDN, err = normalizeDN(s.config.RootDN)
+	s.rootDN, err = s.NormalizeDN(s.config.RootDN)
 	if err != nil {
 		log.Fatalf("fatal: Invalid root-dn format: %s, err: %s", s.config.RootDN, err)
 	}
@@ -175,9 +184,9 @@ func (s *Server) Start() {
 	routes.Bind(NewHandler(s, handleBind))
 	routes.Compare(handleCompare)
 	routes.Add(NewHandler(s, handleAdd))
-	routes.Delete(handleDelete)
-	routes.Modify(handleModify)
-	routes.ModifyDN(handleModifyDN)
+	routes.Delete(NewHandler(s, handleDelete))
+	routes.Modify(NewHandler(s, handleModify))
+	routes.ModifyDN(NewHandler(s, handleModifyDN))
 
 	routes.Extended(handleStartTLS).
 		RequestName(ldap.NoticeOfStartTLS).Label("StartTLS")
@@ -356,4 +365,8 @@ func (s *Server) GetRootDN() *DN {
 
 func (s *Server) GetRootPW() string {
 	return s.config.RootPW
+}
+
+func (s *Server) NormalizeDN(dn string) (*DN, error) {
+	return normalizeDN(s.SuffixNorm(), dn)
 }

@@ -19,7 +19,7 @@ func handleBind(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		name := string(r.Name())
 		pass := string(r.AuthenticationSimple())
 
-		dn, err := normalizeDN(name)
+		dn, err := s.NormalizeDN(name)
 		if err != nil {
 			log.Printf("info: Bind failed. DN: %s err: %s", name, err)
 			res.SetResultCode(ldap.LDAPResultInvalidCredentials)

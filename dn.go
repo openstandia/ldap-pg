@@ -3,7 +3,6 @@ package main
 import (
 	"strings"
 
-	"golang.org/x/xerrors"
 	goldap "gopkg.in/ldap.v3"
 )
 
@@ -24,7 +23,7 @@ var anonymousDN = &DN{
 	ReverseParentDN: "",
 }
 
-func normalizeDN2(suffix []string, dn string) (*DN, error) {
+func normalizeDN(suffix []string, dn string) (*DN, error) {
 	// Anonymous
 	if dn == "" {
 		return anonymousDN, nil
@@ -36,12 +35,25 @@ func normalizeDN2(suffix []string, dn string) (*DN, error) {
 	}
 
 	if len(dnNorm)-len(suffix) < 0 {
-		return nil, xerrors.Errorf("Invalid DN. It must have suffix. DN: %s", dn)
+		// return nil, xerrors.Errorf("Invalid DN. It must have suffix. DN: %s", dn)
+		return &DN{
+			dn:              d,
+			dnNorm:          dnNorm,
+			dnOrig:          dnOrig,
+			suffix:          suffix,
+			ReverseParentDN: "",
+		}, nil
 	}
 
 	for i, s := range suffix {
 		if dnNorm[len(dnNorm)-len(suffix)+i] != s {
-			return nil, xerrors.Errorf("Invalid DN. It must have suffix. DN: %s", dn)
+			return &DN{
+				dn:              d,
+				dnNorm:          dnNorm,
+				dnOrig:          dnOrig,
+				suffix:          suffix,
+				ReverseParentDN: "",
+			}, nil
 		}
 	}
 
@@ -61,7 +73,7 @@ func normalizeDN2(suffix []string, dn string) (*DN, error) {
 	}, nil
 }
 
-func normalizeDN(dn string) (*DN, error) {
+func normalizeDNBAK(dn string) (*DN, error) {
 	d, dnNorm, dnOrig, err := parseDN(dn)
 	if err != nil {
 		return nil, err
@@ -95,10 +107,16 @@ func (d *DN) DNOrigStr() string {
 }
 
 func (d *DN) RDNNormStr() string {
+	if d.IsDC() {
+		return ""
+	}
 	return d.dnNorm[0]
 }
 
 func (d *DN) RDNOrigStr() string {
+	if d.IsDC() {
+		return ""
+	}
 	return d.dnOrig[0]
 }
 
@@ -109,6 +127,11 @@ func (d *DN) Equal(o *DN) bool {
 func (d *DN) GetRDN() map[string]string {
 	if len(d.cachedRDN) > 0 {
 		return d.cachedRDN
+	}
+
+	// Check DC case
+	if len(d.dn.RDNs) == 0 {
+		return map[string]string{}
 	}
 
 	m := make(map[string]string, len(d.dn.RDNs[0].Attributes))
@@ -132,7 +155,7 @@ func (d *DN) Modify(newRDN string) (*DN, error) {
 	}
 	nd = append(nd, d.suffix...)
 
-	return normalizeDN2(d.suffix, strings.Join(nd, ","))
+	return normalizeDN(d.suffix, strings.Join(nd, ","))
 }
 
 func (d *DN) ToPath() string {
@@ -152,12 +175,12 @@ func (d *DN) ParentDN() *DN {
 	var p *DN
 	if len(d.dnOrig) == 1 {
 		// Parent is DC
-		p, _ = normalizeDN2(d.suffix, strings.Join(d.suffix, ","))
+		p, _ = normalizeDN(d.suffix, strings.Join(d.suffix, ","))
 	}
 
 	nd := d.dnOrig[1:]
 	nd = append(nd, d.suffix...)
-	p, _ = normalizeDN2(d.suffix, strings.Join(nd, ","))
+	p, _ = normalizeDN(d.suffix, strings.Join(nd, ","))
 
 	return p
 }

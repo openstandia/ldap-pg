@@ -8,9 +8,9 @@ import (
 	ldap "github.com/openstandia/ldapserver"
 )
 
-func handleModify(w ldap.ResponseWriter, m *ldap.Message) {
+func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	r := m.GetModifyRequest()
-	dn, err := normalizeDN(string(r.Object()))
+	dn, err := s.NormalizeDN(string(r.Object()))
 
 	if err != nil {
 		log.Printf("warn: Invalid dn: %s err: %s", r.Object(), err)
@@ -80,7 +80,7 @@ func handleModify(w ldap.ResponseWriter, m *ldap.Message) {
 
 	log.Printf("Update entry. oldEntry: %v newEntry: %v", oldEntry, newEntry)
 
-	err = update(tx, oldEntry, newEntry)
+	err = s.Repo().update(tx, oldEntry, newEntry)
 
 	if err != nil {
 		tx.Rollback()

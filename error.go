@@ -107,3 +107,9 @@ func NewAlreadyExists() *LDAPError {
 		Code: 68,
 	}
 }
+
+func NewUnavailable() *LDAPError {
+	return &LDAPError{
+		Code: ldap.LDAPResultUnavailable,
+	}
+}

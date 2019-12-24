@@ -45,8 +45,18 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	default:
 	}
 
+	scope := int(r.Scope())
+	if scope < 0 || scope > 3 {
+		log.Printf("warn: Invalid scope: %d", scope)
+
+		// TODO return correct error code
+		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultOperationsError)
+		w.Write(res)
+		return
+	}
+
 	// Phase 1: normalize DN
-	baseDN, err := normalizeDN2(s.SuffixNorm(), string(r.BaseObject()))
+	baseDN, err := s.NormalizeDN(string(r.BaseObject()))
 	if err != nil {
 		log.Printf("info: Invalid baseDN error: %#v", err)
 
@@ -63,8 +73,6 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	}
 
 	// Phase 3: filter converting
-	scope := int(r.Scope())
-
 	q, err := ToQuery(schemaMap, r.Filter())
 	if err != nil {
 		log.Printf("info: query error: %#v", err)
@@ -81,105 +89,7 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	// Phase 4: detect parent ID(s)
-	// TODO: optimize based on the requested scope
-	var baseDNID int64 = DCID
-	var cid []int64
-	if baseDN.IsDC() {
-		cid, err = findChildIDByParentID(baseDNID)
-		if err != nil {
-			if lerr, ok := err.(*LDAPError); ok {
-				res := ldap.NewSearchResultDoneResponse(lerr.Code)
-				w.Write(res)
-			} else {
-				// TODO return correct error code
-				res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultUnavailable)
-				w.Write(res)
-			}
-		}
-	} else {
-		if baseDN.IsContainer() {
-			baseDNID, err = findIDbyContainerDNNorm(baseDN.DNNormStr())
-			if err != nil {
-				if lerr, ok := err.(*LDAPError); ok {
-					res := ldap.NewSearchResultDoneResponse(lerr.Code)
-					w.Write(res)
-				} else {
-					// TODO return correct error code
-					res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultUnavailable)
-					w.Write(res)
-				}
-				return
-			}
-			cid, err = findChildIDByParentID(baseDNID)
-			if err != nil {
-				if lerr, ok := err.(*LDAPError); ok {
-					res := ldap.NewSearchResultDoneResponse(lerr.Code)
-					w.Write(res)
-				} else {
-					// TODO return correct error code
-					res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultUnavailable)
-					w.Write(res)
-				}
-			}
-		} else {
-			baseDNID, err = findIDbyParentContainerDNNorm(baseDN.ParentDN().DNNormStr(), baseDN.RDNNormStr())
-			if err != nil {
-				if lerr, ok := err.(*LDAPError); ok {
-					res := ldap.NewSearchResultDoneResponse(lerr.Code)
-					w.Write(res)
-				} else {
-					// TODO return correct error code
-					res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultUnavailable)
-					w.Write(res)
-				}
-			}
-		}
-	}
-
-	// Phase 5: make query based on the requested scope
-	// Scope handling, one and sub need to includ base.
-	// 0: base
-	// 1: one
-	// 2: sub
-	// 3: children
-	var pathQuery string
-	// path := baseDN.ToPath()
-	if scope == 0 {
-		pathQuery = "e.id = :baseDNID"
-		q.Params["baseDNID"] = baseDNID
-
-	} else if scope == 1 {
-		pathQuery = "e.parent_id = :baseDNID"
-		q.Params["baseDNID"] = baseDNID
-
-	} else if scope == 2 {
-		cid = append(cid, baseDNID)
-		in, params := expandIn(cid)
-		pathQuery = "(e.id = :baseDNID OR e.parent_id IN (" + in + "))"
-		q.Params["baseDNID"] = baseDNID
-		for k, v := range params {
-			q.Params[k] = v
-		}
-
-	} else if scope == 3 {
-		cid = append(cid, baseDNID)
-		in, params := expandIn(cid)
-		pathQuery = "e.parent_id IN (" + in + ")"
-		for k, v := range params {
-			q.Params[k] = v
-		}
-
-	} else {
-		log.Printf("warn: Invalid scope: %d", scope)
-
-		// TODO return correct error code
-		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultOperationsError)
-		w.Write(res)
-		return
-	}
-
-	// Phase 6: execute SQL and return entries
+	// Phase 4: execute SQL and return entries
 	// TODO configurable default pageSize
 	var pageSize int32 = 500
 	if pageControl != nil {
@@ -197,22 +107,22 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		}
 	}
 
-	// add dcObject into response if the scope contains it.
-	// Also, take care the pageSize if adding it.
-	// TODO: Need to filter
-	if baseDNID == 0 && (scope == 0 || scope == 2) {
-		responseDCEntry(w, r, s.SuffixOrigStr(), "", s.DCRDN())
-	}
-
 	q.Params["pageSize"] = pageSize
 	q.Params["offset"] = offset
 
-	maxCount, limittedCount, err := findByFilter(pathQuery, q, isMemberOfAttributesRequested(r), func(searchEntry *SearchEntry) error {
-		responseEntry(w, r, searchEntry)
+	maxCount, limittedCount, err := findByFilter(baseDN, scope, q, isMemberOfAttributesRequested(r), func(searchEntry *SearchEntry) error {
+		responseEntry(s, w, r, searchEntry)
 		return nil
 	})
 	if err != nil {
-		log.Printf("error: Search  error: %#v", err)
+		if lerr, ok := err.(*LDAPError); ok {
+			log.Printf("info: Search failed: %v", err)
+
+			res := ldap.NewSearchResultDoneResponse(lerr.Code)
+			w.Write(res)
+		}
+
+		log.Printf("error: Search error: %v", err)
 
 		// TODO return correct error code
 		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultOperationsError)
@@ -254,18 +164,16 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	return
 }
 
-func responseDCEntry(w ldap.ResponseWriter, r message.SearchRequest, dcDNOrig, org, dc string) {
-	e := ldap.NewSearchResultEntry(dcDNOrig)
-	e.AddAttribute(message.AttributeDescription("objectClass"), "top", "dcObject", "organization")
-	e.AddAttribute(message.AttributeDescription("o"), message.AttributeValue(org))
-	e.AddAttribute(message.AttributeDescription("dc"), message.AttributeValue(dc))
-	w.Write(e)
-}
-
-func responseEntry(w ldap.ResponseWriter, r message.SearchRequest, searchEntry *SearchEntry) {
+func responseEntry(s *Server, w ldap.ResponseWriter, r message.SearchRequest, searchEntry *SearchEntry) {
 	log.Printf("Response Entry: %+v", searchEntry)
 
-	e := ldap.NewSearchResultEntry(searchEntry.DNOrigStr())
+	var dn string
+	if searchEntry.DNOrigStr() == "" {
+		dn = s.SuffixOrigStr()
+	} else {
+		dn = searchEntry.DNOrigStr() + "," + s.SuffixOrigStr()
+	}
+	e := ldap.NewSearchResultEntry(dn)
 
 	sentAttrs := map[string]struct{}{}
 

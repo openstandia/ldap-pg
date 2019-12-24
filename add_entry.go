@@ -41,10 +41,16 @@ func (j *AddEntry) IsContainer() bool {
 }
 
 func (j *AddEntry) RDNNorm() string {
+	if j.dn.IsDC() {
+		return ""
+	}
 	return j.dn.RDNNormStr()
 }
 
 func (j *AddEntry) RDNOrig() string {
+	if j.dn.IsDC() {
+		return ""
+	}
 	return j.dn.RDNOrigStr()
 }
 

@@ -12,11 +12,13 @@ import (
 )
 
 type Mapper struct {
+	server    *Server
 	schemaMap SchemaMap
 }
 
-func NewMapper(s SchemaMap) *Mapper {
+func NewMapper(server *Server, s SchemaMap) *Mapper {
 	return &Mapper{
+		server:    server,
 		schemaMap: s,
 	}
 }
@@ -79,7 +81,7 @@ func (m *Mapper) AddEntryToDBEntry(entry *AddEntry) (*DBEntry, error) {
 
 	dbEntry := &DBEntry{
 		DNNorm:    entry.DN().DNNormStr(),
-		Path:      entry.DN().ReverseParentDN,
+		DNOrig:    entry.DN().DNOrigStr(),
 		EntryUUID: entryUUID,
 		Created:   created,
 		Updated:   updated,
@@ -99,7 +101,7 @@ func (m *Mapper) ModifyEntryToDBEntry(entry *ModifyEntry) (*DBEntry, error) {
 	updated := time.Now()
 
 	dbEntry := &DBEntry{
-		Id:        entry.dbEntryId,
+		ID:        entry.dbEntryId,
 		Updated:   updated,
 		AttrsNorm: types.JSONText(string(bNorm)),
 		AttrsOrig: types.JSONText(string(bOrig)),
@@ -109,7 +111,12 @@ func (m *Mapper) ModifyEntryToDBEntry(entry *ModifyEntry) (*DBEntry, error) {
 }
 
 func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry) (*SearchEntry, error) {
-	dn, err := normalizeDN(dbEntry.DNNorm)
+	if !dbEntry.IsDC() && dbEntry.DNOrig == "" {
+		log.Printf("error: Invalid state. FetchedDBEntiry mush have DNOrig always...")
+		return nil, NewUnavailable()
+	}
+
+	dn, err := m.normalizeDN(dbEntry.DNOrig)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +131,7 @@ func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry) (*SearchEn
 }
 
 func (m *Mapper) FetchedDBEntryToModifyEntry(dbEntry *FetchedDBEntry) (*ModifyEntry, error) {
-	dn, err := normalizeDN(dbEntry.DNNorm)
+	dn, err := m.normalizeDN(dbEntry.DNOrig)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +141,11 @@ func (m *Mapper) FetchedDBEntryToModifyEntry(dbEntry *FetchedDBEntry) (*ModifyEn
 	if err != nil {
 		return nil, err
 	}
-	entry.dbEntryId = dbEntry.Id
+	entry.dbEntryId = dbEntry.ID
 
 	return entry, nil
+}
+
+func (m *Mapper) normalizeDN(dn string) (*DN, error) {
+	return m.server.NormalizeDN(dn)
 }

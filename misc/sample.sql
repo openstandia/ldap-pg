@@ -29,10 +29,9 @@ DROP TABLE IF EXISTS ldap_entry;
 
 CREATE TABLE ldap_entry (
     id BIGSERIAL PRIMARY KEY,
-    path VARCHAR(255),
     parent_id BIGINT,
     rdn_norm VARCHAR(255) NOT NULL,
-    dn_norm VARCHAR(255) NOT NULL,
+    rdn_orig VARCHAR(255) NOT NULL,
     uuid VARCHAR(36) NOT NULL,
     created TIMESTAMP WITH TIME ZONE NOT NULL,
     updated TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -43,7 +42,6 @@ CREATE TABLE ldap_entry (
 -- ALTER TABLE ldap_entry ADD CONSTRAINT SET FOREIGN KEY (parent_id) REFERENCES ldap_tree(id);
 
 -- basic index
-CREATE INDEX idx_ldap_entry_path ON ldap_entry (path varchar_pattern_ops);
 CREATE UNIQUE INDEX idx_ldap_entry_rdn_norm ON ldap_entry (parent_id, rdn_norm);
 CREATE UNIQUE INDEX idx_ldap_entry_uuid ON ldap_entry (uuid);
 CREATE INDEX idx_ldap_entry_created ON ldap_entry (created);

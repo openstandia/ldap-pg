@@ -11,7 +11,7 @@ func handleAdd(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	log.Printf("info: Adding entry: %s", r.Entry())
 	//attributes values
 
-	dn, err := normalizeDN2(s.SuffixNorm(), string(r.Entry()))
+	dn, err := s.NormalizeDN(string(r.Entry()))
 	if err != nil {
 		log.Printf("warn: Invalid DN: %s err: %s", r.Entry(), err)
 
@@ -34,7 +34,7 @@ func handleAdd(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	tx := db.MustBegin()
 
-	id, err := insert(tx, addEntry)
+	id, err := s.Repo().insert(tx, addEntry)
 	if err != nil {
 		tx.Rollback()
 
