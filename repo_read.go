@@ -20,10 +20,10 @@ type FetchedDBEntry struct {
 	Updated      time.Time      `db:"updated"`
 	RDNOrig      string         `db:"rdn_orig"`
 	AttrsOrig    types.JSONText `db:"attrs_orig"`
-	Member       types.JSONText `db:"member"`   // No real column in the table
-	DNOrig       string         `db:"dn_orig"`  // No real clumn in t he table
-	MemberOf     types.JSONText `db:"memberof"` // No real column in the table
-	Count        int32          `db:"count"`    // No real column in the table
+	Member       types.JSONText `db:"member"`    // No real column in the table
+	MemberOf     types.JSONText `db:"member_of"` // No real column in the table
+	DNOrig       string         `db:"dn_orig"`   // No real clumn in t he table
+	Count        int32          `db:"count"`     // No real column in the table
 	ParentDNOrig string         // No real clumn in t he table
 }
 
@@ -75,6 +75,40 @@ func (e *FetchedDBEntry) Members(dnOrigCache map[int64]string, suffix string) (m
 	return nil, nil
 }
 
+func (e *FetchedDBEntry) MemberOfs(dnOrigCache map[int64]string, suffix string) ([]string, error) {
+	if len(e.MemberOf) > 0 {
+		jsonArray := []map[string]string{}
+		err := e.MemberOf.Unmarshal(&jsonArray)
+		if err != nil {
+			return nil, err
+		}
+
+		dns := make([]string, len(jsonArray))
+
+		for i, m := range jsonArray {
+			pid, err := strconv.ParseInt(m["p"], 10, 64)
+			if err != nil {
+				return nil, xerrors.Errorf("Invalid parent_id: %s", m["p"])
+			}
+			parentDNOrig, ok := dnOrigCache[pid]
+			if !ok {
+				return nil, xerrors.Errorf("No cached: %s", m["p"])
+			}
+
+			var s string
+			if parentDNOrig == "" {
+				s = suffix
+			} else {
+				s = parentDNOrig + "," + suffix
+			}
+
+			dns[i] = m["r"] + "," + s
+		}
+		return dns, nil
+	}
+	return nil, nil
+}
+
 func (e *FetchedDBEntry) GetAttrsOrig() map[string][]string {
 	if len(e.AttrsOrig) > 0 {
 		jsonMap := make(map[string][]string)
@@ -118,13 +152,13 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []st
 		return 0, 0, err
 	}
 
-	query, err := appenScopeFilter(scope, q, baseDNID, cid)
+	where, err := appenScopeFilter(scope, q, baseDNID, cid)
 	if err != nil {
 		return 0, 0, err
 	}
 
-	memberCol := ""
-	memberJoin := ""
+	var memberCol string
+	var memberJoin string
 	if len(reqMemberAttrs) > 0 {
 		// TODO bind parameter
 		in := make([]string, len(reqMemberAttrs))
@@ -143,37 +177,39 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []st
 		) ma`, strings.Join(in, ", "))
 	}
 
-	var fetchQuery string
-	if reqMemberOf && !*twowayEnabled {
-		fetchQuery = fmt.Sprintf(`SELECT id, parent_id, uuid, created, updated, rdn_orig, '' AS dn_orig attrs_orig,
-				(select jsonb_agg(e2.dn_norm) AS memberOf
-				FROM ldap_entry e2
-				WHERE e2.attrs_norm->'member' @> jsonb_build_array(e1.dn_norm)) AS memberOf,
-				count(id) over() AS count
-			FROM ldap_entry e1
-			WHERE %s
-			LIMIT :pageSize OFFSET :offset`, query)
-	} else {
-		// LEFT JOIN LATERAL(
-		// 		SELECT t.rdn_norm, t.rdn_orig FROM ldap_tree t WHERE t.id = e.parent_id
-		// 	) p ON true
-		fetchQuery = fmt.Sprintf(`SELECT e.id, e.parent_id, e.uuid, e.created, e.updated, e.rdn_orig, '' AS dn_orig, e.attrs_orig %s, count(e.id) over() AS count
-			FROM ldap_entry e %s
-			WHERE %s
-			LIMIT :pageSize OFFSET :offset`, memberCol, memberJoin, query)
+	var memberOfCol string
+	var memberOfJoin string
+	if reqMemberOf {
+		memberOfCol = ", to_jsonb(moa.member_of_array) as member_of"
+		memberOfJoin = `, LATERAL (
+			SELECT ARRAY (
+				SELECT jsonb_build_object('r', ee.rdn_orig, 'p', ee.parent_id::::TEXT) 
+					FROM ldap_member lm
+						JOIN ldap_entry ee ON ee.id = lm.member_of_id
+					WHERE lm.member_of_id = e.id
+			) AS member_of_array
+		) moa`
 	}
 
-	log.Printf("Fetch Query: %s Params: %v", fetchQuery, q.Params)
+	// LEFT JOIN LATERAL(
+	// 		SELECT t.rdn_norm, t.rdn_orig FROM ldap_tree t WHERE t.id = e.parent_id
+	// 	) p ON true
+	searchQuery := fmt.Sprintf(`SELECT e.id, e.parent_id, e.uuid, e.created, e.updated, e.rdn_orig, '' AS dn_orig, e.attrs_orig %s %s, count(e.id) over() AS count
+		FROM ldap_entry e %s %s
+		WHERE %s
+		LIMIT :pageSize OFFSET :offset`, memberCol, memberOfCol, memberJoin, memberOfJoin, where)
+
+	log.Printf("Fetch Query: %s Params: %v", searchQuery, q.Params)
 
 	var fetchStmt *sqlx.NamedStmt
 	var ok bool
-	if fetchStmt, ok = filterStmtMap.Get(fetchQuery); !ok {
+	if fetchStmt, ok = filterStmtMap.Get(searchQuery); !ok {
 		// cache
-		fetchStmt, err = r.db.PrepareNamed(fetchQuery)
+		fetchStmt, err = r.db.PrepareNamed(searchQuery)
 		if err != nil {
 			return 0, 0, err
 		}
-		filterStmtMap.Put(fetchQuery, fetchStmt)
+		filterStmtMap.Put(searchQuery, fetchStmt)
 	}
 
 	var rows *sqlx.Rows

@@ -131,6 +131,7 @@ func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry, dnOrigCach
 	orig["createTimestamp"] = []string{dbEntry.Created.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 	orig["modifyTimestamp"] = []string{dbEntry.Updated.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 
+	// member
 	members, err := dbEntry.Members(dnOrigCache, m.server.SuffixOrigStr())
 	if err != nil {
 		log.Printf("warn: Invalid state. FetchedDBEntiry cannot resolve member DN. err: %v", err)
@@ -140,6 +141,15 @@ func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry, dnOrigCach
 	for k, v := range members {
 		orig[k] = v
 	}
+
+	// memberOf
+	memberOfs, err := dbEntry.MemberOfs(dnOrigCache, m.server.SuffixOrigStr())
+	if err != nil {
+		log.Printf("warn: Invalid state. FetchedDBEntiry cannot resolve memberOf DN. err: %v", err)
+		// TODO busy?
+		return nil, NewUnavailable()
+	}
+	orig["memberOf"] = memberOfs
 
 	readEntry := NewSearchEntry(dn, orig)
 
