@@ -135,7 +135,7 @@ func (r *Repository) insertMember(tx *sqlx.Tx, subjectID int64, entry *AddEntry)
 	dnIDCache := map[string]int64{} // dn_orig => id cache map
 	dnIDCache[dc.DNOrig] = dc.ID
 
-	nodeNorms, err := collectNodeNormsByParentID(dc.ID)
+	nodeNorms, err := collectNodeNormByParentID(dc.ID)
 	if err != nil {
 		return err
 	}
@@ -221,7 +221,7 @@ type nordNorm struct {
 	DNNorm string `db:"dn_norm"`
 }
 
-func collectNodeNormsByParentID(parentID int64) ([]*nordNorm, error) {
+func collectNodeNormByParentID(parentID int64) ([]*nordNorm, error) {
 	if parentID == ROOT_ID {
 		return nil, xerrors.Errorf("Invalid parentID: %d", parentID)
 	}

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"log"
+	"strconv"
 	"strings"
 
 	"github.com/jmoiron/sqlx"
@@ -28,25 +30,106 @@ func (r *Repository) Update(tx *sqlx.Tx, oldEntry, newEntry *ModifyEntry) error 
 		return xerrors.Errorf("Failed to update entry. entry: %v, err: %w", newEntry, err)
 	}
 
-	if *twowayEnabled {
-		if oldEntry != nil {
-			diff := calcDiffAttr(oldEntry, newEntry, "member")
+	if oldEntry != nil {
+		// TODO move to schema
+		memberAttrs := []string{"member", "uniqueMember"}
+		for _, ma := range memberAttrs {
+			diff := calcDiffAttr(oldEntry, newEntry, ma)
 
-			for _, dnNorm := range diff.add {
-				err := r.addMemberOfByDNNorm(tx, dnNorm, oldEntry.GetDN())
-				if err != nil {
-					return err
-				}
+			err := r.addMembers(tx, dbEntry.ID, ma, diff.add)
+			if err != nil {
+				return err
 			}
-			for _, dnNorm := range diff.del {
-				err := r.deleteMemberOfByDNNorm(tx, dnNorm, oldEntry.GetDN())
-				if err != nil {
-					return err
-				}
+
+			err = r.deleteMembers(tx, dbEntry.ID, ma, diff.del)
+			if err != nil {
+				return err
 			}
 		}
 	}
 
+	return nil
+}
+
+func (r *Repository) addMembers(tx *sqlx.Tx, id int64, attrNameNorm string, dnNorms []string) error {
+	nodeNormCache, err := collectAllNodeNorm()
+	if err != nil {
+		return err
+	}
+
+	where := make([]string, len(dnNorms))
+	params := make(map[string]interface{}, len(dnNorms)*2+2)
+	params["mamber_id"] = id
+	params["attr_name_norm"] = attrNameNorm
+
+	for i, dnNorm := range dnNorms {
+		dn, err := r.server.NormalizeDN(dnNorm)
+		if err != nil {
+			return NewInvalidDNSyntax()
+		}
+
+		parentID, ok := nodeNormCache[dn.ParentDN().DNNormStr()]
+		if !ok {
+			return NewInvalidDNSyntax()
+		}
+
+		key1 := "parent_id_" + strconv.Itoa(i)
+		key2 := "rdn_norm_" + strconv.Itoa(i)
+
+		where[i] = fmt.Sprintf("(parent_id = :%s AND rdn_norm = :%s)", key1, key2)
+		params[key1] = parentID
+		params[key2] = dn.RDNNormStr()
+	}
+
+	q := fmt.Sprintf(`INSERT INTO ldap_member (member_id, attr_name_norm, member_of_id)
+		SELECT %d::::BIGINT, '%s', id FROM ldap_entry WHERE %s`, strings.Join(where, " AND "))
+
+	_, err = tx.NamedExec(q, params)
+	if err != nil {
+		return xerrors.Errorf("Failed to add member. id: %d, attr: %s, dnNorms: %v, err: %w", id, attrNameNorm, dnNorms, err)
+	}
+	return nil
+}
+
+func (r *Repository) deleteMembers(tx *sqlx.Tx, id int64, attrNameNorm string, dnNorms []string) error {
+	nodeNormCache, err := collectAllNodeNorm()
+	if err != nil {
+		return err
+	}
+
+	where := make([]string, len(dnNorms))
+	params := make(map[string]interface{}, len(dnNorms)*2+2)
+	params["mamber_id"] = id
+	params["attr_name_norm"] = attrNameNorm
+
+	for i, dnNorm := range dnNorms {
+		dn, err := r.server.NormalizeDN(dnNorm)
+		if err != nil {
+			return NewInvalidDNSyntax()
+		}
+
+		parentID, ok := nodeNormCache[dn.ParentDN().DNNormStr()]
+		if !ok {
+			return NewInvalidDNSyntax()
+		}
+
+		key1 := "parent_id_" + strconv.Itoa(i)
+		key2 := "rdn_norm_" + strconv.Itoa(i)
+
+		where[i] = fmt.Sprintf("(parent_id = :%s AND rdn_norm = :%s)", key1, key2)
+		params[key1] = parentID
+		params[key2] = dn.RDNNormStr()
+	}
+
+	q := fmt.Sprintf(`DELETE FROM ldap_member WHERE member_id = :member_id AND attr_name_norm = :attr_name_norm AND member_of_id IN (
+		SELECT id FROM ldap_entry
+			WHERE %s
+	)`, strings.Join(where, " AND "))
+
+	_, err = tx.NamedExec(q, params)
+	if err != nil {
+		return xerrors.Errorf("Failed to delete member. id: %d, attr: %s, dnNorms: %v, err: %w", id, attrNameNorm, dnNorms, err)
+	}
 	return nil
 }
 
@@ -99,11 +182,6 @@ func (r *Repository) UpdateDN(oldDN, newDN *DN) error {
 }
 
 func (r *Repository) updateDN(tx *sqlx.Tx, oldDN, newDN *DN) error {
-	err := r.renameMemberByMemberDN(tx, oldDN, newDN)
-	if err != nil {
-		return xerrors.Errorf("Faild to rename member. err: %w", err)
-	}
-
 	oldEntry, err := r.FindByDNWithLock(tx, oldDN)
 	if err != nil {
 		return err
@@ -129,77 +207,8 @@ func (r *Repository) updateDN(tx *sqlx.Tx, oldDN, newDN *DN) error {
 			log.Printf("warn: Failed to update entry DN because of already exists. oldDN: %s newDN: %s err: %v", oldDN.DNNormStr(), newDN.DNNormStr(), err)
 			return NewAlreadyExists()
 		}
-		return xerrors.Errorf("Faild to update entry DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
+		return xerrors.Errorf("Failed to update entry DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
 	}
 
-	if *twowayEnabled {
-		err := renameMemberOfByMemberOfDN(tx, oldDN, newDN)
-		if err != nil {
-			return xerrors.Errorf("Faild to rename memberOf. err: %w", err)
-		}
-	}
-
-	return nil
-}
-
-func (r *Repository) renameMemberByMemberDN(tx *sqlx.Tx, oldMemberDN, newMemberDN *DN) error {
-	// We need to fetch all rows and close before updating due to avoiding "pq: unexpected Parse response" error.
-	// https://github.com/lib/pq/issues/635
-	modifyEntries, err := findByMemberDNWithLock(tx, oldMemberDN)
-	if err != nil {
-		return err
-	}
-
-	if len(modifyEntries) == 0 {
-		log.Printf("No entries which have member for rename. memberDN: %s", oldMemberDN.DNNormStr())
-		return nil
-	}
-
-	for _, modifyEntry := range modifyEntries {
-		err := modifyEntry.Delete("member", []string{oldMemberDN.DNOrigStr()})
-		if err != nil {
-			return err
-		}
-		err = modifyEntry.Add("member", []string{newMemberDN.DNOrigStr()})
-		if err != nil {
-			return err
-		}
-
-		err = r.Update(tx, nil, modifyEntry)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func renameMemberOfByMemberOfDN(tx *sqlx.Tx, oldMemberOfDN, newMemberOfDN *DN) error {
-	// We need to fetch all rows and close before updating due to avoiding "pq: unexpected Parse response" error.
-	// https://github.com/lib/pq/issues/635
-	modifyEntries, err := findByMemberOfDNWithLock(tx, oldMemberOfDN)
-	if err != nil {
-		return err
-	}
-
-	if len(modifyEntries) == 0 {
-		log.Printf("No entries which have memberOf for rename. memberOfDN: %s", oldMemberOfDN.DNNormStr())
-		return nil
-	}
-
-	for _, modifyEntry := range modifyEntries {
-		err := modifyEntry.Delete("memberOf", []string{oldMemberOfDN.DNOrigStr()})
-		if err != nil {
-			return err
-		}
-		err = modifyEntry.Add("memberOf", []string{newMemberOfDN.DNOrigStr()})
-		if err != nil {
-			return err
-		}
-
-		err = updateWithNoUpdated(tx, modifyEntry)
-		if err != nil {
-			return err
-		}
-	}
 	return nil
 }

@@ -30,7 +30,7 @@ func IntegrationTestRunner(m *testing.M) int {
 		i := 0
 		for {
 			if i > 10 {
-				log.Fatalf("error: Faild to stop test ldap server within 10 seconds.")
+				log.Fatalf("error: Failed to stop test ldap server within 10 seconds.")
 			}
 
 			_, err := ldap.Dial("tcp", fmt.Sprintf("%s:%d", "localhost", 8389))
@@ -533,7 +533,7 @@ func setupLDAPServer() *Server {
 	i := 0
 	for {
 		if i > 10 {
-			log.Fatalf("Faild to start test ldap server within 10 seconds.")
+			log.Fatalf("Failed to start test ldap server within 10 seconds.")
 		}
 
 		_, err := ldap.Dial("tcp", fmt.Sprintf("%s:%d", "localhost", 8389))

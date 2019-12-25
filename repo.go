@@ -33,7 +33,10 @@ var (
 	updateAttrsWithNoUpdatedByIdStmt *sqlx.NamedStmt
 	updateDNByIdStmt                 *sqlx.NamedStmt
 
-	deleteByDNStmt *sqlx.NamedStmt
+	deleteByDNStmt         *sqlx.NamedStmt
+	deleteDCStmt           *sqlx.NamedStmt
+	deleteTreeNodeByIDStmt *sqlx.NamedStmt
+	deleteMemberByIDStmt   *sqlx.NamedStmt
 
 	ROOT_ID int64 = 0
 )
@@ -57,6 +60,8 @@ func (m *StmtCache) Put(key string, value *sqlx.NamedStmt) {
 
 var filterStmtMap StmtCache
 var treeStmtCache StmtCache
+var findByDNStmtCache StmtCache
+var deleteByDNStmtCache StmtCache
 
 type Repository struct {
 	server *Server
@@ -96,12 +101,12 @@ func (r *Repository) initStmt(db *sqlx.DB) error {
 
 	findByParentIDAndRDNNormStmt, err = db.PrepareNamed(findByParentIDAndRDNNormSQL)
 	if err != nil {
-		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
 	findByParentIDAndRDNNormStmtWithLockStmt, err = db.PrepareNamed(findByParentIDAndRDNNormSQL + " FOR UPDATE")
 	if err != nil {
-		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
 	// findByDNSQL := "SELECT id, uuid, created, updated, dn_norm, attrs_orig FROM ldap_entry WHERE parent_id =rdn_norm = :dn_norm"
@@ -109,17 +114,17 @@ func (r *Repository) initStmt(db *sqlx.DB) error {
 
 	// findByDNStmt, err = db.PrepareNamed(findByDNSQL)
 	// if err != nil {
-	// 	return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+	// 	return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	// }
 
 	// findByDNWithMemberOfStmt, err = db.PrepareNamed(findByDNWithMemberOfSQL)
 	// if err != nil {
-	// 	return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+	// 	return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	// }
 
 	// findByDNWithLockStmt, err = db.PrepareNamed(findByDNSQL + " FOR UPDATE")
 	// if err != nil {
-	// 	return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+	// 	return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	// }
 
 	findByIDWithLockStmt, err = db.PrepareNamed(`SELECT id, uuid, created, updated, rdn_orig, attrs_orig
@@ -127,28 +132,28 @@ func (r *Repository) initStmt(db *sqlx.DB) error {
 		WHERE id = :id
 		FOR UPDATE`)
 	if err != nil {
-		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
 	findCredByDNStmt, err = db.PrepareNamed(`SELECT attrs_norm->>'userPassword'
 		FROM ldap_entry
 		WHERE parent_id = :parent_id AND rdn_norm = :rdn_norm`)
 	if err != nil {
-		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
 	findByMemberWithLockStmt, err = db.PrepareNamed(`SELECT id, parent_id, rdn_norm, attrs_orig
 		FROM ldap_entry
 		WHERE parent_id = :parent_id AND attrs_norm->'member' @> jsonb_build_array(:dn_norm ::::text) FOR UPDATE`)
 	if err != nil {
-		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
 	findByMemberOfWithLockStmt, err = db.PrepareNamed(`SELECT id, parent_id, rdn_norm, attrs_orig
 		FROM ldap_entry
 		WHERE parent_id = :parent_id AND attrs_norm->'memberOf' @> jsonb_build_array(:dn_norm ::::text) FOR UPDATE`)
 	if err != nil {
-		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
 	collectNodeOrigByParentIDStmt, err = db.PrepareNamed(`WITH RECURSIVE child (dn_orig, id, parent_id) AS
@@ -165,7 +170,7 @@ func (r *Repository) initStmt(db *sqlx.DB) error {
 	)
 	SELECT id, dn_orig from child`)
 	if err != nil {
-		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
 	collectNodeNormByParentIDStmt, err = db.PrepareNamed(`WITH RECURSIVE child (dn_norm, id, parent_id) AS
@@ -182,19 +187,19 @@ func (r *Repository) initStmt(db *sqlx.DB) error {
 	)
 	SELECT id, dn_norm from child`)
 	if err != nil {
-		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
 	getDCStmt, err = db.PrepareNamed(`SELECT id, '' as dn_orig FROM ldap_tree
 		WHERE parent_id = 0`)
 	if err != nil {
-		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
 	addTreeStmt, err = db.PrepareNamed(`INSERT INTO ldap_tree (id, parent_id, rdn_norm, rdn_orig)
 		VALUES (:id, :parent_id, :rdn_norm, :rdn_orig)`)
 	if err != nil {
-		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
 	addStmt, err = db.PrepareNamed(`INSERT INTO ldap_entry (parent_id, rdn_norm, rdn_orig, uuid, created, updated, attrs_norm, attrs_orig)
@@ -202,38 +207,56 @@ func (r *Repository) initStmt(db *sqlx.DB) error {
 			WHERE NOT EXISTS (SELECT id FROM ldap_entry WHERE parent_id = :parent_id AND rdn_norm = :rdn_norm)
 		RETURNING id`)
 	if err != nil {
-		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
 	addMemberOfByDNNormStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET attrs_norm = jsonb_set(attrs_norm, array['memberOf'], coalesce(attrs_norm->'memberOf', '[]'::::jsonb) || jsonb_build_array(:memberOfDNNorm ::::text)), attrs_orig = jsonb_set(attrs_orig, array['memberOf'], coalesce(attrs_orig->'memberOf', '[]'::::jsonb) || jsonb_build_array(:memberOfDNOrig ::::text))
 		WHERE parent_id = :parent_id AND rdn_norm = :rdn_norm`)
 	if err != nil {
-		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
 	updateAttrsByIdStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET updated = :updated, attrs_norm = :attrsNorm, attrs_orig = :attrsOrig
 		WHERE id = :id`)
 	if err != nil {
-		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
 	// When updating memberOf, don't update 'updated'
 	updateAttrsWithNoUpdatedByIdStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET attrs_norm = :attrsNorm, attrs_orig = :attrsOrig
 		WHERE id = :id`)
 	if err != nil {
-		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
 	updateDNByIdStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET updated = :updated, rdn_norm = :new_rdn_norm, attrs_norm = :attrsNorm, attrs_orig = :attrsOrig
 		WHERE id = :id`)
 	if err != nil {
-		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
 	deleteByDNStmt, err = db.PrepareNamed(`DELETE FROM ldap_entry
 		WHERE parent_id = :parent_id AND rdn_norm = :rdn_norm RETURNING id`)
 	if err != nil {
-		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
+
+	deleteDCStmt, err = db.PrepareNamed(fmt.Sprintf(`DELETE FROM ldap_entry
+		WHERE parent_id = %d RETURNING id`, ROOT_ID))
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
+
+	deleteTreeNodeByIDStmt, err = db.PrepareNamed(`DELETE FROM ldap_tree
+		WHERE id = :id RETURNING id`)
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
+
+	deleteMemberByIDStmt, err = db.PrepareNamed(`DELETE FROM ldap_member
+		WHERE member_id = :id OR member_of_id = :id RETURNING member_id`)
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
 	return nil
