@@ -80,7 +80,7 @@ func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	log.Printf("Update entry. oldEntry: %v newEntry: %v", oldEntry, newEntry)
 
-	err = s.Repo().update(tx, oldEntry, newEntry)
+	err = s.Repo().Update(tx, oldEntry, newEntry)
 
 	if err != nil {
 		tx.Rollback()

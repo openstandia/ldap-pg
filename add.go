@@ -34,7 +34,7 @@ func handleAdd(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	tx := db.MustBegin()
 
-	id, err := s.Repo().insert(tx, addEntry)
+	id, err := s.Repo().Insert(tx, addEntry)
 	if err != nil {
 		tx.Rollback()
 

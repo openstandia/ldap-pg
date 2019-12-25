@@ -48,7 +48,7 @@ func handleModifyDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		log.Printf("error: Not implemented DeleteOldRDN false")
 	}
 
-	err = s.Repo().updateDN(tx, dn, newDN)
+	err = s.Repo().UpdateDN(tx, dn, newDN)
 	if err != nil {
 		tx.Rollback()
 

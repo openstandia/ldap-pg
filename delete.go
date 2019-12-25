@@ -27,7 +27,7 @@ func handleDelete(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	tx := db.MustBegin()
 
-	err = s.Repo().deleteByDN(tx, dn)
+	err = s.Repo().DeleteByDN(tx, dn)
 	if err != nil {
 		log.Printf("info: Failed to delete entry: %#v", err)
 		tx.Rollback()
