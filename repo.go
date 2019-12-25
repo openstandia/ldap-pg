@@ -25,8 +25,8 @@ var (
 	findCredByDNStmt                         *sqlx.NamedStmt
 	findByMemberWithLockStmt                 *sqlx.NamedStmt
 	findByMemberOfWithLockStmt               *sqlx.NamedStmt
-	findChildrenByParentIDStmt               *sqlx.NamedStmt
-	collectNordNormsByParentIDStmt           *sqlx.NamedStmt
+	collectNodeOrigByParentIDStmt            *sqlx.NamedStmt
+	collectNodeNormByParentIDStmt            *sqlx.NamedStmt
 	getDCStmt                                *sqlx.NamedStmt
 
 	updateAttrsByIdStmt              *sqlx.NamedStmt
@@ -90,7 +90,7 @@ func NewRepository(server *Server) (*Repository, error) {
 func (r *Repository) initStmt(db *sqlx.DB) error {
 	var err error
 
-	findByParentIDAndRDNNormSQL := `SELECT id, uuid, created, updated, rdn_orig || ',' || :parent_dn_orig AS dn_orig, attrs_orig
+	findByParentIDAndRDNNormSQL := `SELECT id, parent_id, uuid, created, updated, rdn_orig || ',' || :parent_dn_orig AS dn_orig, attrs_orig
 		FROM ldap_entry
 		WHERE parent_id = :parent_id AND rdn_norm = :rdn_norm`
 
@@ -151,35 +151,34 @@ func (r *Repository) initStmt(db *sqlx.DB) error {
 		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
 	}
 
-	findChildrenByParentIDStmt, err = db.PrepareNamed(`WITH RECURSIVE child (dn_orig, id, parent_id, rdn_orig) AS
+	collectNodeOrigByParentIDStmt, err = db.PrepareNamed(`WITH RECURSIVE child (dn_orig, id, parent_id) AS
 	(
-		SELECT e.rdn_orig::::TEXT AS dn_orig, e.id, e.parent_id, e.rdn_orig FROM
-		ldap_tree e WHERE e.parent_id = :parent_id 
-		UNION ALL
-			SELECT
-				e.rdn_orig || ',' || child.dn_orig,
-				e.id,
-				e.parent_id,
-				e.rdn_orig
-			FROM ldap_tree e, child
-			WHERE e.parent_id = child.id
+		SELECT e.rdn_orig::::TEXT AS dn_orig, e.id, e.parent_id
+			FROM ldap_tree e WHERE e.parent_id = :parent_id 
+			UNION ALL
+				SELECT
+					e.rdn_orig || ',' || child.dn_orig,
+					e.id,
+					e.parent_id
+				FROM ldap_tree e, child
+				WHERE e.parent_id = child.id
 	)
 	SELECT id, dn_orig from child`)
 	if err != nil {
 		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
 	}
 
-	collectNordNormsByParentIDStmt, err = db.PrepareNamed(`WITH RECURSIVE child (dn_norm, id, parent_id) AS
+	collectNodeNormByParentIDStmt, err = db.PrepareNamed(`WITH RECURSIVE child (dn_norm, id, parent_id) AS
 	(
-		SELECT e.rdn_norm::::TEXT AS dn_norm, e.id, e.parent_id FROM
-		ldap_tree e WHERE e.parent_id = :parent_id 
-		UNION ALL
-			SELECT
-				e.rdn_norm || ',' || child.dn_norm,
-				e.id,
-				e.parent_id
-			FROM ldap_tree e, child
-			WHERE e.parent_id = child.id
+		SELECT e.rdn_norm::::TEXT AS dn_norm, e.id, e.parent_id
+			FROM ldap_tree e WHERE e.parent_id = :parent_id 
+			UNION ALL
+				SELECT
+					e.rdn_norm || ',' || child.dn_norm,
+					e.id,
+					e.parent_id
+				FROM ldap_tree e, child
+				WHERE e.parent_id = child.id
 	)
 	SELECT id, dn_norm from child`)
 	if err != nil {

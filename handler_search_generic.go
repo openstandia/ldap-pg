@@ -110,10 +110,11 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	q.Params["pageSize"] = pageSize
 	q.Params["offset"] = offset
 
-	maxCount, limittedCount, err := s.Repo().Search(baseDN, scope, q, isMemberOfAttributesRequested(r), func(searchEntry *SearchEntry) error {
-		responseEntry(s, w, r, searchEntry)
-		return nil
-	})
+	maxCount, limittedCount, err := s.Repo().Search(baseDN, scope, q,
+		getRequestedMemberAttrs(r), isMemberOfRequested(r), func(searchEntry *SearchEntry) error {
+			responseEntry(s, w, r, searchEntry)
+			return nil
+		})
 	if err != nil {
 		if lerr, ok := err.(*LDAPError); ok {
 			log.Printf("info: Search failed: %v", err)

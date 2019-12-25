@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,20 +13,66 @@ import (
 )
 
 type FetchedDBEntry struct {
-	ID        int64          `db:"id"`
-	ParentID  int64          `db:"parent_id"`
-	EntryUUID string         `db:"uuid"`
-	Created   time.Time      `db:"created"`
-	Updated   time.Time      `db:"updated"`
-	RDNOrig   string         `db:"rdn_orig"`
-	AttrsOrig types.JSONText `db:"attrs_orig"`
-	DNOrig    string         `db:"dn_orig"`  // No real clumn in t he table
-	MemberOf  types.JSONText `db:"memberof"` // No real column in the table
-	Count     int32          `db:"count"`    // No real column in the table
+	ID           int64          `db:"id"`
+	ParentID     int64          `db:"parent_id"`
+	EntryUUID    string         `db:"uuid"`
+	Created      time.Time      `db:"created"`
+	Updated      time.Time      `db:"updated"`
+	RDNOrig      string         `db:"rdn_orig"`
+	AttrsOrig    types.JSONText `db:"attrs_orig"`
+	Member       types.JSONText `db:"member"`   // No real column in the table
+	DNOrig       string         `db:"dn_orig"`  // No real clumn in t he table
+	MemberOf     types.JSONText `db:"memberof"` // No real column in the table
+	Count        int32          `db:"count"`    // No real column in the table
+	ParentDNOrig string         // No real clumn in t he table
+}
+
+type FetchedMember struct {
+	RDNOrig      string `db:"r`
+	ParentID     int64  `db:"p`
+	AttrNameNorm string `db:"a`
 }
 
 func (e *FetchedDBEntry) IsDC() bool {
 	return e.ParentID == ROOT_ID
+}
+
+func (e *FetchedDBEntry) Members(dnOrigCache map[int64]string, suffix string) (map[string][]string, error) {
+	if len(e.Member) > 0 {
+		jsonMap := make(map[string][]string)
+		jsonArray := []map[string]string{}
+		err := e.Member.Unmarshal(&jsonArray)
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range jsonArray {
+			v, ok := jsonMap[m["a"]]
+			if !ok {
+				v = []string{}
+			}
+			pid, err := strconv.ParseInt(m["p"], 10, 64)
+			if err != nil {
+				return nil, xerrors.Errorf("Invalid parent_id: %s", m["p"])
+			}
+			parentDNOrig, ok := dnOrigCache[pid]
+			if !ok {
+				return nil, xerrors.Errorf("No cached: %s", m["p"])
+			}
+
+			var s string
+			if parentDNOrig == "" {
+				s = suffix
+			} else {
+				s = parentDNOrig + "," + suffix
+			}
+
+			v = append(v, m["r"]+","+s)
+
+			jsonMap[m["a"]] = v
+		}
+		return jsonMap, nil
+	}
+	return nil, nil
 }
 
 func (e *FetchedDBEntry) GetAttrsOrig() map[string][]string {
@@ -59,8 +106,14 @@ type FetchedParent struct {
 
 type FetchedChild FetchedParent
 
-func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberOf bool, handler func(entry *SearchEntry) error) (int32, int32, error) {
-	baseDNID, cid, dnOrigCache, err := r.collectParentIDs(baseDN, scope)
+func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []string, reqMemberOf bool, handler func(entry *SearchEntry) error) (int32, int32, error) {
+	// TODO optimize collecting all container DN orig
+	dnOrigCache, err := collectAllNodeOrig()
+	if err != nil {
+		return 0, 0, err
+	}
+
+	baseDNID, cid, err := r.collectParentIDs(baseDN, scope, dnOrigCache)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -68,6 +121,26 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberOf bool, h
 	query, err := appenScopeFilter(scope, q, baseDNID, cid)
 	if err != nil {
 		return 0, 0, err
+	}
+
+	memberCol := ""
+	memberJoin := ""
+	if len(reqMemberAttrs) > 0 {
+		// TODO bind parameter
+		in := make([]string, len(reqMemberAttrs))
+		for i, v := range reqMemberAttrs {
+			in[i] = "'" + v + "'"
+		}
+
+		memberCol = ", to_jsonb(ma.member_array) as member"
+		memberJoin = fmt.Sprintf(`, LATERAL (
+			SELECT ARRAY (
+				SELECT jsonb_build_object('r', ee.rdn_orig, 'p', ee.parent_id::::TEXT, 'a', lm.attr_name_norm) 
+					FROM ldap_member lm
+						JOIN ldap_entry ee ON ee.id = lm.member_of_id
+					WHERE lm.member_id = e.id AND lm.attr_name_norm IN (%s)
+			) AS member_array
+		) ma`, strings.Join(in, ", "))
 	}
 
 	var fetchQuery string
@@ -84,10 +157,10 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberOf bool, h
 		// LEFT JOIN LATERAL(
 		// 		SELECT t.rdn_norm, t.rdn_orig FROM ldap_tree t WHERE t.id = e.parent_id
 		// 	) p ON true
-		fetchQuery = fmt.Sprintf(`SELECT e.id, e.parent_id, e.uuid, e.created, e.updated, e.rdn_orig, '' AS dn_orig, e.attrs_orig, count(e.id) over() AS count
-			FROM ldap_entry e
+		fetchQuery = fmt.Sprintf(`SELECT e.id, e.parent_id, e.uuid, e.created, e.updated, e.rdn_orig, '' AS dn_orig, e.attrs_orig %s, count(e.id) over() AS count
+			FROM ldap_entry e %s
 			WHERE %s
-			LIMIT :pageSize OFFSET :offset`, query)
+			LIMIT :pageSize OFFSET :offset`, memberCol, memberJoin, query)
 	}
 
 	log.Printf("Fetch Query: %s Params: %v", fetchQuery, q.Params)
@@ -121,23 +194,25 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberOf bool, h
 			return 0, 0, err
 		}
 
-		parentDNOrig, ok := dnOrigCache[dbEntry.ParentID]
-		if !ok {
-			log.Printf("warn: Failed to retrive parent by parent_id: %d. The parent might be removed or renamed.", dbEntry.ParentID)
-			// TODO return busy?
-			return 0, 0, xerrors.Errorf("Failed to retrive parent by parent_id: %d", dbEntry.ParentID)
-		}
-
-		// Set dn_orig using cache from fetching ldap_tree table
 		var dnOrig string
-		if parentDNOrig != "" {
-			dnOrig = fmt.Sprintf("%s,%s", dbEntry.RDNOrig, parentDNOrig)
-		} else {
-			dnOrig = dbEntry.RDNOrig
+		if dnOrig, ok = dnOrigCache[dbEntry.ID]; !ok {
+			parentDNOrig, ok := dnOrigCache[dbEntry.ParentID]
+			if !ok {
+				log.Printf("warn: Failed to retrive parent by parent_id: %d. The parent might be removed or renamed.", dbEntry.ParentID)
+				// TODO return busy?
+				return 0, 0, xerrors.Errorf("Failed to retrive parent by parent_id: %d", dbEntry.ParentID)
+			}
+
+			// Set dn_orig using cache from fetching ldap_tree table
+			if parentDNOrig != "" {
+				dnOrig = fmt.Sprintf("%s,%s", dbEntry.RDNOrig, parentDNOrig)
+			} else {
+				dnOrig = dbEntry.RDNOrig
+			}
 		}
 		dbEntry.DNOrig = dnOrig
 
-		readEntry, err := mapper.FetchedDBEntryToSearchEntry(&dbEntry)
+		readEntry, err := mapper.FetchedDBEntryToSearchEntry(&dbEntry, dnOrigCache)
 		if err != nil {
 			log.Printf("error: Mapper error: %#v", err)
 			return 0, 0, err
@@ -321,8 +396,31 @@ func (r *Repository) findParentByDN(tx *sqlx.Tx, dn *DN) (*FetchedParent, error)
 	return &parent, nil
 }
 
-func findChildrenByParentID(parentID int64) ([]*FetchedChild, error) {
-	rows, err := findChildrenByParentIDStmt.Queryx(map[string]interface{}{
+func collectAllNodeOrig() (map[int64]string, error) {
+	dc, err := getDC(nil)
+	if err != nil {
+		return nil, err
+	}
+	nodes, err := collectNodeOrigByParentID(dc.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	cache := make(map[int64]string, len(nodes)+1)
+	cache[dc.ID] = dc.DNOrig
+
+	for _, n := range nodes {
+		cache[n.ID] = n.DNOrig
+	}
+
+	return cache, nil
+}
+
+func collectNodeOrigByParentID(parentID int64) ([]*FetchedChild, error) {
+	if parentID == ROOT_ID {
+		return nil, xerrors.Errorf("Invalid parentID: %d", parentID)
+	}
+	rows, err := collectNodeOrigByParentIDStmt.Queryx(map[string]interface{}{
 		"parent_id": parentID,
 	})
 	if err != nil {
@@ -344,14 +442,6 @@ func findChildrenByParentID(parentID int64) ([]*FetchedChild, error) {
 	}
 
 	return list, nil
-}
-
-func (r *Repository) findByDN(tx *sqlx.Tx, dn *DN) (*SearchEntry, error) {
-	dbEntry, err := r.findByDNWithOption(tx, dn, false)
-	if err != nil {
-		return nil, err
-	}
-	return mapper.FetchedDBEntryToSearchEntry(dbEntry)
 }
 
 func (r *Repository) FindByDNWithLock(tx *sqlx.Tx, dn *DN) (*ModifyEntry, error) {
@@ -389,19 +479,20 @@ func (r *Repository) findByDNWithOption(tx *sqlx.Tx, dn *DN, lock bool) (*Fetche
 		err = tx.NamedStmt(stmt).Get(&dbEntry, map[string]interface{}{
 			"parent_id":      parent.ID,
 			"parent_dn_orig": parent.DNOrig,
-			"rdn_norm":       dn.RDNNormStr,
+			"rdn_norm":       dn.RDNNormStr(),
 		})
 	} else {
 		err = stmt.Get(&dbEntry, map[string]interface{}{
 			"parent_id":      parent.ID,
 			"parent_dn_orig": parent.DNOrig,
-			"rdn_norm":       dn.RDNNormStr,
+			"rdn_norm":       dn.RDNNormStr(),
 		})
 	}
 	if err != nil {
 		return nil, err
 	}
 	dbEntry.Count = 1
+	dbEntry.ParentDNOrig = parent.DNOrig
 
 	return &dbEntry, nil
 }
@@ -521,40 +612,39 @@ func appenScopeFilter(scope int, q *Query, baseDNID int64, childrenDNIDs []int64
 	return fmt.Sprintf("%s %s", parentFilter, query), nil
 }
 
-func (r *Repository) collectParentIDs(baseDN *DN, scope int) (int64, []int64, map[int64]string, error) {
+func (r *Repository) collectParentIDs(baseDN *DN, scope int, dnOrigCache map[int64]string) (int64, []int64, error) {
 	// Collect parent ID(s) based on baseDN
 	var baseDNID int64 = -1
 	var children []*FetchedChild
-	dnOrigCache := map[int64]string{ROOT_ID: ""} // Cache for id => dn_orig
 
 	if baseDN.IsDC() {
 		entry, err := getDC(nil)
 		if err != nil {
-			return 0, nil, nil, err
+			return 0, nil, err
 		}
 		baseDNID = entry.ID
 		dnOrigCache[entry.ID] = entry.DNOrig
 
 		if scope > 1 {
-			// baseDNID is DCID with default
-			children, err = findChildrenByParentID(baseDNID)
+			children, err = collectNodeOrigByParentID(baseDNID)
 			if err != nil {
-				return 0, nil, nil, err
+				return 0, nil, err
 			}
 		}
 	} else {
 		if baseDN.IsContainer() {
-			entry, err := r.findParentByDN(nil, baseDN)
+			entry, err := r.findByDNWithOption(nil, baseDN, false)
 			if err != nil {
-				return 0, nil, nil, err
+				return 0, nil, err
 			}
 			baseDNID = entry.ID
 			dnOrigCache[entry.ID] = entry.DNOrig
+			dnOrigCache[entry.ParentID] = entry.ParentDNOrig
 
 			if scope > 1 {
-				children, err = findChildrenByParentID(baseDNID)
+				children, err = collectNodeOrigByParentID(baseDNID)
 				if err != nil {
-					return 0, nil, nil, err
+					return 0, nil, err
 				}
 			}
 		} else {
@@ -562,7 +652,7 @@ func (r *Repository) collectParentIDs(baseDN *DN, scope int) (int64, []int64, ma
 			// In that case, don't need to collect children since it can't have children.
 			entry, err := r.findByDNWithOption(nil, baseDN, false)
 			if err != nil {
-				return 0, nil, nil, err
+				return 0, nil, err
 			}
 			baseDNID = entry.ID
 			dnOrigCache[entry.ID] = entry.DNOrig
@@ -581,5 +671,5 @@ func (r *Repository) collectParentIDs(baseDN *DN, scope int) (int64, []int64, ma
 		}
 	}
 
-	return baseDNID, cid, dnOrigCache, nil
+	return baseDNID, cid, nil
 }

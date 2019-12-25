@@ -152,13 +152,13 @@ func (r *Repository) insertMember(tx *sqlx.Tx, subjectID int64, entry *AddEntry)
 	for i, m := range members {
 		dn, err := r.server.NormalizeDN(m.MemberOfDNNorm)
 		if err != nil {
-			log.Printf("info: Invalid member DN sintax. DN: %s, %s DN: %s", entry.DN().DNOrigStr(), m.RDNNorm, m.MemberOfDNNorm)
+			log.Printf("info: Invalid member DN sintax. DN: %s, %s DN: %s", entry.DN().DNOrigStr(), m.AttrNameNorm, m.MemberOfDNNorm)
 			return NewInvalidDNSyntax()
 		}
 		parent := dn.ParentDN()
 		parentID, ok := dnIDCache[parent.DNNormStr()]
 		if !ok {
-			log.Printf("info: Not found member DN. DN: %s, %s DN: %s", entry.DN().DNOrigStr(), m.RDNNorm, m.MemberOfDNNorm)
+			log.Printf("info: Not found member DN. DN: %s, %s DN: %s", entry.DN().DNOrigStr(), m.AttrNameNorm, m.MemberOfDNNorm)
 			return NewInvalidDNSyntax()
 		}
 		where[i] = fmt.Sprintf("(parent_id = :parent_id_%d AND rdn_norm = :rdn_norm_%d)", i, i)
@@ -166,7 +166,7 @@ func (r *Repository) insertMember(tx *sqlx.Tx, subjectID int64, entry *AddEntry)
 		params[fmt.Sprintf("rdn_norm_%d", i)] = dn.RDNNormStr()
 
 		// cache
-		memberTypeCache[fmt.Sprintf("%d_%s", parentID, dn.RDNNormStr())] = m.RDNNorm
+		memberTypeCache[fmt.Sprintf("%d_%s", parentID, dn.RDNNormStr())] = m.AttrNameNorm
 	}
 
 	query := fmt.Sprintf("SELECT id, parent_id, rdn_norm FROM ldap_entry WHERE %s", strings.Join(where, " OR "))
@@ -222,7 +222,11 @@ type nordNorm struct {
 }
 
 func collectNodeNormsByParentID(parentID int64) ([]*nordNorm, error) {
-	rows, err := collectNordNormsByParentIDStmt.Queryx(map[string]interface{}{
+	if parentID == ROOT_ID {
+		return nil, xerrors.Errorf("Invalid parentID: %d", parentID)
+	}
+
+	rows, err := collectNodeNormByParentIDStmt.Queryx(map[string]interface{}{
 		"parent_id": parentID,
 	})
 	if err != nil {

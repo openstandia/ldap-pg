@@ -19,11 +19,11 @@ DROP TABLE IF EXISTS ldap_member;
 
 CREATE TABLE ldap_member (
     member_id BIGINT NOT NULL,
-    rdn_norm VARCHAR(255) NOT NULL,
+    attr_name_norm VARCHAR(255) NOT NULL,
     member_of_id BIGINT NOT NULL,
-    PRIMARY KEY(member_id, rdn_norm, member_of_id)
+    PRIMARY KEY(member_id, attr_name_norm, member_of_id)
 );
-CREATE UNIQUE INDEX idx_ldap_member_member_of_id ON ldap_member (member_of_id, rdn_norm, member_id);
+CREATE UNIQUE INDEX idx_ldap_member_member_of_id ON ldap_member (member_of_id, attr_name_norm, member_id);
 
 DROP TABLE IF EXISTS ldap_entry;
 

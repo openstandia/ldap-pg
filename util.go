@@ -80,9 +80,51 @@ func isAllAttributesRequested(r message.SearchRequest) bool {
 	return false
 }
 
-func isMemberOfAttributesRequested(r message.SearchRequest) bool {
+func isMemberOfRequested(r message.SearchRequest) bool {
 	for _, attr := range r.Attributes() {
 		if strings.ToLower(string(attr)) == "memberof" {
+			return true
+		}
+	}
+	return false
+}
+
+func getRequestedMemberAttrs(r message.SearchRequest) []string {
+	if len(r.Attributes()) == 0 {
+		return []string{"member", "uniqueMember"}
+	}
+	list := []string{}
+	for _, attr := range r.Attributes() {
+		if string(attr) == "*" {
+			// TODO move to schema
+			return []string{"member", "uniqueMember"}
+		}
+		a := strings.ToLower(string(attr))
+
+		// TODO move to schema
+		if a == "member" {
+			list = append(list, "member")
+		}
+		if a == "uniquemember" {
+			list = append(list, "uniqueMember")
+		}
+	}
+	return list
+}
+
+func isMemberRequested(r message.SearchRequest) bool {
+	if len(r.Attributes()) == 0 {
+		return true
+	}
+	for _, attr := range r.Attributes() {
+		if string(attr) == "*" {
+			return true
+		}
+		a := strings.ToLower(string(attr))
+
+		// TODO move to schema
+		if a == "member" ||
+			a == "uniqueMember" {
 			return true
 		}
 	}

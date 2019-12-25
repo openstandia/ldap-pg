@@ -7,7 +7,7 @@ type AddEntry struct {
 }
 
 type MemberEntry struct {
-	RDNNorm        string
+	AttrNameNorm   string
 	MemberOfDNNorm string
 }
 
@@ -52,7 +52,7 @@ func (j *AddEntry) Member() []*MemberEntry {
 		if sv.IsMemberAttribute() {
 			for _, v := range sv.GetNorm() {
 				m := &MemberEntry{
-					RDNNorm:        sv.Name(),
+					AttrNameNorm:   sv.Name(),
 					MemberOfDNNorm: v,
 				}
 				list = append(list, m)

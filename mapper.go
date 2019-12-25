@@ -116,7 +116,7 @@ func (m *Mapper) ModifyEntryToDBEntry(entry *ModifyEntry) (*DBEntry, error) {
 	return dbEntry, nil
 }
 
-func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry) (*SearchEntry, error) {
+func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry, dnOrigCache map[int64]string) (*SearchEntry, error) {
 	if !dbEntry.IsDC() && dbEntry.DNOrig == "" {
 		log.Printf("error: Invalid state. FetchedDBEntiry mush have DNOrig always...")
 		return nil, NewUnavailable()
@@ -130,6 +130,16 @@ func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry) (*SearchEn
 	orig["entryUUID"] = []string{dbEntry.EntryUUID}
 	orig["createTimestamp"] = []string{dbEntry.Created.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 	orig["modifyTimestamp"] = []string{dbEntry.Updated.In(time.UTC).Format(TIMESTAMP_FORMAT)}
+
+	members, err := dbEntry.Members(dnOrigCache, m.server.SuffixOrigStr())
+	if err != nil {
+		log.Printf("warn: Invalid state. FetchedDBEntiry cannot resolve member DN. err: %v", err)
+		// TODO busy?
+		return nil, NewUnavailable()
+	}
+	for k, v := range members {
+		orig[k] = v
+	}
 
 	readEntry := NewSearchEntry(dn, orig)
 
