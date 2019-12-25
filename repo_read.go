@@ -59,8 +59,8 @@ type FetchedParent struct {
 
 type FetchedChild FetchedParent
 
-func findByFilter(baseDN *DN, scope int, q *Query, reqMemberOf bool, handler func(entry *SearchEntry) error) (int32, int32, error) {
-	baseDNID, cid, dnOrigCache, err := collectParentIDs(baseDN, scope)
+func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberOf bool, handler func(entry *SearchEntry) error) (int32, int32, error) {
+	baseDNID, cid, dnOrigCache, err := r.collectParentIDs(baseDN, scope)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -96,7 +96,7 @@ func findByFilter(baseDN *DN, scope int, q *Query, reqMemberOf bool, handler fun
 	var ok bool
 	if fetchStmt, ok = filterStmtMap.Get(fetchQuery); !ok {
 		// cache
-		fetchStmt, err = db.PrepareNamed(fetchQuery)
+		fetchStmt, err = r.db.PrepareNamed(fetchQuery)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -236,7 +236,7 @@ func findByMemberOfDNWithLock(tx *sqlx.Tx, memberDN *DN) ([]*ModifyEntry, error)
 	return modifyEntries, nil
 }
 
-func getDC(tx *sqlx.Tx, dn *DN) (*FetchedParent, error) {
+func getDC(tx *sqlx.Tx) (*FetchedParent, error) {
 	var err error
 	parent := FetchedParent{}
 
@@ -252,7 +252,7 @@ func getDC(tx *sqlx.Tx, dn *DN) (*FetchedParent, error) {
 	return &parent, nil
 }
 
-func findParentByDN(tx *sqlx.Tx, dn *DN) (*FetchedParent, error) {
+func (r *Repository) findParentByDN(tx *sqlx.Tx, dn *DN) (*FetchedParent, error) {
 	// 	select e0.id, e1.rdn_orig || ',' || e1.rdn_orig from || ',' || e2.rdn_orig AS dn_orig FROM ldap_tree e2
 	//     LEFT OUTER JOIN ldap_tree e1 ON e1.parent_id = e2.id
 	//     LEFT OUTER JOIN ldap_tree e0 ON e0.parent_id = e1.id
@@ -261,7 +261,7 @@ func findParentByDN(tx *sqlx.Tx, dn *DN) (*FetchedParent, error) {
 	pdn := dn.ParentDN()
 
 	if pdn.IsDC() {
-		return getDC(tx, dn)
+		return getDC(tx)
 	}
 
 	size := len(pdn.dnNorm)
@@ -296,7 +296,7 @@ func findParentByDN(tx *sqlx.Tx, dn *DN) (*FetchedParent, error) {
 		log.Printf("debug: findByDN query: %s, params: %v", q, params)
 
 		// cache
-		fetchStmt, err = db.PrepareNamed(q)
+		fetchStmt, err = r.db.PrepareNamed(q)
 		if err != nil {
 			return nil, err
 		}
@@ -346,16 +346,16 @@ func findChildrenByParentID(parentID int64) ([]*FetchedChild, error) {
 	return list, nil
 }
 
-func findByDN(tx *sqlx.Tx, dn *DN) (*SearchEntry, error) {
-	dbEntry, err := findByDNWithOption(tx, dn, false)
+func (r *Repository) findByDN(tx *sqlx.Tx, dn *DN) (*SearchEntry, error) {
+	dbEntry, err := r.findByDNWithOption(tx, dn, false)
 	if err != nil {
 		return nil, err
 	}
 	return mapper.FetchedDBEntryToSearchEntry(dbEntry)
 }
 
-func findByDNWithLock(tx *sqlx.Tx, dn *DN) (*ModifyEntry, error) {
-	dbEntry, err := findByDNWithOption(tx, dn, true)
+func (r *Repository) FindByDNWithLock(tx *sqlx.Tx, dn *DN) (*ModifyEntry, error) {
+	dbEntry, err := r.findByDNWithOption(tx, dn, true)
 	if err != nil {
 		return nil, err
 	}
@@ -368,11 +368,11 @@ func (r *Repository) findByDNNormWithLock(tx *sqlx.Tx, dnNormStr string) (*Modif
 		return nil, err
 	}
 
-	return findByDNWithLock(tx, dn)
+	return r.FindByDNWithLock(tx, dn)
 }
 
-func findByDNWithOption(tx *sqlx.Tx, dn *DN, lock bool) (*FetchedDBEntry, error) {
-	parent, err := findParentByDN(tx, dn)
+func (r *Repository) findByDNWithOption(tx *sqlx.Tx, dn *DN, lock bool) (*FetchedDBEntry, error) {
+	parent, err := r.findParentByDN(tx, dn)
 	if err != nil {
 		return nil, err
 	}
@@ -444,7 +444,7 @@ func findByDNWithSingleQuery(tx *sqlx.Tx, dnNorm []string) (*FetchedDBEntry, err
 	var err error
 	if fetchStmt, ok = filterStmtMap.Get(q); !ok {
 		// cache
-		fetchStmt, err = db.PrepareNamed(q)
+		fetchStmt, err = tx.PrepareNamed(q)
 		if err != nil {
 			return nil, err
 		}
@@ -521,14 +521,14 @@ func appenScopeFilter(scope int, q *Query, baseDNID int64, childrenDNIDs []int64
 	return fmt.Sprintf("%s %s", parentFilter, query), nil
 }
 
-func collectParentIDs(baseDN *DN, scope int) (int64, []int64, map[int64]string, error) {
+func (r *Repository) collectParentIDs(baseDN *DN, scope int) (int64, []int64, map[int64]string, error) {
 	// Collect parent ID(s) based on baseDN
 	var baseDNID int64 = -1
 	var children []*FetchedChild
 	dnOrigCache := map[int64]string{ROOT_ID: ""} // Cache for id => dn_orig
 
 	if baseDN.IsDC() {
-		entry, err := getDC(nil, baseDN)
+		entry, err := getDC(nil)
 		if err != nil {
 			return 0, nil, nil, err
 		}
@@ -544,7 +544,7 @@ func collectParentIDs(baseDN *DN, scope int) (int64, []int64, map[int64]string, 
 		}
 	} else {
 		if baseDN.IsContainer() {
-			entry, err := findParentByDN(nil, baseDN)
+			entry, err := r.findParentByDN(nil, baseDN)
 			if err != nil {
 				return 0, nil, nil, err
 			}
@@ -560,7 +560,7 @@ func collectParentIDs(baseDN *DN, scope int) (int64, []int64, map[int64]string, 
 		} else {
 			// baseDN is pointed to entry (not container).
 			// In that case, don't need to collect children since it can't have children.
-			entry, err := findByDNWithOption(nil, baseDN, false)
+			entry, err := r.findByDNWithOption(nil, baseDN, false)
 			if err != nil {
 				return 0, nil, nil, err
 			}

@@ -110,7 +110,7 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	q.Params["pageSize"] = pageSize
 	q.Params["offset"] = offset
 
-	maxCount, limittedCount, err := findByFilter(baseDN, scope, q, isMemberOfAttributesRequested(r), func(searchEntry *SearchEntry) error {
+	maxCount, limittedCount, err := s.Repo().Search(baseDN, scope, q, isMemberOfAttributesRequested(r), func(searchEntry *SearchEntry) error {
 		responseEntry(s, w, r, searchEntry)
 		return nil
 	})

@@ -6,6 +6,11 @@ type AddEntry struct {
 	attributes map[string]*SchemaValue
 }
 
+type MemberEntry struct {
+	RDNNorm        string
+	MemberOfDNNorm string
+}
+
 func NewAddEntry(dn *DN) *AddEntry {
 	entry := &AddEntry{
 		schemaMap:  &schemaMap,
@@ -38,6 +43,24 @@ func (j *AddEntry) SetDN(dn *DN) {
 
 func (j *AddEntry) IsContainer() bool {
 	return j.dn.IsContainer()
+}
+
+func (j *AddEntry) Member() []*MemberEntry {
+	list := []*MemberEntry{}
+
+	for _, sv := range j.attributes {
+		if sv.IsMemberAttribute() {
+			for _, v := range sv.GetNorm() {
+				m := &MemberEntry{
+					RDNNorm:        sv.Name(),
+					MemberOfDNNorm: v,
+				}
+				list = append(list, m)
+			}
+		}
+	}
+
+	return list
 }
 
 func (j *AddEntry) RDNNorm() string {

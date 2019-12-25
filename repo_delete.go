@@ -8,24 +8,19 @@ import (
 	"golang.org/x/xerrors"
 )
 
-func (r *Repository) deleteMemberOfByDNNorm(tx *sqlx.Tx, dnNorm string, deleteMemberOfDN *DN) error {
-	modifyEntry, err := r.findByDNNormWithLock(tx, dnNorm)
+func (r Repository) DeleteByDN(dn *DN) error {
+	tx := r.db.MustBegin()
+	err := r.deleteByDN(tx, dn)
 	if err != nil {
+		tx.Rollback()
 		return err
 	}
-	err = modifyEntry.Delete("memberOf", []string{deleteMemberOfDN.DNOrigStr()})
-	if err != nil {
-		return err
-	}
+	err = tx.Commit()
 
-	err = r.Update(tx, nil, modifyEntry)
-	if err != nil {
-		return xerrors.Errorf("Failed to delete memberOf. dn: %s, memberOf: %s, err: %w", dnNorm, deleteMemberOfDN.DNOrigStr(), err)
-	}
-	return nil
+	return err
 }
 
-func (r Repository) DeleteByDN(tx *sqlx.Tx, dn *DN) error {
+func (r Repository) deleteByDN(tx *sqlx.Tx, dn *DN) error {
 	err := r.deleteMemberByMemberDN(tx, dn)
 	if err != nil {
 		return xerrors.Errorf("Faild to delete member. err: %w", err)
@@ -52,6 +47,23 @@ func (r Repository) DeleteByDN(tx *sqlx.Tx, dn *DN) error {
 		}
 	}
 
+	return nil
+}
+
+func (r *Repository) deleteMemberOfByDNNorm(tx *sqlx.Tx, dnNorm string, deleteMemberOfDN *DN) error {
+	modifyEntry, err := r.findByDNNormWithLock(tx, dnNorm)
+	if err != nil {
+		return err
+	}
+	err = modifyEntry.Delete("memberOf", []string{deleteMemberOfDN.DNOrigStr()})
+	if err != nil {
+		return err
+	}
+
+	err = r.Update(tx, nil, modifyEntry)
+	if err != nil {
+		return xerrors.Errorf("Failed to delete memberOf. dn: %s, memberOf: %s, err: %w", dnNorm, deleteMemberOfDN.DNOrigStr(), err)
+	}
 	return nil
 }
 

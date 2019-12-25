@@ -73,6 +73,12 @@ func (m *Mapper) AddEntryToDBEntry(entry *AddEntry) (*DBEntry, error) {
 		entryUUID = u.String()
 	}
 
+	// TODO move to schema?
+	delete(norm, "member")
+	delete(orig, "member")
+	delete(norm, "uniqueMember")
+	delete(orig, "uniqueMember")
+
 	delete(norm, "entryUUID")
 	delete(orig, "entryUUID")
 

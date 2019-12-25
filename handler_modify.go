@@ -28,9 +28,9 @@ func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	log.Printf("info: Modify entry: %s", dn.DNNormStr())
 
-	tx := db.MustBegin()
+	tx := s.Repo().db.MustBegin()
 
-	oldEntry, err := findByDNWithLock(tx, dn)
+	oldEntry, err := s.Repo().FindByDNWithLock(tx, dn)
 	if err != nil {
 		tx.Rollback()
 		if err == sql.ErrNoRows {

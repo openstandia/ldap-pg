@@ -392,6 +392,10 @@ func (s *SchemaValue) IsEmpty() bool {
 	return len(s.value) == 0
 }
 
+func (s *SchemaValue) IsMemberAttribute() bool {
+	return s.schema.IsMemberAttribute()
+}
+
 func (s *SchemaValue) Clone() *SchemaValue {
 	newValue := make([]string, len(s.value))
 	copy(newValue, s.value)
@@ -546,6 +550,14 @@ func (s *Schema) IsOperationalAttribute() bool {
 		return true
 	}
 	// TODO check other case
+	return false
+}
+
+func (s *Schema) IsMemberAttribute() bool {
+	if s.Name == "member" ||
+		s.Name == "uniqueMember" {
+		return true
+	}
 	return false
 }
 

@@ -135,18 +135,8 @@ func (s *Server) Start() {
 
 	var err error
 
-	// Init DB connection
-	db, err = sqlx.Connect("postgres", fmt.Sprintf("host=%s port=%d user=%s dbname=%s password=%s sslmode=disable", s.config.DBHostName, s.config.DBPort, s.config.DBUser, s.config.DBName, s.config.DBPassword))
-	if err != nil {
-		log.Fatalf("fatal: Connect error. host=%s, port=%d, user=%s, dbname=%s, error=%s", s.config.DBHostName, s.config.DBPort, s.config.DBUser, s.config.DBName, err)
-	}
-	db.SetMaxOpenConns(s.config.DBMaxOpenConns)
-	db.SetMaxIdleConns(s.config.DBMaxIdleConns)
-	// db.SetConnMaxLifetime(time.Hour)
-
-	// Init prepared statement
-	repo := NewRepository(s)
-	err = repo.initStmt(db)
+	// Init DB
+	repo, err := NewRepository(s)
 	if err != nil {
 		log.Fatalf("fatal: Prepare statement error:  %+v", err)
 	}

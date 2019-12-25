@@ -32,17 +32,11 @@ func handleAdd(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	tx := db.MustBegin()
-
-	id, err := s.Repo().Insert(tx, addEntry)
+	id, err := s.Repo().Insert(addEntry)
 	if err != nil {
-		tx.Rollback()
-
 		responseAddError(w, err)
 		return
 	}
-
-	tx.Commit()
 
 	log.Printf("Added. Id: %d", id)
 

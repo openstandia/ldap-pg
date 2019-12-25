@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -24,6 +26,7 @@ var (
 	findByMemberWithLockStmt                 *sqlx.NamedStmt
 	findByMemberOfWithLockStmt               *sqlx.NamedStmt
 	findChildrenByParentIDStmt               *sqlx.NamedStmt
+	collectNordNormsByParentIDStmt           *sqlx.NamedStmt
 	getDCStmt                                *sqlx.NamedStmt
 
 	updateAttrsByIdStmt              *sqlx.NamedStmt
@@ -57,12 +60,31 @@ var treeStmtCache StmtCache
 
 type Repository struct {
 	server *Server
+	db     *sqlx.DB
 }
 
-func NewRepository(server *Server) *Repository {
-	return &Repository{
-		server: server,
+func NewRepository(server *Server) (*Repository, error) {
+	// Init DB Connection
+	db, err := sqlx.Connect("postgres", fmt.Sprintf("host=%s port=%d user=%s dbname=%s password=%s sslmode=disable",
+		server.config.DBHostName, server.config.DBPort, server.config.DBUser, server.config.DBName, server.config.DBPassword))
+	if err != nil {
+		log.Fatalf("fatal: Connect error. host=%s, port=%d, user=%s, dbname=%s, error=%s",
+			server.config.DBHostName, server.config.DBPort, server.config.DBUser, server.config.DBName, err)
 	}
+	db.SetMaxOpenConns(server.config.DBMaxOpenConns)
+	db.SetMaxIdleConns(server.config.DBMaxIdleConns)
+	// db.SetConnMaxLifetime(time.Hour)
+
+	repo := &Repository{
+		server: server,
+		db:     db,
+	}
+	err = repo.initStmt(db)
+	if err != nil {
+		return nil, err
+	}
+
+	return repo, nil
 }
 
 func (r *Repository) initStmt(db *sqlx.DB) error {
@@ -143,6 +165,23 @@ func (r *Repository) initStmt(db *sqlx.DB) error {
 			WHERE e.parent_id = child.id
 	)
 	SELECT id, dn_orig from child`)
+	if err != nil {
+		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
+	}
+
+	collectNordNormsByParentIDStmt, err = db.PrepareNamed(`WITH RECURSIVE child (dn_norm, id, parent_id) AS
+	(
+		SELECT e.rdn_norm::::TEXT AS dn_norm, e.id, e.parent_id FROM
+		ldap_tree e WHERE e.parent_id = :parent_id 
+		UNION ALL
+			SELECT
+				e.rdn_norm || ',' || child.dn_norm,
+				e.id,
+				e.parent_id
+			FROM ldap_tree e, child
+			WHERE e.parent_id = child.id
+	)
+	SELECT id, dn_norm from child`)
 	if err != nil {
 		return xerrors.Errorf("Faild to initialize prepared statement: %w", err)
 	}

@@ -85,13 +85,26 @@ func updateWithNoUpdated(tx *sqlx.Tx, modifyEntry *ModifyEntry) error {
 	return nil
 }
 
-func (r *Repository) UpdateDN(tx *sqlx.Tx, oldDN, newDN *DN) error {
+func (r *Repository) UpdateDN(oldDN, newDN *DN) error {
+	tx := r.db.MustBegin()
+	err := r.updateDN(tx, oldDN, newDN)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	err = tx.Commit()
+
+	return err
+}
+
+func (r *Repository) updateDN(tx *sqlx.Tx, oldDN, newDN *DN) error {
 	err := r.renameMemberByMemberDN(tx, oldDN, newDN)
 	if err != nil {
 		return xerrors.Errorf("Faild to rename member. err: %w", err)
 	}
 
-	oldEntry, err := findByDNWithLock(tx, oldDN)
+	oldEntry, err := r.FindByDNWithLock(tx, oldDN)
 	if err != nil {
 		return err
 	}

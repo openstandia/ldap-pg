@@ -34,8 +34,6 @@ func handleModifyDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	log.Printf("info: Modify entry: %s", dn.DNNormStr())
 
-	tx := db.MustBegin()
-
 	// TODO impl
 	if r.NewSuperior() != nil {
 		log.Printf("error: Not implemented NewSuperior. value: %s", *r.NewSuperior())
@@ -48,17 +46,14 @@ func handleModifyDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		log.Printf("error: Not implemented DeleteOldRDN false")
 	}
 
-	err = s.Repo().UpdateDN(tx, dn, newDN)
+	err = s.Repo().UpdateDN(dn, newDN)
 	if err != nil {
-		tx.Rollback()
 
 		log.Printf("warn: Failed to modify dn: %s err: %s", dn.DNNormStr(), err)
 		// TODO error code
 		responseModifyDNError(w, err)
 		return
 	}
-
-	tx.Commit()
 
 	res := ldap.NewModifyDNResponse(ldap.LDAPResultSuccess)
 	w.Write(res)

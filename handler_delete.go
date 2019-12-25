@@ -25,18 +25,13 @@ func handleDelete(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	log.Printf("info: Deleting entry: %s", dn.DNNormStr())
 
-	tx := db.MustBegin()
-
-	err = s.Repo().DeleteByDN(tx, dn)
+	err = s.Repo().DeleteByDN(dn)
 	if err != nil {
 		log.Printf("info: Failed to delete entry: %#v", err)
-		tx.Rollback()
 
 		responseDeleteError(w, err)
 		return
 	}
-
-	tx.Commit()
 
 	log.Printf("info: Deleted. dn: %s", dn.DNNormStr())
 
