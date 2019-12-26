@@ -12,8 +12,10 @@ import (
 )
 
 var (
-	addTreeStmt             *sqlx.NamedStmt
-	addStmt                 *sqlx.NamedStmt
+	addTreeStmt       *sqlx.NamedStmt
+	insertDCStmt      *sqlx.NamedStmt
+	insertUnderDCStmt *sqlx.NamedStmt
+
 	addMemberOfByDNNormStmt *sqlx.NamedStmt
 
 	findByDNStmt                             *sqlx.NamedStmt
@@ -28,6 +30,7 @@ var (
 	collectNodeOrigByParentIDStmt            *sqlx.NamedStmt
 	collectNodeNormByParentIDStmt            *sqlx.NamedStmt
 	getDCStmt                                *sqlx.NamedStmt
+	getDCDNOrigStmt                          *sqlx.NamedStmt
 
 	updateAttrsByIdStmt              *sqlx.NamedStmt
 	updateAttrsWithNoUpdatedByIdStmt *sqlx.NamedStmt
@@ -62,6 +65,7 @@ var filterStmtMap StmtCache
 var treeStmtCache StmtCache
 var findByDNStmtCache StmtCache
 var deleteByDNStmtCache StmtCache
+var insertStmtCache StmtCache
 
 type Repository struct {
 	server *Server
@@ -190,8 +194,15 @@ func (r *Repository) initStmt(db *sqlx.DB) error {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
-	getDCStmt, err = db.PrepareNamed(`SELECT id, '' as dn_orig FROM ldap_tree
-		WHERE parent_id = 0`)
+	getDCStmt, err = db.PrepareNamed(fmt.Sprintf(`SELECT id, parent_id, uuid, created, updated, rdn_orig, attrs_orig
+		FROM ldap_entry
+		WHERE parent_id = %d`, ROOT_ID))
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
+
+	getDCDNOrigStmt, err = db.PrepareNamed(fmt.Sprintf(`SELECT id, '' as dn_orig FROM ldap_tree
+		WHERE parent_id = %d`, ROOT_ID))
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
@@ -202,10 +213,19 @@ func (r *Repository) initStmt(db *sqlx.DB) error {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
-	addStmt, err = db.PrepareNamed(`INSERT INTO ldap_entry (parent_id, rdn_norm, rdn_orig, uuid, created, updated, attrs_norm, attrs_orig)
-		SELECT :parent_id, :rdn_norm, :rdn_orig, :uuid, :created, :updated, :attrs_norm, :attrs_orig
-			WHERE NOT EXISTS (SELECT id FROM ldap_entry WHERE parent_id = :parent_id AND rdn_norm = :rdn_norm)
-		RETURNING id`)
+	insertDCStmt, err = db.PrepareNamed(fmt.Sprintf(`INSERT INTO ldap_entry (parent_id, rdn_norm, rdn_orig, uuid, created, updated, attrs_norm, attrs_orig)
+		SELECT %d, :rdn_norm, :rdn_orig, :uuid, :created, :updated, :attrs_norm, :attrs_orig
+			WHERE NOT EXISTS (SELECT id FROM ldap_entry WHERE parent_id = %d)
+		RETURNING id`, ROOT_ID, ROOT_ID))
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
+
+	insertUnderDCStmt, err = db.PrepareNamed(fmt.Sprintf(`INSERT INTO ldap_entry (parent_id, rdn_norm, rdn_orig, uuid, created, updated, attrs_norm, attrs_orig)
+		SELECT (SELECT id FROM ldap_tree WHERE parent_id = %d) as parent_id, :rdn_norm, :rdn_orig, :uuid, :created, :updated, :attrs_norm, :attrs_orig
+			WHERE 
+				NOT EXISTS (SELECT e.id FROM ldap_entry e, ldap_tree t WHERE e.parent_id = t.id AND t.parent_id = %d AND e.rdn_norm = :rdn_norm)
+		RETURNING id, parent_id`, ROOT_ID, ROOT_ID))
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}

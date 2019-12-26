@@ -36,42 +36,103 @@ func (r *Repository) Insert(entry *AddEntry) (int64, error) {
 }
 
 func (r *Repository) insertEntry(tx *sqlx.Tx, entry *AddEntry) (int64, int64, error) {
-	// if *twowayEnabled {
-	// 	hasMemberEntries, err := findByMemberDNWithLock(tx, entry.DN())
-	// 	if err != nil {
-	// 		return 0, err
-	// 	}
-	// 	memberOfDNsOrig := make([]string, len(hasMemberEntries))
-	// 	for i, v := range hasMemberEntries {
-	// 		memberOfDNsOrig[i] = v.GetDNOrig()
-	// 	}
-	// 	err = entry.Add("memberOf", memberOfDNsOrig)
-	// 	if err != nil {
-	// 		return 0, err
-	// 	}
-	// }
+	if entry.IsDC() {
+		return r.insertDCEntry(tx, entry)
+	}
+
+	if entry.ParentDN().IsDC() {
+		return r.insertUnderDCEntry(tx, entry)
+	}
 
 	dbEntry, err := mapper.AddEntryToDBEntry(entry)
 	if err != nil {
 		return 0, 0, err
 	}
 
-	var parentID int64
-	if entry.IsDC() {
-		parentID = ROOT_ID
-	} else {
-		// Detect parentID
-		parent, err := r.findParentByDN(tx, entry.DN())
-		if err != nil {
-			return 0, 0, err
-		}
-		parentID = parent.ID
+	pq, params := r.CreateFindByDNQuery(entry.ParentDN(), &FindOption{Lock: false})
+
+	q := fmt.Sprintf(`INSERT INTO ldap_entry (parent_id, rdn_norm, rdn_orig, uuid, created, updated, attrs_norm, attrs_orig)
+		SELECT p.id AS parent_id, :rdn_norm, :rdn_orig, :uuid, :created, :updated, :attrs_norm, :attrs_orig
+			FROM (%s) p
+			WHERE NOT EXISTS (SELECT id FROM ldap_entry WHERE parent_id = p.id AND rdn_norm = :rdn_norm)
+		RETURNING id, parent_id`, pq)
+
+	log.Printf("insert query: %s, params: %v", q, params)
+
+	stmt, err := r.db.PrepareNamed(q)
+	if err != nil {
+		return 0, 0, xerrors.Errorf("Failed to prepare query. query: %s, err: %w", err)
 	}
 
-	rows, err := tx.NamedStmt(addStmt).Queryx(map[string]interface{}{
+	params["rdn_norm"] = entry.RDNNorm()
+	params["rdn_orig"] = entry.RDNOrig()
+	params["uuid"] = dbEntry.EntryUUID
+	params["created"] = dbEntry.Created
+	params["updated"] = dbEntry.Updated
+	params["attrs_norm"] = dbEntry.AttrsNorm
+	params["attrs_orig"] = dbEntry.AttrsOrig
+
+	rows, err := tx.NamedStmt(stmt).Queryx(params)
+	if err != nil {
+		return 0, 0, xerrors.Errorf("Failed to insert entry record. entry: %v, err: %w", entry, err)
+	}
+	defer rows.Close()
+
+	var id int64
+	var parentID int64
+	if rows.Next() {
+		rows.Scan(&id, &parentID)
+	} else {
+		log.Printf("debug: Already exists. parentID: %d, rdn_norm: %s", parentID, entry.RDNNorm())
+		return 0, 0, NewAlreadyExists()
+	}
+
+	return id, parentID, nil
+}
+
+func (r *Repository) insertDCEntry(tx *sqlx.Tx, entry *AddEntry) (int64, int64, error) {
+	dbEntry, err := mapper.AddEntryToDBEntry(entry)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	rows, err := tx.NamedStmt(insertDCStmt).Queryx(map[string]interface{}{
 		"rdn_norm":   entry.RDNNorm(),
 		"rdn_orig":   entry.RDNOrig(),
-		"parent_id":  parentID,
+		"uuid":       dbEntry.EntryUUID,
+		"created":    dbEntry.Created,
+		"updated":    dbEntry.Updated,
+		"attrs_norm": dbEntry.AttrsNorm,
+		"attrs_orig": dbEntry.AttrsOrig,
+	})
+	if err != nil {
+		return 0, 0, xerrors.Errorf("Failed to insert DC entry record. DC entry: %v, err: %w", entry, err)
+	}
+	defer rows.Close()
+
+	var id int64
+	if rows.Next() {
+		err := rows.Scan(&id)
+		if err != nil {
+			return 0, 0, xerrors.Errorf("Failed to scan returning id. err: %w", err)
+		}
+	} else {
+		log.Printf("warn: Already exists. parentID: %d, rdn_norm: %s", ROOT_ID, entry.RDNNorm())
+		return 0, 0, NewAlreadyExists()
+	}
+
+	return id, ROOT_ID, nil
+}
+
+func (r *Repository) insertUnderDCEntry(tx *sqlx.Tx, entry *AddEntry) (int64, int64, error) {
+	dbEntry, err := mapper.AddEntryToDBEntry(entry)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	rows, err := tx.NamedStmt(insertUnderDCStmt).Queryx(map[string]interface{}{
+		"rdn_norm":   entry.RDNNorm(),
+		"rdn_orig":   entry.RDNOrig(),
 		"uuid":       dbEntry.EntryUUID,
 		"created":    dbEntry.Created,
 		"updated":    dbEntry.Updated,
@@ -84,15 +145,16 @@ func (r *Repository) insertEntry(tx *sqlx.Tx, entry *AddEntry) (int64, int64, er
 	defer rows.Close()
 
 	var id int64
+	var parentID int64
 	if rows.Next() {
-		rows.Scan(&id)
+		err := rows.Scan(&id, &parentID)
+		if err != nil {
+			return 0, 0, xerrors.Errorf("Failed to scan returning id. err: %w", err)
+		}
 	} else {
-		log.Printf("debug: Already exists. parentID: %d, rdn_norm: %s", parentID, entry.RDNNorm())
+		log.Printf("warn: Already exists. dn: %s", entry.DN().DNOrigStr())
 		return 0, 0, NewAlreadyExists()
 	}
-
-	// work around to avoid "pq: unexpected Bind response 'C'"
-	rows.Close()
 
 	return id, parentID, nil
 }
@@ -128,7 +190,7 @@ func (r *Repository) insertMember(tx *sqlx.Tx, subjectID int64, entry *AddEntry)
 
 	// First, cache all parent IDs
 	// TODO should optimize if ldap_tree tables is too big
-	dc, err := getDC(tx)
+	dc, err := getDCDNOrig(tx)
 	if err != nil {
 		return err
 	}

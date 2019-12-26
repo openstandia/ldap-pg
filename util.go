@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"regexp"
@@ -317,4 +318,9 @@ func normalizeUUID(value string) (string, error) {
 		return "", err
 	}
 	return u.String(), nil
+}
+
+func isNoResult(err error) bool {
+	// see https://golang.org/pkg/database/sql/#pkg-variables
+	return err == sql.ErrNoRows
 }

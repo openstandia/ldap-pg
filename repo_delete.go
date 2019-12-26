@@ -110,7 +110,7 @@ func (r *Repository) deleteByDN(tx *sqlx.Tx, dn *DN) (int64, error) {
 		err = fetchStmt.Get(&delID, params)
 	}
 	if err != nil {
-		if strings.Contains(err.Error(), "sql: no rows in result set") {
+		if isNoResult(err) {
 			return 0, NewNoSuchObject()
 		}
 		return 0, xerrors.Errorf("Failed to exec deleteByDN query. query: %s, params: %v, err: %w",
@@ -129,7 +129,7 @@ func (r *Repository) deleteDC(tx *sqlx.Tx) (int64, error) {
 	var id int64
 	err := tx.NamedStmt(deleteDCStmt).Get(&id, map[string]interface{}{})
 	if err != nil {
-		if strings.Contains(err.Error(), "sql: no rows in result set") {
+		if isNoResult(err) {
 			return 0, NewNoSuchObject()
 		}
 		return 0, xerrors.Errorf("Failed to delete DC entry. err: %w", err)
@@ -147,7 +147,7 @@ func (r *Repository) deleteTreeNodeByID(tx *sqlx.Tx, id int64) error {
 		"id": id,
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "sql: no rows in result set") {
+		if isNoResult(err) {
 			return NewNoSuchObject()
 		}
 		return xerrors.Errorf("Failed to delete tree node. id: %d, err: %w", id, err)
@@ -165,7 +165,7 @@ func (r *Repository) deleteMemberByID(tx *sqlx.Tx, id int64) error {
 		"id": id,
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "sql: no rows in result set") {
+		if isNoResult(err) {
 			// Ignore
 			return nil
 		}

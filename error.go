@@ -15,12 +15,19 @@ func (e *LDAPError) Error() string {
 	return fmt.Sprintf("LDAPError: %d %s", e.Code, e.Msg)
 }
 
+func NewSuccess() *LDAPError {
+	return &LDAPError{
+		Code: ldap.LDAPResultSuccess,
+	}
+}
+
 func NewNoSuchAttribute(op, attr string) *LDAPError {
 	return &LDAPError{
 		Code: 16,
 		Msg:  fmt.Sprintf("%s: %s: no such value", op, attr),
 	}
 }
+
 func NewUndefinedType(attr string) *LDAPError {
 	return &LDAPError{
 		Code: 17,

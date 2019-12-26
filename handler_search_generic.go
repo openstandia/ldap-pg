@@ -121,6 +121,7 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 			res := ldap.NewSearchResultDoneResponse(lerr.Code)
 			w.Write(res)
+			return
 		}
 
 		log.Printf("error: Search error: %v", err)
