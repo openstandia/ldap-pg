@@ -29,8 +29,10 @@ func TestNewSchemaValue(t *testing.T) {
 			[]string{"a b c"},
 		},
 	}
-
-	schemaMap = InitSchemaMap()
+	server := NewServer(&ServerConfig{
+		Suffix: "dc=example,dc=com",
+	})
+	schemaMap = InitSchemaMap(server)
 
 	for i, tc := range testcases {
 		sv, err := NewSchemaValue(tc.Name, tc.Value)
@@ -77,7 +79,10 @@ func TestSchemaValueOp(t *testing.T) {
 		},
 	}
 
-	schemaMap = InitSchemaMap()
+	server := NewServer(&ServerConfig{
+		Suffix: "dc=example,dc=com",
+	})
+	schemaMap = InitSchemaMap(server)
 
 	var sv *SchemaValue
 	var err error

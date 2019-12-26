@@ -67,6 +67,7 @@ func (s SchemaMap) resolve() error {
 }
 
 type Schema struct {
+	server             *Server
 	Name               string
 	AName              []string
 	Oid                string
@@ -82,11 +83,11 @@ type Schema struct {
 	NoUserModification bool
 }
 
-func InitSchemaMap() SchemaMap {
+func InitSchemaMap(server *Server) SchemaMap {
 	m := SchemaMap{}
 
 	mergedSchema = mergeSchema(SCHEMA_OPENLDAP24, customSchema)
-	parseSchema(m, mergedSchema)
+	parseSchema(server, m, mergedSchema)
 
 	err := m.resolve()
 	if err != nil {
@@ -108,7 +109,7 @@ var (
 	usagePattern    = regexp.MustCompile(" USAGE (.*?) ")
 )
 
-func parseSchema(m SchemaMap, schemaDef string) {
+func parseSchema(server *Server, m SchemaMap, schemaDef string) {
 	for _, line := range strings.Split(strings.TrimSuffix(schemaDef, "\n"), "\n") {
 		if strings.HasPrefix(line, "attributeTypes") {
 			stype, oid := parseOid(line)
@@ -127,6 +128,7 @@ func parseSchema(m SchemaMap, schemaDef string) {
 			}
 
 			s := &Schema{
+				server:      server,
 				IndexType:   "", // TODO configurable
 				SingleValue: false,
 			}

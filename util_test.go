@@ -39,7 +39,7 @@ func TestNormalize(t *testing.T) {
 		},
 	}
 
-	schemaMap := InitSchemaMap()
+	schemaMap := InitSchemaMap(nil)
 
 	for i, tc := range testcases {
 		s, ok := schemaMap.Get(tc.Name)

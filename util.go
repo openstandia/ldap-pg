@@ -216,7 +216,7 @@ func normalize(s *Schema, value string) (string, error) {
 	case "caseIgnoreMatch":
 		return strings.ToLower(normalizeSpace(value)), nil
 	case "distinguishedNameMatch":
-		return normalizeDistinguishedName(value)
+		return normalizeDistinguishedName(s.server.SuffixNorm(), value)
 	case "caseExactIA5Match":
 		return normalizeSpace(value), nil
 	case "caseIgnoreIA5Match":
@@ -231,6 +231,13 @@ func normalize(s *Schema, value string) (string, error) {
 		return value, nil
 	case "UUIDMatch":
 		return normalizeUUID(value)
+	case "uniqueMemberMatch":
+		nv, err := normalizeDistinguishedName(s.server.SuffixNorm(), value)
+		if err != nil {
+			// fallback
+			return strings.ToLower(normalizeSpace(value)), nil
+		}
+		return nv, nil
 	}
 
 	switch s.Substr {
@@ -295,13 +302,13 @@ func parseDN(value string) (*goldap.DN, []string, []string, error) {
 	return d, n, no, nil
 }
 
-func normalizeDistinguishedName(value string) (string, error) {
-	_, dnNorm, _, err := parseDN(value)
+func normalizeDistinguishedName(suffix []string, value string) (string, error) {
+	dn, err := normalizeDN(suffix, value)
 	if err != nil {
 		return "", err
 	}
 
-	return strings.Join(dnNorm, ","), nil
+	return dn.DNNormStr(), nil
 }
 
 func normalizeGeneralizedTime(value string) (string, error) {

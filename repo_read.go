@@ -59,11 +59,13 @@ func (e *FetchedDBEntry) Members(dnOrigCache map[int64]string, suffix string) (m
 				return nil, xerrors.Errorf("No cached: %s", m["p"])
 			}
 
-			var s string
-			if parentDNOrig == "" {
-				s = suffix
-			} else {
-				s = parentDNOrig + "," + suffix
+			s := parentDNOrig
+			if suffix != "" {
+				if parentDNOrig == "" {
+					s = suffix
+				} else {
+					s += "," + suffix
+				}
 			}
 
 			v = append(v, m["r"]+","+s)
@@ -308,7 +310,8 @@ func getDCDNOrig(tx *sqlx.Tx) (*FetchedDNOrig, error) {
 }
 
 type FindOption struct {
-	Lock bool
+	Lock       bool
+	FetchAttrs bool
 }
 
 func (r *Repository) FindByDN(tx *sqlx.Tx, dn *DN, option *FindOption) (*FetchedDBEntry, error) {
@@ -428,9 +431,24 @@ func (r *Repository) CreateFindByDNQuery(dn *DN, option *FindOption) (string, ma
 	//     WHERE dc.parent_id = 0 AND e2.rdn_norm = 'ou=mycompany' AND e1.rdn_norm = 'ou=mysection' AND e0.rdn_norm = 'ou=mydept' AND e.rdn_norm = 'cn=mygroup'
 	//     FOR UPDATE ldap_entry
 
+	var fetchAttrsProjection string
+	var memberJoin string
+	if option.FetchAttrs {
+		fetchAttrsProjection = `, e0.rdn_orig, e0.attrs_orig, to_jsonb(ma.member_array) as member`
+		// TODO use join when the entry's schema has member
+		memberJoin = `, LATERAL (
+				SELECT ARRAY (
+					SELECT jsonb_build_object('r', ee.rdn_orig, 'p', ee.parent_id::::TEXT, 'a', lm.attr_name_norm) 
+						FROM ldap_member lm
+							JOIN ldap_entry ee ON ee.id = lm.member_of_id
+						WHERE lm.member_id = e0.id 
+				) AS member_array
+			) ma`
+	}
+
 	if dn.IsDC() {
-		q := fmt.Sprintf(`SELECT id, '' as dn_orig FROM ldap_tree
-		WHERE parent_id = %d`, ROOT_ID)
+		q := fmt.Sprintf(`SELECT id, '' as dn_orig %s FROM ldap_entry
+		WHERE parent_id = %d`, fetchAttrsProjection, ROOT_ID)
 		return q, map[string]interface{}{}
 	}
 
@@ -456,13 +474,15 @@ func (r *Repository) CreateFindByDNQuery(dn *DN, option *FindOption) (string, ma
 		params[fmt.Sprintf("rdn_norm_%d", i)] = dn.dnNorm[i]
 	}
 
-	q := fmt.Sprintf(`SELECT e0.id, %s AS dn_orig
-		FROM ldap_tree dc %s
+	q := fmt.Sprintf(`SELECT e0.id, %s AS dn_orig %s
+		FROM ldap_tree dc %s %s
 		WHERE dc.parent_id = %d AND %s`,
-		strings.Join(projection, " || ',' || "), strings.Join(join, " "), ROOT_ID, strings.Join(where, " AND "))
+		strings.Join(projection, " || ',' || "), fetchAttrsProjection,
+		strings.Join(join, " "), memberJoin,
+		ROOT_ID, strings.Join(where, " AND "))
 
 	if option.Lock {
-		q += " FOR UPDATE ldap_entry"
+		q += " FOR UPDATE"
 	}
 
 	log.Printf("debug: findByDN query: %s, params: %v", q, params)
@@ -539,11 +559,17 @@ func collectNodeOrigByParentID(parentID int64) ([]*FetchedDNOrig, error) {
 }
 
 func (r *Repository) FindByDNWithLock(tx *sqlx.Tx, dn *DN) (*ModifyEntry, error) {
-	entry, err := r.FindByDN(tx, dn, &FindOption{Lock: true})
+	// TODO optimize collecting all container DN orig
+	dnOrigCache, err := collectAllNodeOrig()
 	if err != nil {
 		return nil, err
 	}
-	return mapper.FetchedDBEntryToModifyEntry(entry)
+
+	entry, err := r.FindByDN(tx, dn, &FindOption{Lock: true, FetchAttrs: true})
+	if err != nil {
+		return nil, err
+	}
+	return mapper.FetchedDBEntryToModifyEntry(entry, dnOrigCache)
 }
 
 func findCredByDN(dn *DN) ([]string, error) {

@@ -16,8 +16,10 @@ func TestDNNormalize(t *testing.T) {
 			"cn=test,ou=people,dc=example,dc=com",
 		},
 	}
-
-	schemaMap = InitSchemaMap()
+	server := NewServer(&ServerConfig{
+		Suffix: "dc=example,dc=com",
+	})
+	schemaMap = InitSchemaMap(server)
 
 	for i, tc := range testcases {
 		dn, err := normalizeDN([]string{"dc=example", "dc=com"}, tc.Value)

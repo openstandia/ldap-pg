@@ -101,6 +101,15 @@ func (m *Mapper) AddEntryToDBEntry(entry *AddEntry) (*DBEntry, error) {
 func (m *Mapper) ModifyEntryToDBEntry(entry *ModifyEntry) (*DBEntry, error) {
 	norm, orig := entry.GetAttrs()
 
+	// TODO move to schema?
+	delete(norm, "member")
+	delete(orig, "member")
+	delete(norm, "uniqueMember")
+	delete(orig, "uniqueMember")
+
+	delete(norm, "entryUUID")
+	delete(orig, "entryUUID")
+
 	bNorm, _ := json.Marshal(norm)
 	bOrig, _ := json.Marshal(orig)
 
@@ -156,12 +165,17 @@ func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry, dnOrigCach
 	return readEntry, nil
 }
 
-func (m *Mapper) FetchedDBEntryToModifyEntry(dbEntry *FetchedDBEntry) (*ModifyEntry, error) {
+func (m *Mapper) FetchedDBEntryToModifyEntry(dbEntry *FetchedDBEntry, dnOrigCache map[int64]string) (*ModifyEntry, error) {
 	dn, err := m.normalizeDN(dbEntry.DNOrig)
 	if err != nil {
 		return nil, err
 	}
 	orig := dbEntry.GetAttrsOrig()
+
+	members, err := dbEntry.Members(dnOrigCache, "") // For modification, don't need suffix
+	for k, v := range members {
+		orig[k] = v
+	}
 
 	entry, err := NewModifyEntry(dn, orig)
 	if err != nil {

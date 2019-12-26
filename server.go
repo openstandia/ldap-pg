@@ -143,7 +143,7 @@ func (s *Server) Start() {
 	s.repo = repo // TODO Remove bidirectional dependency
 
 	// Init schema map
-	schemaMap = InitSchemaMap()
+	schemaMap = InitSchemaMap(s)
 	if s, ok := schemaMap.Get("entryUUID"); ok {
 		s.UseIndependentColumn("uuid")
 	}

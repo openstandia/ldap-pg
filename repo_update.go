@@ -52,6 +52,10 @@ func (r *Repository) Update(tx *sqlx.Tx, oldEntry, newEntry *ModifyEntry) error 
 }
 
 func (r *Repository) addMembers(tx *sqlx.Tx, id int64, attrNameNorm string, dnNorms []string) error {
+	if len(dnNorms) == 0 {
+		return nil
+	}
+
 	nodeNormCache, err := collectAllNodeNorm()
 	if err != nil {
 		return err
@@ -59,7 +63,7 @@ func (r *Repository) addMembers(tx *sqlx.Tx, id int64, attrNameNorm string, dnNo
 
 	where := make([]string, len(dnNorms))
 	params := make(map[string]interface{}, len(dnNorms)*2+2)
-	params["mamber_id"] = id
+	params["member_id"] = id
 	params["attr_name_norm"] = attrNameNorm
 
 	for i, dnNorm := range dnNorms {
@@ -82,7 +86,9 @@ func (r *Repository) addMembers(tx *sqlx.Tx, id int64, attrNameNorm string, dnNo
 	}
 
 	q := fmt.Sprintf(`INSERT INTO ldap_member (member_id, attr_name_norm, member_of_id)
-		SELECT %d::::BIGINT, '%s', id FROM ldap_entry WHERE %s`, strings.Join(where, " AND "))
+		SELECT :member_id ::::BIGINT, :attr_name_norm, id FROM ldap_entry WHERE %s`, strings.Join(where, " OR "))
+
+	log.Printf("addMemberQuery: %s, params: %v", q, params)
 
 	_, err = tx.NamedExec(q, params)
 	if err != nil {
@@ -92,6 +98,10 @@ func (r *Repository) addMembers(tx *sqlx.Tx, id int64, attrNameNorm string, dnNo
 }
 
 func (r *Repository) deleteMembers(tx *sqlx.Tx, id int64, attrNameNorm string, dnNorms []string) error {
+	if len(dnNorms) == 0 {
+		return nil
+	}
+
 	nodeNormCache, err := collectAllNodeNorm()
 	if err != nil {
 		return err
@@ -99,7 +109,7 @@ func (r *Repository) deleteMembers(tx *sqlx.Tx, id int64, attrNameNorm string, d
 
 	where := make([]string, len(dnNorms))
 	params := make(map[string]interface{}, len(dnNorms)*2+2)
-	params["mamber_id"] = id
+	params["member_id"] = id
 	params["attr_name_norm"] = attrNameNorm
 
 	for i, dnNorm := range dnNorms {
@@ -124,7 +134,9 @@ func (r *Repository) deleteMembers(tx *sqlx.Tx, id int64, attrNameNorm string, d
 	q := fmt.Sprintf(`DELETE FROM ldap_member WHERE member_id = :member_id AND attr_name_norm = :attr_name_norm AND member_of_id IN (
 		SELECT id FROM ldap_entry
 			WHERE %s
-	)`, strings.Join(where, " AND "))
+	)`, strings.Join(where, " OR "))
+
+	log.Printf("deleteMemberQuery: %s, params: %v", q, params)
 
 	_, err = tx.NamedExec(q, params)
 	if err != nil {
