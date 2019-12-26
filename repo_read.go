@@ -133,24 +133,9 @@ func (e *FetchedDBEntry) Clear() {
 	e.Count = 0
 }
 
-type DCEntry struct {
-	ID        int64          `db:"id"`
-	ParentID  int64          `db:"parent_id"`
-	EntryUUID string         `db:"uuid"`
-	Created   time.Time      `db:"created"`
-	Updated   time.Time      `db:"updated"`
-	RDNOrig   string         `db:"rdn_orig"`
-	AttrsOrig types.JSONText `db:"attrs_orig"`
-}
-
 type FetchedDNOrig struct {
 	ID     int64  `db:"id"`
 	DNOrig string `db:"dn_orig"`
-}
-
-type FetchedNodeNorm struct {
-	ID     int64  `db:"id"`
-	DNNorm string `db:"dn_norm"`
 }
 
 func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []string, reqMemberOf bool, handler func(entry *SearchEntry) error) (int32, int32, error) {
@@ -290,76 +275,6 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []st
 	return maxCount, count, nil
 }
 
-func findByMemberDNWithLock(tx *sqlx.Tx, memberDN *DN) ([]*ModifyEntry, error) {
-	rows, err := tx.NamedStmt(findByMemberWithLockStmt).Queryx(map[string]interface{}{
-		"dnNorm": memberDN.DNNormStr(),
-	})
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	dbEntry := FetchedDBEntry{}
-	modifyEntries := []*ModifyEntry{}
-
-	for rows.Next() {
-		err := rows.StructScan(&dbEntry)
-		if err != nil {
-			return nil, err
-		}
-		modifyEntry, err := mapper.FetchedDBEntryToModifyEntry(&dbEntry)
-		if err != nil {
-			return nil, err
-		}
-
-		modifyEntries = append(modifyEntries, modifyEntry)
-
-		dbEntry.Clear()
-	}
-
-	err = rows.Err()
-	if err != nil {
-		return nil, err
-	}
-
-	return modifyEntries, nil
-}
-
-func findByMemberOfDNWithLock(tx *sqlx.Tx, memberDN *DN) ([]*ModifyEntry, error) {
-	rows, err := tx.NamedStmt(findByMemberOfWithLockStmt).Queryx(map[string]interface{}{
-		"dnNorm": memberDN.DNNormStr(),
-	})
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	dbEntry := FetchedDBEntry{}
-	modifyEntries := []*ModifyEntry{}
-
-	for rows.Next() {
-		err := rows.StructScan(&dbEntry)
-		if err != nil {
-			return nil, err
-		}
-		modifyEntry, err := mapper.FetchedDBEntryToModifyEntry(&dbEntry)
-		if err != nil {
-			return nil, err
-		}
-
-		modifyEntries = append(modifyEntries, modifyEntry)
-
-		dbEntry.Clear()
-	}
-
-	err = rows.Err()
-	if err != nil {
-		return nil, err
-	}
-
-	return modifyEntries, nil
-}
-
 func getDC(tx *sqlx.Tx) (*FetchedDBEntry, error) {
 	var err error
 	dest := FetchedDBEntry{}
@@ -425,7 +340,7 @@ func (r *Repository) FindByDN(tx *sqlx.Tx, dn *DN, option *FindOption) (*Fetched
 
 func (r *Repository) PrepareFindByDN(dn *DN, option *FindOption) (*sqlx.NamedStmt, map[string]interface{}, error) {
 	//  Key for stmt cache
-	key := fmt.Sprintf("LOCK:%s/DEPTH:%d", option.Lock, len(dn.dnNorm))
+	key := fmt.Sprintf("LOCK:%v/DEPTH:%d", option.Lock, len(dn.dnNorm))
 
 	if stmt, ok := findByDNStmtCache.Get(key); ok {
 		// Already cached, make params only
@@ -630,15 +545,6 @@ func (r *Repository) FindByDNWithLock(tx *sqlx.Tx, dn *DN) (*ModifyEntry, error)
 	}
 	return mapper.FetchedDBEntryToModifyEntry(entry)
 }
-
-// func (r *Repository) findByDNNormWithLock(tx *sqlx.Tx, dnNormStr string) (*ModifyEntry, error) {
-// 	dn, err := r.server.NormalizeDN(dnNormStr)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	return r.FindByDNWithLock(tx, dn)
-// }
 
 func findCredByDN(dn *DN) ([]string, error) {
 	var j types.JSONText
