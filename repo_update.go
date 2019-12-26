@@ -180,9 +180,9 @@ func updateWithNoUpdated(tx *sqlx.Tx, modifyEntry *ModifyEntry) error {
 	return nil
 }
 
-func (r *Repository) UpdateDN(oldDN, newDN *DN) error {
+func (r *Repository) UpdateDN(oldDN, newDN *DN, deleteOld bool) error {
 	tx := r.db.MustBegin()
-	err := r.updateDN(tx, oldDN, newDN)
+	err := r.updateDN(tx, oldDN, newDN, deleteOld)
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -193,26 +193,47 @@ func (r *Repository) UpdateDN(oldDN, newDN *DN) error {
 	return err
 }
 
-func (r *Repository) updateDN(tx *sqlx.Tx, oldDN, newDN *DN) error {
+func (r *Repository) updateDN(tx *sqlx.Tx, oldDN, newDN *DN, deleteOld bool) error {
 	oldEntry, err := r.FindByDNWithLock(tx, oldDN)
 	if err != nil {
-		return err
+		return NewNoSuchObject()
 	}
 
-	newEntry := oldEntry.ModifyDN(newDN)
+	parentID := oldEntry.dbParentID
+	if !oldDN.ParentDN().Equal(newDN.ParentDN()) {
+		p, err := r.FindByDNWithLock(tx, newDN.ParentDN())
+		if err != nil {
+			return NewNoSuchObject()
+		}
+		parentID = p.dbEntryId
+	}
+
+	newEntry := oldEntry.ModifyRDN(newDN)
 	dbEntry, err := mapper.ModifyEntryToDBEntry(newEntry)
 	if err != nil {
 		return err
 	}
 
 	_, err = tx.NamedStmt(updateDNByIdStmt).Exec(map[string]interface{}{
-		"id":        newEntry.dbEntryId,
-		"updated":   dbEntry.Updated,
-		"newdnNorm": newDN.DNNormStr(),
-		"newpath":   newDN.ReverseParentDN,
-		"attrsNorm": dbEntry.AttrsNorm,
-		"attrsOrig": dbEntry.AttrsOrig,
+		"id":           oldEntry.dbEntryId,
+		"parent_id":    parentID,
+		"updated":      dbEntry.Updated,
+		"new_rdn_norm": newDN.RDNNormStr(),
+		"new_rdn_orig": newDN.RDNOrigStr(),
+		"attrs_norm":   dbEntry.AttrsNorm,
+		"attrs_orig":   dbEntry.AttrsOrig,
 	})
+
+	if !deleteOld {
+		add, err := mapper.ModifyEntryToAddEntry(oldEntry)
+		if err != nil {
+			return err
+		}
+		_, err = r.Insert(add)
+		if err != nil {
+			return err
+		}
+	}
 
 	if err != nil {
 		if strings.Contains(err.Error(), "duplicate key value violates unique constraint") {

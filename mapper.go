@@ -125,6 +125,14 @@ func (m *Mapper) ModifyEntryToDBEntry(entry *ModifyEntry) (*DBEntry, error) {
 	return dbEntry, nil
 }
 
+func (m *Mapper) ModifyEntryToAddEntry(entry *ModifyEntry) (*AddEntry, error) {
+	add := NewAddEntry(entry.GetDN())
+
+	// TODO
+
+	return add, nil
+}
+
 func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry, dnOrigCache map[int64]string) (*SearchEntry, error) {
 	if !dbEntry.IsDC() && dbEntry.DNOrig == "" {
 		log.Printf("error: Invalid state. FetchedDBEntiry mush have DNOrig always...")
@@ -182,6 +190,7 @@ func (m *Mapper) FetchedDBEntryToModifyEntry(dbEntry *FetchedDBEntry, dnOrigCach
 		return nil, err
 	}
 	entry.dbEntryId = dbEntry.ID
+	entry.dbParentID = dbEntry.ParentID
 
 	return entry, nil
 }

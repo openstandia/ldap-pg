@@ -34,19 +34,23 @@ func handleModifyDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	log.Printf("info: Modify entry: %s", dn.DNNormStr())
 
-	// TODO impl
 	if r.NewSuperior() != nil {
-		log.Printf("error: Not implemented NewSuperior. value: %s", *r.NewSuperior())
+		sup := string(*r.NewSuperior())
+		newParentDN, err := s.NormalizeDN(sup)
+		if err != nil {
+			// TODO return correct error
+			responseModifyDNError(w, NewInvalidDNSyntax())
+			return
+		}
+		newDN, err = newDN.Move(newParentDN)
+		if err != nil {
+			// TODO return correct error
+			responseModifyDNError(w, NewInvalidDNSyntax())
+			return
+		}
 	}
 
-	// TODO impl
-	if r.DeleteOldRDN() {
-		log.Printf("DeleteOldRDN")
-	} else {
-		log.Printf("error: Not implemented DeleteOldRDN false")
-	}
-
-	err = s.Repo().UpdateDN(dn, newDN)
+	err = s.Repo().UpdateDN(dn, newDN, bool(r.DeleteOldRDN()))
 	if err != nil {
 
 		log.Printf("warn: Failed to modify dn: %s err: %s", dn.DNNormStr(), err)

@@ -249,7 +249,10 @@ func (r *Repository) initStmt(db *sqlx.DB) error {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
-	updateDNByIdStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET updated = :updated, rdn_norm = :new_rdn_norm, attrs_norm = :attrsNorm, attrs_orig = :attrsOrig
+	updateDNByIdStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET updated = :updated,
+		rdn_orig = :new_rdn_orig, rdn_norm = :new_rdn_norm,
+		attrs_norm = :attrs_norm, attrs_orig = :attrs_orig,
+		parent_id = :parent_id
 		WHERE id = :id`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)

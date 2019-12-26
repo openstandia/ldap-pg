@@ -9,6 +9,7 @@ type ModifyEntry struct {
 	dn         *DN
 	attributes map[string]*SchemaValue
 	dbEntryId  int64
+	dbParentID int64
 }
 
 func NewModifyEntry(dn *DN, valuesOrig map[string][]string) (*ModifyEntry, error) {
@@ -54,8 +55,9 @@ func (j *ModifyEntry) SetDN(dn *DN) {
 
 	rdn := dn.GetRDN()
 	for k, v := range rdn {
-		// rdn is validated already
-		j.attributes[k], _ = NewSchemaValue(k, []string{v})
+		// rdn is validated already, ignore error
+		sv, _ := NewSchemaValue(k, []string{v})
+		j.attributes[sv.Name()] = sv
 	}
 }
 
@@ -253,7 +255,7 @@ func (e *ModifyEntry) Clone() *ModifyEntry {
 	return clone
 }
 
-func (e *ModifyEntry) ModifyDN(newDN *DN) *ModifyEntry {
+func (e *ModifyEntry) ModifyRDN(newDN *DN) *ModifyEntry {
 	m := e.Clone()
 	m.SetDN(newDN)
 

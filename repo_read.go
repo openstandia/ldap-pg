@@ -434,7 +434,7 @@ func (r *Repository) CreateFindByDNQuery(dn *DN, option *FindOption) (string, ma
 	var fetchAttrsProjection string
 	var memberJoin string
 	if option.FetchAttrs {
-		fetchAttrsProjection = `, e0.rdn_orig, e0.attrs_orig, to_jsonb(ma.member_array) as member`
+		fetchAttrsProjection = `, e0.parent_id, e0.rdn_orig, e0.attrs_orig, to_jsonb(ma.member_array) as member`
 		// TODO use join when the entry's schema has member
 		memberJoin = `, LATERAL (
 				SELECT ARRAY (

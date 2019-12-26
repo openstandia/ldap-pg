@@ -146,16 +146,22 @@ func (d *DN) GetRDN() map[string]string {
 }
 
 func (d *DN) Modify(newRDN string) (*DN, error) {
-	nd := make([]string, len(d.dnOrig)+len(d.suffix))
+	nd := make([]string, len(d.dnOrig))
 	for i, v := range d.dnOrig {
 		if i == 0 {
 			nd[i] = newRDN
+		} else {
+			nd[i] = v
 		}
-		nd[i] = v
 	}
 	nd = append(nd, d.suffix...)
 
 	return normalizeDN(d.suffix, strings.Join(nd, ","))
+}
+
+func (d *DN) Move(newParentDN *DN) (*DN, error) {
+	newDN := d.RDNOrigStr() + "," + newParentDN.DNOrigStr()
+	return normalizeDN(d.suffix, newDN)
 }
 
 func (d *DN) ToPath() string {
