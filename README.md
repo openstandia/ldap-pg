@@ -32,14 +32,9 @@
 * LDAP Controls
   * [x] Simple Paged Results Control
 * Support member/memberOf association (like OpenLDAP memberOf overlay)
-  * One-way mode
-    * [x] Return memberOf attribute as operational attribute
-    * [x] Maintain member when modifydn and delete entry
-    * [ ] Search filter using memberOf
-  * Two-way mode
-    * [x] Return memberOf attribute as operational attribute
-    * [x] Maintain member/memberOf
-    * [x] Search filter using memberOf
+  * [x] Return memberOf attribute as operational attribute
+  * [x] Maintain member/memberOf
+  * [x] Search filter using memberOf
 * Schema
   * [x] Basic schema processing
   * [ ] More schema processing
@@ -130,8 +125,6 @@ Options:
         Additional/overwriting custom schema
   -suffix string
         Suffix for the LDAP
-  -two-way
-        Two-way support for member-memberOf association (Default: false)
   -u string
         DB User
   -w string
