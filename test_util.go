@@ -61,7 +61,7 @@ func runTestCases(t *testing.T, tcs []Command) {
 	for i, tc := range tcs {
 		conn, err = tc.Run(conn)
 		if err != nil {
-			t.Errorf("Unexpected error on testcase: %d, got error: %+v", i, err)
+			t.Errorf("Unexpected error on testcase: %d, got error: %w", i, err)
 			break
 		}
 	}
@@ -102,6 +102,21 @@ func (c Bind) Run(conn *ldap.Conn) (*ldap.Conn, error) {
 	err := conn.Bind(c.rdn+","+server.GetSuffix(), c.password)
 	err = c.assert.AssertResponse(conn, err)
 	return conn, err
+}
+
+func AddDC() Add {
+	type A []string
+	type M map[string][]string
+
+	return Add{
+		"", 
+		"",
+		M{
+			"objectClass": A{"top", "dcObject", "organization"},
+			"o": A{"Example Inc."},
+		},
+		nil,
+	}
 }
 
 func AddOU(ou string) Add {
@@ -198,7 +213,9 @@ func (s Search) Run(conn *ldap.Conn) (*ldap.Conn, error) {
 
 func (a Add) Run(conn *ldap.Conn) (*ldap.Conn, error) {
 	var dn string
-	if a.baseDN != "" {
+	if a.rdn == "" {
+		dn = server.GetSuffix()
+	} else if a.baseDN != "" {
 		dn = fmt.Sprintf("%s,%s,%s", a.rdn, a.baseDN, server.GetSuffix())
 	} else {
 		dn = fmt.Sprintf("%s,%s", a.rdn, server.GetSuffix())
@@ -456,9 +473,13 @@ func (n AssertNoEntry) AssertNoEntry(conn *ldap.Conn, err error, rdn, baseDN str
 		return xerrors.Errorf("Unexpected error response when previous operation. err: %w", err)
 	}
 
-	_, err = searchEntry(conn, "", baseDN, ldap.ScopeWholeSubtree, fmt.Sprintf("(%s)", rdn), nil)
-	if !ldap.IsErrorWithCode(err, 32) {
+	sr, err := searchEntry(conn, "", baseDN, ldap.ScopeWholeSubtree, fmt.Sprintf("(%s)", rdn), nil)
+	// expected return success
+	if err != nil {
 		return xerrors.Errorf("Unexpected error when searching the deleted entry. err: %w", err)
+	}
+	if len(sr.Entries) != 0 {
+		return xerrors.Errorf("Unexpected error when searching the deleted entry. Hit count: %d", len(sr.Entries))
 	}
 
 	return nil
@@ -503,11 +524,20 @@ func searchEntry(c *ldap.Conn, rdn, baseDN string, scope int, filter string, att
 	)
 	sr, err := c.Search(search)
 	if err != nil {
+		log.Printf("error: search error: baseDN: %s, filter: %s", bd, filter)
 		return nil, err
 	}
 
 	return sr, nil
 }
+
+// You can boot the postgres server for tests using docker.
+//
+// docker run --rm -e POSTGRES_DB=ldap -e POSTGRES_USER=dev  -e POSTGRES_PASSWORD=dev -p 5432:5432 -v (pwd)/misc:/docker-entrypoint-initdb.d postgres:11-alpine \
+//   -c log_destination=stderr \
+//   -c log_statement=all \
+//   -c log_connections=on \
+//   -c log_disconnections=on
 
 func setupLDAPServer() *Server {
 	go func() {
@@ -554,6 +584,14 @@ func truncateTables() {
 	defer db.Close()
 
 	_, err = db.Exec("TRUNCATE ldap_entry")
+	if err != nil {
+		log.Fatal("truncate table error:", err)
+	}
+	_, err = db.Exec("TRUNCATE ldap_tree")
+	if err != nil {
+		log.Fatal("truncate table error:", err)
+	}
+	_, err = db.Exec("TRUNCATE ldap_member")
 	if err != nil {
 		log.Fatal("truncate table error:", err)
 	}

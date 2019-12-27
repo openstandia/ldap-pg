@@ -265,6 +265,12 @@ func (r *Repository) insertMember(tx *sqlx.Tx, subjectID int64, entry *AddEntry)
 		count++
 	}
 
+	// Not found the member DN
+	if count != len(dns) {
+		log.Printf("warn: Invalid member DN. member dn: %v, values: %v", dns, values)
+		return NewInvalidDNSyntax()
+	}
+
 	// work around
 	rows.Close()
 

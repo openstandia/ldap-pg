@@ -13,11 +13,7 @@ var server *Server
 
 func TestMain(m *testing.M) {
 
-	*twowayEnabled = false
 	rtn := IntegrationTestRunner(m)
-
-	*twowayEnabled = true
-	rtn = IntegrationTestRunner(m)
 
 	os.Exit(rtn + rtn)
 }
@@ -89,6 +85,7 @@ func TestBind(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
+		AddDC(),
 		AddOU("Users"),
 		Add{
 			"uid=user1", "ou=Users",
@@ -178,6 +175,7 @@ func TestBasicCRUD(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
+		AddDC(),
 		AddOU("Users"),
 		Add{
 			"uid=user1", "ou=Users",
@@ -279,6 +277,7 @@ func TestOperationalAttributes(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
+		AddDC(),
 		AddOU("Users"),
 		Add{
 			"uid=user1", "ou=Users",
@@ -317,6 +316,7 @@ func TestMemberOf(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
+		AddDC(),
 		AddOU("Groups"),
 		AddOU("Users"),
 		Add{
@@ -329,10 +329,12 @@ func TestMemberOf(t *testing.T) {
 			&AssertEntry{},
 		},
 		Add{
-			"cn=top", "ou=Groups",
+			"cn=A1", "ou=Groups",
 			M{
 				"objectClass": A{"groupOfNames"},
-				"member":      A{"cn=A,ou=Groups," + server.GetSuffix()},
+				"member": A{
+					"uid=user1,ou=Users," + server.GetSuffix(),
+				},
 			},
 			&AssertEntry{},
 		},
@@ -347,12 +349,10 @@ func TestMemberOf(t *testing.T) {
 			&AssertEntry{},
 		},
 		Add{
-			"cn=A1", "ou=Groups",
+			"cn=top", "ou=Groups",
 			M{
 				"objectClass": A{"groupOfNames"},
-				"member": A{
-					"uid=user1,ou=Users," + server.GetSuffix(),
-				},
+				"member":      A{"cn=A,ou=Groups," + server.GetSuffix()},
 			},
 			&AssertEntry{},
 		},
