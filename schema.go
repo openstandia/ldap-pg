@@ -166,7 +166,7 @@ func parseSchema(server *Server, m SchemaMap, schemaDef string) {
 			if strings.Contains(line, "SINGLE-VALUE") {
 				s.SingleValue = true
 			}
-			if !*migrationEnabled && strings.Contains(line, "NO-USER-MODIFICATION") {
+			if !server.config.MigrationEnabled && strings.Contains(line, "NO-USER-MODIFICATION") {
 				s.NoUserModification = true
 			}
 

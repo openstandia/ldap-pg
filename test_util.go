@@ -109,11 +109,11 @@ func AddDC() Add {
 	type M map[string][]string
 
 	return Add{
-		"", 
+		"",
 		"",
 		M{
 			"objectClass": A{"top", "dcObject", "organization"},
-			"o": A{"Example Inc."},
+			"o":           A{"Example Inc."},
 		},
 		nil,
 	}
@@ -137,7 +137,7 @@ type Add struct {
 	rdn    string
 	baseDN string
 	attrs  map[string][]string
-	assert *AssertEntry
+	assert Assert
 }
 
 type ModifyAdd struct {
@@ -336,6 +336,22 @@ func (a AssertResponse) AssertResponse(conn *ldap.Conn, err error) error {
 		}
 	}
 	return nil
+}
+
+type Assert interface {
+	AssertEntry(conn *ldap.Conn, err error, rdn, baseDN string, attrs map[string][]string) error
+}
+
+type AssertLDAPError struct {
+	expectErrorCode uint16
+}
+
+func (a AssertLDAPError) AssertEntry(conn *ldap.Conn, err error, rdn, baseDN string, attrs map[string][]string) error {
+	if ldap.IsErrorWithCode(err, a.expectErrorCode) {
+		return nil
+	}
+	return xerrors.Errorf("Unexpected LDAP error response when previous operation. rdn: %s, want: %d  err: %w",
+		rdn, a.expectErrorCode, err)
 }
 
 type AssertEntry struct {

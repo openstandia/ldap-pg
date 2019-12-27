@@ -272,7 +272,37 @@ func TestOperationalAttributes(t *testing.T) {
 	type A []string
 	type M map[string][]string
 
-	*migrationEnabled = true
+	server.config.MigrationEnabled = false
+	server.LoadSchema()
+
+	tcs := []Command{
+		Conn{},
+		Bind{"cn=Manager", "secret", &AssertResponse{}},
+		AddDC(),
+		AddOU("Users"),
+		Add{
+			"uid=user1", "ou=Users",
+			M{
+				"objectClass":  A{"inetOrgPerson"},
+				"sn":           A{"user1"},
+				"userPassword": A{SSHA("password1")},
+				"entryUUID":    A{"0b05df74-1219-495d-9d95-dc0c05e00aa9"},
+			},
+			&AssertLDAPError{
+				expectErrorCode: ldap.LDAPResultConstraintViolation,
+			},
+		},
+	}
+
+	runTestCases(t, tcs)
+}
+
+func TestOperationalAttributesMigration(t *testing.T) {
+	type A []string
+	type M map[string][]string
+
+	server.config.MigrationEnabled = true
+	server.LoadSchema()
 
 	tcs := []Command{
 		Conn{},

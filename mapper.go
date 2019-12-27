@@ -37,7 +37,7 @@ func (m *Mapper) LDAPMessageToAddEntry(dn *DN, ldapAttrs message.AttributeList) 
 
 		err := entry.Add(attrName, arr)
 		if err != nil {
-			log.Printf("warn: Invalid attribute. attrName: %s err: %s", k, err)
+			log.Printf("warn: Invalid attribute. attrName: %s, err: %s", k, err)
 			return nil, err
 		}
 	}

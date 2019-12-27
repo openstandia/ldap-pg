@@ -46,6 +46,7 @@ type ServerConfig struct {
 	LogLevel          string
 	PProfServer       string
 	GoMaxProcs        int
+	MigrationEnabled  bool
 }
 
 type Server struct {
@@ -143,26 +144,7 @@ func (s *Server) Start() {
 	s.repo = repo // TODO Remove bidirectional dependency
 
 	// Init schema map
-	schemaMap = InitSchemaMap(s)
-	if s, ok := schemaMap.Get("entryUUID"); ok {
-		s.UseIndependentColumn("uuid")
-	}
-	if s, ok := schemaMap.Get("createTimestamp"); ok {
-		s.UseIndependentColumn("created")
-	}
-	if s, ok := schemaMap.Get("modifyTimestamp"); ok {
-		s.UseIndependentColumn("updated")
-	}
-	// TODO
-	memberAttrs := []string{"member", "uniqueMember"}
-	for _, v := range memberAttrs {
-		if s, ok := schemaMap.Get(v); ok {
-			s.UseMemberTable(true)
-		}
-	}
-	if s, ok := schemaMap.Get("memberOf"); ok {
-		s.UseMemberOfTable(true)
-	}
+	s.LoadSchema()
 
 	// Init mapper
 	mapper = NewMapper(s, schemaMap)
@@ -229,6 +211,29 @@ func (s *Server) Start() {
 	close(ch)
 
 	server.Stop()
+}
+
+func (s *Server) LoadSchema() {
+	schemaMap = InitSchemaMap(s)
+	if s, ok := schemaMap.Get("entryUUID"); ok {
+		s.UseIndependentColumn("uuid")
+	}
+	if s, ok := schemaMap.Get("createTimestamp"); ok {
+		s.UseIndependentColumn("created")
+	}
+	if s, ok := schemaMap.Get("modifyTimestamp"); ok {
+		s.UseIndependentColumn("updated")
+	}
+	// TODO
+	memberAttrs := []string{"member", "uniqueMember"}
+	for _, v := range memberAttrs {
+		if s, ok := schemaMap.Get(v); ok {
+			s.UseMemberTable(true)
+		}
+	}
+	if s, ok := schemaMap.Get("memberOf"); ok {
+		s.UseMemberOfTable(true)
+	}
 }
 
 func (s *Server) Stop() {

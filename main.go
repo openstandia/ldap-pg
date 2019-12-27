@@ -187,5 +187,6 @@ func main() {
 		LogLevel:          *logLevel,
 		PProfServer:       *pprofServer,
 		GoMaxProcs:        *gomaxprocs,
+		MigrationEnabled:  *migrationEnabled,
 	}).Start()
 }
