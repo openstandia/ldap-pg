@@ -12,31 +12,22 @@ import (
 )
 
 var (
-	addTreeStmt       *sqlx.NamedStmt
+	// repo_create
+	insertTreeStmt    *sqlx.NamedStmt
 	insertDCStmt      *sqlx.NamedStmt
 	insertUnderDCStmt *sqlx.NamedStmt
 
-	addMemberOfByDNNormStmt *sqlx.NamedStmt
+	// repo_read
+	collectNodeOrigByParentIDStmt *sqlx.NamedStmt
+	collectNodeNormByParentIDStmt *sqlx.NamedStmt
+	getDCStmt                     *sqlx.NamedStmt
+	getDCDNOrigStmt               *sqlx.NamedStmt
 
-	findByDNStmt                             *sqlx.NamedStmt
-	findByDNWithMemberOfStmt                 *sqlx.NamedStmt
-	findByDNWithLockStmt                     *sqlx.NamedStmt
-	findByParentIDAndRDNNormStmt             *sqlx.NamedStmt
-	findByParentIDAndRDNNormStmtWithLockStmt *sqlx.NamedStmt
-	findByIDWithLockStmt                     *sqlx.NamedStmt
-	findCredByDNStmt                         *sqlx.NamedStmt
-	findByMemberWithLockStmt                 *sqlx.NamedStmt
-	findByMemberOfWithLockStmt               *sqlx.NamedStmt
-	collectNodeOrigByParentIDStmt            *sqlx.NamedStmt
-	collectNodeNormByParentIDStmt            *sqlx.NamedStmt
-	getDCStmt                                *sqlx.NamedStmt
-	getDCDNOrigStmt                          *sqlx.NamedStmt
+	// repo_update
+	updateAttrsByIdStmt *sqlx.NamedStmt
+	updateDNByIdStmt    *sqlx.NamedStmt
 
-	updateAttrsByIdStmt              *sqlx.NamedStmt
-	updateAttrsWithNoUpdatedByIdStmt *sqlx.NamedStmt
-	updateDNByIdStmt                 *sqlx.NamedStmt
-
-	deleteByDNStmt         *sqlx.NamedStmt
+	// repo_delete
 	deleteDCStmt           *sqlx.NamedStmt
 	deleteTreeNodeByIDStmt *sqlx.NamedStmt
 	deleteMemberByIDStmt   *sqlx.NamedStmt
@@ -100,49 +91,6 @@ func NewRepository(server *Server) (*Repository, error) {
 func (r *Repository) initStmt(db *sqlx.DB) error {
 	var err error
 
-	findByParentIDAndRDNNormSQL := `SELECT id, parent_id, uuid, created, updated, rdn_orig || ',' || :parent_dn_orig AS dn_orig, attrs_orig
-		FROM ldap_entry
-		WHERE parent_id = :parent_id AND rdn_norm = :rdn_norm`
-
-	findByParentIDAndRDNNormStmt, err = db.PrepareNamed(findByParentIDAndRDNNormSQL)
-	if err != nil {
-		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	}
-
-	findByParentIDAndRDNNormStmtWithLockStmt, err = db.PrepareNamed(findByParentIDAndRDNNormSQL + " FOR UPDATE")
-	if err != nil {
-		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	}
-
-	findByIDWithLockStmt, err = db.PrepareNamed(`SELECT id, uuid, created, updated, rdn_orig, attrs_orig
-		FROM ldap_entry
-		WHERE id = :id
-		FOR UPDATE`)
-	if err != nil {
-		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	}
-
-	findCredByDNStmt, err = db.PrepareNamed(`SELECT attrs_norm->>'userPassword'
-		FROM ldap_entry
-		WHERE parent_id = :parent_id AND rdn_norm = :rdn_norm`)
-	if err != nil {
-		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	}
-
-	findByMemberWithLockStmt, err = db.PrepareNamed(`SELECT id, parent_id, rdn_norm, attrs_orig
-		FROM ldap_entry
-		WHERE parent_id = :parent_id AND attrs_norm->'member' @> jsonb_build_array(:dn_norm ::::text) FOR UPDATE`)
-	if err != nil {
-		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	}
-
-	findByMemberOfWithLockStmt, err = db.PrepareNamed(`SELECT id, parent_id, rdn_norm, attrs_orig
-		FROM ldap_entry
-		WHERE parent_id = :parent_id AND attrs_norm->'memberOf' @> jsonb_build_array(:dn_norm ::::text) FOR UPDATE`)
-	if err != nil {
-		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	}
-
 	collectNodeOrigByParentIDStmt, err = db.PrepareNamed(`WITH RECURSIVE child (dn_orig, id, parent_id) AS
 	(
 		SELECT e.rdn_orig::::TEXT AS dn_orig, e.id, e.parent_id
@@ -190,7 +138,7 @@ func (r *Repository) initStmt(db *sqlx.DB) error {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
-	addTreeStmt, err = db.PrepareNamed(`INSERT INTO ldap_tree (id, parent_id, rdn_norm, rdn_orig)
+	insertTreeStmt, err = db.PrepareNamed(`INSERT INTO ldap_tree (id, parent_id, rdn_norm, rdn_orig)
 		VALUES (:id, :parent_id, :rdn_norm, :rdn_orig)`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
@@ -213,20 +161,7 @@ func (r *Repository) initStmt(db *sqlx.DB) error {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
-	addMemberOfByDNNormStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET attrs_norm = jsonb_set(attrs_norm, array['memberOf'], coalesce(attrs_norm->'memberOf', '[]'::::jsonb) || jsonb_build_array(:memberOfDNNorm ::::text)), attrs_orig = jsonb_set(attrs_orig, array['memberOf'], coalesce(attrs_orig->'memberOf', '[]'::::jsonb) || jsonb_build_array(:memberOfDNOrig ::::text))
-		WHERE parent_id = :parent_id AND rdn_norm = :rdn_norm`)
-	if err != nil {
-		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	}
-
-	updateAttrsByIdStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET updated = :updated, attrs_norm = :attrsNorm, attrs_orig = :attrsOrig
-		WHERE id = :id`)
-	if err != nil {
-		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	}
-
-	// When updating memberOf, don't update 'updated'
-	updateAttrsWithNoUpdatedByIdStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET attrs_norm = :attrsNorm, attrs_orig = :attrsOrig
+	updateAttrsByIdStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET updated = :updated, attrs_norm = :attrs_norm, attrs_orig = :attrs_orig
 		WHERE id = :id`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
@@ -237,12 +172,6 @@ func (r *Repository) initStmt(db *sqlx.DB) error {
 		attrs_norm = :attrs_norm, attrs_orig = :attrs_orig,
 		parent_id = :parent_id
 		WHERE id = :id`)
-	if err != nil {
-		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	}
-
-	deleteByDNStmt, err = db.PrepareNamed(`DELETE FROM ldap_entry
-		WHERE parent_id = :parent_id AND rdn_norm = :rdn_norm RETURNING id`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}

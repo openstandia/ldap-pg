@@ -21,10 +21,10 @@ func (r *Repository) Update(tx *sqlx.Tx, oldEntry, newEntry *ModifyEntry) error 
 	}
 
 	_, err = tx.NamedStmt(updateAttrsByIdStmt).Exec(map[string]interface{}{
-		"id":        dbEntry.ID,
-		"updated":   dbEntry.Updated,
-		"attrsNorm": dbEntry.AttrsNorm,
-		"attrsOrig": dbEntry.AttrsOrig,
+		"id":         dbEntry.ID,
+		"updated":    dbEntry.Updated,
+		"attrs_norm": dbEntry.AttrsNorm,
+		"attrs_orig": dbEntry.AttrsOrig,
 	})
 	if err != nil {
 		return xerrors.Errorf("Failed to update entry. entry: %v, err: %w", newEntry, err)
@@ -142,41 +142,6 @@ func (r *Repository) deleteMembers(tx *sqlx.Tx, id int64, attrNameNorm string, d
 	if err != nil {
 		return xerrors.Errorf("Failed to delete member. id: %d, attr: %s, dnNorms: %v, err: %w", id, attrNameNorm, dnNorms, err)
 	}
-	return nil
-}
-
-func (r *Repository) addMemberOfByDNNorm(tx *sqlx.Tx, dnNorm string, addMemberOfDN *DN) error {
-	// This query doesn't update updated
-	_, err := tx.NamedStmt(addMemberOfByDNNormStmt).Exec(map[string]interface{}{
-		"dnNorm":         dnNorm,
-		"memberOfDNNorm": addMemberOfDN.DNNormStr(),
-		"memberOfDNOrig": addMemberOfDN.DNOrigStr(),
-	})
-	if err != nil {
-		return xerrors.Errorf("Failed to add memberOf. dn: %s, memberOf: %s, err: %w", dnNorm, addMemberOfDN.DNOrigStr(), err)
-	}
-	return nil
-}
-
-func updateWithNoUpdated(tx *sqlx.Tx, modifyEntry *ModifyEntry) error {
-	if modifyEntry.dbEntryId == 0 {
-		return xerrors.Errorf("Invalid dbEntryId for update DBEntry.")
-	}
-
-	dbEntry, err := mapper.ModifyEntryToDBEntry(modifyEntry)
-	if err != nil {
-		return err
-	}
-
-	_, err = tx.NamedStmt(updateAttrsWithNoUpdatedByIdStmt).Exec(map[string]interface{}{
-		"id":        dbEntry.ID,
-		"attrsNorm": dbEntry.AttrsNorm,
-		"attrsOrig": dbEntry.AttrsOrig,
-	})
-	if err != nil {
-		return xerrors.Errorf("Failed to update entry with no updated. entry: %v, err: %w", modifyEntry, err)
-	}
-
 	return nil
 }
 

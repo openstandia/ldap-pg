@@ -161,7 +161,7 @@ func (r *Repository) insertUnderDCEntry(tx *sqlx.Tx, entry *AddEntry) (int64, in
 
 func insertTree(tx *sqlx.Tx, id, parentID int64, entry *AddEntry) error {
 	if entry.IsContainer() {
-		_, err := tx.NamedStmt(addTreeStmt).Exec(map[string]interface{}{
+		_, err := tx.NamedStmt(insertTreeStmt).Exec(map[string]interface{}{
 			"id":        id,
 			"parent_id": parentID,
 			"rdn_norm":  entry.dn.RDNNormStr(),
