@@ -53,7 +53,7 @@ func (j *ModifyEntry) HasAttr(attrName string) bool {
 func (j *ModifyEntry) SetDN(dn *DN) {
 	j.dn = dn
 
-	rdn := dn.GetRDN()
+	rdn := dn.RDN()
 	for k, v := range rdn {
 		// rdn is validated already, ignore error
 		sv, _ := NewSchemaValue(k, []string{v})
@@ -61,7 +61,7 @@ func (j *ModifyEntry) SetDN(dn *DN) {
 	}
 }
 
-func (j *ModifyEntry) GetDN() *DN {
+func (j *ModifyEntry) DN() *DN {
 	return j.dn
 }
 
@@ -148,7 +148,7 @@ func (j *ModifyEntry) deletesv(value *SchemaValue) error {
 
 	current, ok := j.attributes[value.Name()]
 	if !ok {
-		log.Printf("warn: Failed to modify/delete because of no attribute. dn: %s, attrName: %s", j.GetDN().DNNormStr(), value.Name())
+		log.Printf("warn: Failed to modify/delete because of no attribute. dn: %s, attrName: %s", j.DN().DNNormStr(), value.Name())
 		return NewNoSuchAttribute("modify/delete", value.Name())
 	}
 
@@ -169,7 +169,7 @@ func (j *ModifyEntry) deletesv(value *SchemaValue) error {
 
 func (j *ModifyEntry) deleteAll(s *Schema) error {
 	if !j.HasAttr(s.Name) {
-		log.Printf("warn: Failed to modify/delete because of no attribute. dn: %s", j.GetDN().DNNormStr())
+		log.Printf("warn: Failed to modify/delete because of no attribute. dn: %s", j.DN().DNNormStr())
 		return NewNoSuchAttribute("modify/delete", s.Name)
 	}
 	delete(j.attributes, s.Name)
@@ -186,13 +186,13 @@ func (j *ModifyEntry) GetAttrNorm(attrName string) ([]string, bool) {
 	if !ok {
 		return nil, false
 	}
-	return v.GetNorm(), true
+	return v.Norm(), true
 }
 
 func (j *ModifyEntry) GetAttrsOrig() map[string][]string {
 	orig := make(map[string][]string, len(j.attributes))
 	for k, v := range j.attributes {
-		orig[k] = v.GetOrig()
+		orig[k] = v.Orig()
 	}
 	return orig
 }
@@ -202,7 +202,7 @@ func (j *ModifyEntry) GetAttrs() (map[string]interface{}, map[string][]string) {
 	orig := make(map[string][]string, len(j.attributes))
 	for k, v := range j.attributes {
 		norm[k] = v.GetForJSON()
-		orig[k] = v.GetOrig()
+		orig[k] = v.Orig()
 	}
 	return norm, orig
 }

@@ -28,7 +28,7 @@ func (s *Schema) SubstringMatch(q *Query, val string, i int) {
 			q.Query += fmt.Sprintf("EXISTS ( SELECT 1 FROM jsonb_array_elements_text(e.attrs_norm->'%s') AS attr WHERE attr LIKE :%s )", s.Name, paramKey)
 		}
 	}
-	q.Params[paramKey] = sv.GetNorm()[0]
+	q.Params[paramKey] = sv.Norm()[0]
 }
 
 func (s *Schema) EqualityMatch(q *Query, val string) {
@@ -66,7 +66,7 @@ func (s *Schema) EqualityMatch(q *Query, val string) {
 			}
 		}
 	}
-	q.Params[paramKey] = sv.GetNorm()[0]
+	q.Params[paramKey] = sv.Norm()[0]
 }
 
 func (s *Schema) GreaterOrEqualMatch(q *Query, val string) {
@@ -79,7 +79,7 @@ func (s *Schema) GreaterOrEqualMatch(q *Query, val string) {
 	}
 
 	q.Query += fmt.Sprintf("(e.attrs_norm->>'%s')::::numeric >= :%s", s.Name, paramKey)
-	q.Params[paramKey] = sv.GetNorm()[0]
+	q.Params[paramKey] = sv.Norm()[0]
 }
 
 func (s *Schema) LessOrEqualMatch(q *Query, val string) {
@@ -92,7 +92,7 @@ func (s *Schema) LessOrEqualMatch(q *Query, val string) {
 	}
 
 	q.Query += fmt.Sprintf("(e.attrs_norm->>'%s')::::numeric <= :%s", s.Name, paramKey)
-	q.Params[paramKey] = sv.GetNorm()[0]
+	q.Params[paramKey] = sv.Norm()[0]
 }
 
 func (s *Schema) PresentMatch(q *Query) {
@@ -113,7 +113,7 @@ func (s *Schema) ApproxMatch(q *Query, val string) {
 	}
 
 	q.Query += fmt.Sprintf("e.attrs_norm->>'%s' ILIKE :%s", s.Name, paramKey)
-	q.Params[paramKey] = sv.GetNorm()[0]
+	q.Params[paramKey] = sv.Norm()[0]
 }
 
 type Query struct {

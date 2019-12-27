@@ -368,7 +368,7 @@ func (s *SchemaValue) Name() string {
 func (s *SchemaValue) HasDuplicate(value *SchemaValue) bool {
 	s.Normalize()
 
-	for _, v := range value.GetNorm() {
+	for _, v := range value.Norm() {
 		if _, ok := s.cachedNormIndex[v]; ok {
 			return true
 		}
@@ -413,7 +413,7 @@ func (s *SchemaValue) Equals(value *SchemaValue) bool {
 		return false
 	}
 	if s.IsSingle() {
-		return s.GetNorm()[0] == value.GetNorm()[0]
+		return s.Norm()[0] == value.Norm()[0]
 	} else {
 		if len(s.value) != len(value.value) {
 			return false
@@ -421,7 +421,7 @@ func (s *SchemaValue) Equals(value *SchemaValue) bool {
 
 		s.Normalize()
 
-		for _, v := range value.GetNorm() {
+		for _, v := range value.Norm() {
 			if _, ok := s.cachedNormIndex[v]; !ok {
 				return false
 			}
@@ -454,7 +454,7 @@ func (s *SchemaValue) Delete(value *SchemaValue) error {
 	// TODO Duplicate delete error
 
 	// Check the values
-	for _, v := range value.GetNorm() {
+	for _, v := range value.Norm() {
 		if _, ok := s.cachedNormIndex[v]; !ok {
 			// Not found the value
 			return NewNoSuchAttribute("modify/delete", value.Name())
@@ -466,7 +466,7 @@ func (s *SchemaValue) Delete(value *SchemaValue) error {
 	newValueNorm := make([]string, len(newValue))
 
 	i := 0
-	for j, v := range s.GetNorm() {
+	for j, v := range s.Norm() {
 		if _, ok := value.cachedNormIndex[v]; !ok {
 			newValue[i] = s.value[j]
 			newValueNorm[i] = s.cachedNorm[j]
@@ -481,11 +481,11 @@ func (s *SchemaValue) Delete(value *SchemaValue) error {
 	return nil
 }
 
-func (s *SchemaValue) GetOrig() []string {
+func (s *SchemaValue) Orig() []string {
 	return s.value
 }
 
-func (s *SchemaValue) GetAsTime() []time.Time {
+func (s *SchemaValue) AsTime() []time.Time {
 	t := make([]time.Time, len(s.value))
 	for i, _ := range s.value {
 		// Already validated, ignore error
@@ -494,7 +494,7 @@ func (s *SchemaValue) GetAsTime() []time.Time {
 	return t
 }
 
-func (s *SchemaValue) GetNorm() []string {
+func (s *SchemaValue) Norm() []string {
 	s.Normalize()
 	return s.cachedNorm
 }

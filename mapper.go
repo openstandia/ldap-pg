@@ -51,7 +51,7 @@ func (m *Mapper) LDAPMessageToAddEntry(dn *DN, ldapAttrs message.AttributeList) 
 }
 
 func (m *Mapper) AddEntryToDBEntry(entry *AddEntry) (*DBEntry, error) {
-	norm, orig := entry.GetAttrs()
+	norm, orig := entry.Attrs()
 
 	created := time.Now()
 	updated := created
@@ -126,7 +126,7 @@ func (m *Mapper) ModifyEntryToDBEntry(entry *ModifyEntry) (*DBEntry, error) {
 }
 
 func (m *Mapper) ModifyEntryToAddEntry(entry *ModifyEntry) (*AddEntry, error) {
-	add := NewAddEntry(entry.GetDN())
+	add := NewAddEntry(entry.DN())
 
 	// TODO
 

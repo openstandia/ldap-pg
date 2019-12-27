@@ -625,7 +625,6 @@ func appenScopeFilter(scope int, q *Query, baseDNID int64, childrenDNIDs []int64
 	// 2: sub
 	// 3: children
 	var parentFilter string
-	// path := baseDN.ToPath()
 	if scope == 0 {
 		parentFilter = "e.id = :baseDNID"
 		q.Params["baseDNID"] = baseDNID

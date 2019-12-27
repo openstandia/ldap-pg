@@ -23,7 +23,7 @@ var anonymousDN = &DN{
 	ReverseParentDN: "",
 }
 
-func normalizeDN(suffix []string, dn string) (*DN, error) {
+func NormalizeDN(suffix []string, dn string) (*DN, error) {
 	// Anonymous
 	if dn == "" {
 		return anonymousDN, nil
@@ -62,40 +62,12 @@ func normalizeDN(suffix []string, dn string) (*DN, error) {
 	dnNorm = dnNorm[:len(dnNorm)-len(suffix)]
 	dnOrig = dnOrig[:len(dnOrig)-len(suffix)]
 
-	reverse := toReverseDN(dnNorm)
-
 	return &DN{
-		dn:              d,
-		dnNorm:          dnNorm,
-		dnOrig:          dnOrig,
-		suffix:          suffix,
-		ReverseParentDN: reverse,
+		dn:     d,
+		dnNorm: dnNorm,
+		dnOrig: dnOrig,
+		suffix: suffix,
 	}, nil
-}
-
-func normalizeDNBAK(dn string) (*DN, error) {
-	d, dnNorm, dnOrig, err := parseDN(dn)
-	if err != nil {
-		return nil, err
-	}
-
-	reverse := toReverseDN(dnNorm)
-
-	return &DN{
-		dn:              d,
-		dnNorm:          dnNorm,
-		dnOrig:          dnOrig,
-		ReverseParentDN: reverse,
-	}, nil
-}
-
-func toReverseDN(dn []string) string {
-	var path string
-	// ignore last rdn
-	for i := len(dn) - 1; i > 0; i-- {
-		path += strings.ToLower(dn[i]) + "/"
-	}
-	return path
 }
 
 func (d *DN) DNNormStr() string {
@@ -124,7 +96,7 @@ func (d *DN) Equal(o *DN) bool {
 	return d.DNNormStr() == o.DNNormStr()
 }
 
-func (d *DN) GetRDN() map[string]string {
+func (d *DN) RDN() map[string]string {
 	if len(d.cachedRDN) > 0 {
 		return d.cachedRDN
 	}
@@ -145,7 +117,7 @@ func (d *DN) GetRDN() map[string]string {
 	return m
 }
 
-func (d *DN) Modify(newRDN string) (*DN, error) {
+func (d *DN) ModifyRDN(newRDN string) (*DN, error) {
 	nd := make([]string, len(d.dnOrig))
 	for i, v := range d.dnOrig {
 		if i == 0 {
@@ -156,22 +128,12 @@ func (d *DN) Modify(newRDN string) (*DN, error) {
 	}
 	nd = append(nd, d.suffix...)
 
-	return normalizeDN(d.suffix, strings.Join(nd, ","))
+	return NormalizeDN(d.suffix, strings.Join(nd, ","))
 }
 
 func (d *DN) Move(newParentDN *DN) (*DN, error) {
 	newDN := d.RDNOrigStr() + "," + newParentDN.DNOrigStr()
-	return normalizeDN(d.suffix, newDN)
-}
-
-func (d *DN) ToPath() string {
-	parts := strings.Split(d.DNNormStr(), ",")
-
-	var path string
-	for i := len(parts) - 1; i >= 0; i-- {
-		path += strings.ToLower(parts[i]) + "/"
-	}
-	return path
+	return NormalizeDN(d.suffix, newDN)
 }
 
 func (d *DN) ParentDN() *DN {
@@ -181,12 +143,12 @@ func (d *DN) ParentDN() *DN {
 	var p *DN
 	if len(d.dnOrig) == 1 {
 		// Parent is DC
-		p, _ = normalizeDN(d.suffix, strings.Join(d.suffix, ","))
+		p, _ = NormalizeDN(d.suffix, strings.Join(d.suffix, ","))
 	}
 
 	nd := d.dnOrig[1:]
 	nd = append(nd, d.suffix...)
-	p, _ = normalizeDN(d.suffix, strings.Join(nd, ","))
+	p, _ = NormalizeDN(d.suffix, strings.Join(nd, ","))
 
 	return p
 }

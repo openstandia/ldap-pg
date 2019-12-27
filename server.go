@@ -358,5 +358,5 @@ func (s *Server) GetRootPW() string {
 }
 
 func (s *Server) NormalizeDN(dn string) (*DN, error) {
-	return normalizeDN(s.SuffixNorm(), dn)
+	return NormalizeDN(s.SuffixNorm(), dn)
 }

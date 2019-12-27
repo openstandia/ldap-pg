@@ -23,7 +23,7 @@ func handleModifyDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	newDN, err := dn.Modify(string(r.NewRDN()))
+	newDN, err := dn.ModifyRDN(string(r.NewRDN()))
 
 	if err != nil {
 		// TODO return correct error

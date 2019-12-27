@@ -307,7 +307,7 @@ func parseDN(value string) (*goldap.DN, []string, []string, error) {
 }
 
 func normalizeDistinguishedName(suffix []string, value string) (string, error) {
-	dn, err := normalizeDN(suffix, value)
+	dn, err := NormalizeDN(suffix, value)
 	if err != nil {
 		return "", err
 	}

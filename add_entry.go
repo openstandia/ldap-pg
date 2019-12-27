@@ -34,7 +34,7 @@ func (j *AddEntry) HasAttr(attrName string) bool {
 func (j *AddEntry) SetDN(dn *DN) {
 	j.dn = dn
 
-	rdn := dn.GetRDN()
+	rdn := dn.RDN()
 	for k, v := range rdn {
 		// rdn is validated already
 		j.attributes[k], _ = NewSchemaValue(k, []string{v})
@@ -50,7 +50,7 @@ func (j *AddEntry) Member() []*MemberEntry {
 
 	for _, sv := range j.attributes {
 		if sv.IsMemberAttribute() {
-			for _, v := range sv.GetNorm() {
+			for _, v := range sv.Norm() {
 				m := &MemberEntry{
 					AttrNameNorm:   sv.Name(),
 					MemberOfDNNorm: v,
@@ -89,10 +89,6 @@ func (j *AddEntry) IsDC() bool {
 	return j.dn.IsDC()
 }
 
-func (j *AddEntry) GetDNNorm() string {
-	return j.dn.DNNormStr()
-}
-
 func (j *AddEntry) Validate() error {
 	if !j.HasAttr("objectClass") {
 		return NewObjectClassViolation()
@@ -129,7 +125,7 @@ func (j *AddEntry) addsv(value *SchemaValue) error {
 	return nil
 }
 
-func (j *AddEntry) GetAttrNorm(attrName string) ([]string, bool) {
+func (j *AddEntry) AttrNorm(attrName string) ([]string, bool) {
 	s, ok := j.schemaMap.Get(attrName)
 	if !ok {
 		return nil, false
@@ -139,15 +135,15 @@ func (j *AddEntry) GetAttrNorm(attrName string) ([]string, bool) {
 	if !ok {
 		return nil, false
 	}
-	return v.GetNorm(), true
+	return v.Norm(), true
 }
 
-func (j *AddEntry) GetAttrs() (map[string]interface{}, map[string][]string) {
+func (j *AddEntry) Attrs() (map[string]interface{}, map[string][]string) {
 	norm := make(map[string]interface{}, len(j.attributes))
 	orig := make(map[string][]string, len(j.attributes))
 	for k, v := range j.attributes {
 		norm[k] = v.GetForJSON()
-		orig[k] = v.GetOrig()
+		orig[k] = v.Orig()
 	}
 	return norm, orig
 }
