@@ -109,6 +109,13 @@ func NewObjectClassViolation() *LDAPError {
 	}
 }
 
+func NewNotAllowedOnNonLeaf() *LDAPError {
+	return &LDAPError{
+		Code: ldap.LDAPResultNotAllowedOnNonLeaf,
+		Msg:  fmt.Sprintf("subordinate objects must be deleted first"),
+	}
+}
+
 func NewAlreadyExists() *LDAPError {
 	return &LDAPError{
 		Code: 68,

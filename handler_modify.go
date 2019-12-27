@@ -6,6 +6,7 @@ import (
 	"log"
 
 	ldap "github.com/openstandia/ldapserver"
+	"golang.org/x/xerrors"
 )
 
 func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
@@ -13,7 +14,7 @@ func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	dn, err := s.NormalizeDN(string(r.Object()))
 
 	if err != nil {
-		log.Printf("warn: Invalid dn: %s err: %s", r.Object(), err)
+		log.Printf("warn: Invalid dn: %s, err: %s", r.Object(), err)
 
 		// TODO return correct error
 		res := ldap.NewModifyResponse(ldap.LDAPResultOperationsError)
@@ -37,7 +38,7 @@ func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 			responseModifyError(w, NewNoSuchObject())
 			return
 		} else {
-			responseModifyError(w, fmt.Errorf("Failed to fetch the current entry for modification. dn: %s err: %#v", dn.DNNormStr(), err))
+			responseModifyError(w, fmt.Errorf("Failed to fetch the current entry for modification. dn: %s, err: %#v", dn.DNNormStr(), err))
 			return
 		}
 	}
@@ -48,7 +49,7 @@ func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		modification := change.Modification()
 		attrName := string(modification.Type_())
 
-		log.Printf("Modify operation: %d attribute: %s", change.Operation(), modification.Type_())
+		log.Printf("Modify operation: %d, attribute: %s", change.Operation(), modification.Type_())
 
 		var values []string
 		for _, attributeValue := range modification.Vals() {
@@ -72,13 +73,13 @@ func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		if err != nil {
 			tx.Rollback()
 
-			log.Printf("warn: Failed to modify. dn: %s err: %s", dn.DNNormStr(), err)
+			log.Printf("warn: Failed to modify. dn: %s, err: %s", dn.DNNormStr(), err)
 			responseModifyError(w, err)
 			return
 		}
 	}
 
-	log.Printf("Update entry. oldEntry: %v newEntry: %v", oldEntry, newEntry)
+	log.Printf("Update entry. oldEntry: %v, newEntry: %v", oldEntry, newEntry)
 
 	err = s.Repo().Update(tx, oldEntry, newEntry)
 
@@ -86,11 +87,15 @@ func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		tx.Rollback()
 
 		// TODO error code
-		responseModifyError(w, fmt.Errorf("Failed to modify the entry. dn: %s entry: %#v err: %#v", dn.DNNormStr(), newEntry, err))
+		responseModifyError(w, xerrors.Errorf("Failed to modify the entry. dn: %s, entry: %v, err: %w", dn.DNNormStr(), newEntry, err))
 		return
 	}
 
-	tx.Commit()
+	err = tx.Commit()
+	if err != nil {
+		responseModifyError(w, xerrors.Errorf("Failed to commit of modify entry operation. dn: %s, err: %w", dn.DNNormStr(), err))
+		return
+	}
 
 	res := ldap.NewModifyResponse(ldap.LDAPResultSuccess)
 	w.Write(res)

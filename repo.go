@@ -16,12 +16,17 @@ var (
 	insertTreeStmt    *sqlx.NamedStmt
 	insertDCStmt      *sqlx.NamedStmt
 	insertUnderDCStmt *sqlx.NamedStmt
+	insertStmtCache   StmtCache
 
 	// repo_read
 	collectNodeOrigByParentIDStmt *sqlx.NamedStmt
 	collectNodeNormByParentIDStmt *sqlx.NamedStmt
 	getDCStmt                     *sqlx.NamedStmt
 	getDCDNOrigStmt               *sqlx.NamedStmt
+	filterStmtMap                 StmtCache
+	treeStmtCache                 StmtCache
+	findByDNStmtCache             StmtCache
+	findCredByDNStmtCache         StmtCache
 
 	// repo_update
 	updateAttrsByIdStmt *sqlx.NamedStmt
@@ -31,6 +36,7 @@ var (
 	deleteDCStmt           *sqlx.NamedStmt
 	deleteTreeNodeByIDStmt *sqlx.NamedStmt
 	deleteMemberByIDStmt   *sqlx.NamedStmt
+	deleteByDNStmtCache    StmtCache
 
 	ROOT_ID int64 = 0
 )
@@ -51,13 +57,6 @@ func (m *StmtCache) Get(key string) (*sqlx.NamedStmt, bool) {
 func (m *StmtCache) Put(key string, value *sqlx.NamedStmt) {
 	m.sm.Store(key, value)
 }
-
-var filterStmtMap StmtCache
-var treeStmtCache StmtCache
-var findByDNStmtCache StmtCache
-var findCredByDNStmtCache StmtCache
-var deleteByDNStmtCache StmtCache
-var insertStmtCache StmtCache
 
 type Repository struct {
 	server *Server

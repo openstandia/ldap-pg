@@ -13,6 +13,18 @@ import (
 func (r Repository) DeleteByDN(dn *DN) error {
 	tx := r.db.MustBegin()
 
+	if dn.IsContainer() {
+		has, err := r.hasChildren(tx, dn)
+		if err != nil {
+			tx.Rollback()
+			return err
+		}
+		if has {
+			tx.Rollback()
+			return NewNotAllowedOnNonLeaf()
+		}
+	}
+
 	delID, err := r.deleteByDN(tx, dn)
 	if err != nil {
 		tx.Rollback()
@@ -36,6 +48,31 @@ func (r Repository) DeleteByDN(dn *DN) error {
 	err = tx.Commit()
 
 	return err
+}
+
+func (r *Repository) hasChildren(tx *sqlx.Tx, dn *DN) (bool, error) {
+	pq, params := r.CreateFindByDNQuery(dn, &FindOption{Lock: true})
+
+	q := fmt.Sprintf(`SELECT count(e.id)
+		FROM (%s) p
+			LEFT JOIN ldap_entry e ON e.parent_id = p.id`, pq)
+
+	stmt, err := r.db.PrepareNamed(q)
+	if err != nil {
+		return true, xerrors.Errorf("Failed to prepare query: %s, params: %v, err: %w", q, params, err)
+	}
+
+	var count int
+	err = stmt.Get(&count, params)
+	if err != nil {
+		return true, xerrors.Errorf("Failed to execute query: %s, params: %v, err: %w", q, params, err)
+	}
+
+	if count == 0 {
+		return false, nil
+	}
+
+	return true, nil
 }
 
 func (r *Repository) deleteByDN(tx *sqlx.Tx, dn *DN) (int64, error) {
