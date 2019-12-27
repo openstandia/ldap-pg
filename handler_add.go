@@ -52,6 +52,9 @@ func responseAddError(w ldap.ResponseWriter, err error) {
 		if ldapErr.Msg != "" {
 			res.SetDiagnosticMessage(ldapErr.Msg)
 		}
+		if ldapErr.MatchedDN != "" {
+			res.SetMatchedDN(ldapErr.MatchedDN)
+		}
 		w.Write(res)
 	} else {
 		log.Printf("error: %+v", err)

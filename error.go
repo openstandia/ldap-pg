@@ -7,8 +7,9 @@ import (
 )
 
 type LDAPError struct {
-	Code int
-	Msg  string
+	Code      int
+	Msg       string
+	MatchedDN string
 }
 
 func (e *LDAPError) Error() string {
@@ -74,6 +75,13 @@ func NewInvalidPerSyntax(attr string, valueidx int) *LDAPError {
 	return &LDAPError{
 		Code: 21,
 		Msg:  fmt.Sprintf("%s: value #%d invalid per syntax", attr, valueidx),
+	}
+}
+
+func NewNoSuchObjectWithMatchedDN(dn string) *LDAPError {
+	return &LDAPError{
+		Code:      ldap.LDAPResultNoSuchObject,
+		MatchedDN: dn,
 	}
 }
 

@@ -13,6 +13,20 @@ import (
 func (r *Repository) Insert(entry *AddEntry) (int64, error) {
 	tx := r.db.MustBegin()
 
+	if !entry.IsDC() {
+		has, err := r.hasParent(tx, entry.DN())
+		if err != nil {
+			tx.Rollback()
+			return 0, err
+		}
+		if !has {
+			tx.Rollback()
+			// TODO
+			// return 0, NewNoSuchObjectWithMatchedDN(entry.DN().DNNormStr())
+			return 0, NewNoSuchObject()
+		}
+	}
+
 	newID, parentID, err := r.insertEntry(tx, entry)
 	if err != nil {
 		tx.Rollback()
@@ -33,6 +47,18 @@ func (r *Repository) Insert(entry *AddEntry) (int64, error) {
 
 	tx.Commit()
 	return newID, nil
+}
+
+func (r *Repository) hasParent(tx *sqlx.Tx, dn *DN) (bool, error) {
+	_, err := r.FindByDN(tx, dn.ParentDN(), &FindOption{Lock: true})
+	if err != nil {
+		if isNoResult(err) {
+			return false, nil
+		}
+		return false, xerrors.Errorf("Failed to find parent by DN: %s, err: %w", dn.DNNormStr(), err)
+	}
+
+	return true, nil
 }
 
 func (r *Repository) insertEntry(tx *sqlx.Tx, entry *AddEntry) (int64, int64, error) {

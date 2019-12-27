@@ -279,9 +279,9 @@ func getDC(tx *sqlx.Tx) (*FetchedDBEntry, error) {
 	dest := FetchedDBEntry{}
 
 	if tx != nil {
-		err = tx.NamedStmt(getDCStmt).Get(dest, map[string]interface{}{})
+		err = tx.NamedStmt(getDCStmt).Get(&dest, map[string]interface{}{})
 	} else {
-		err = getDCStmt.Get(dest, map[string]interface{}{})
+		err = getDCStmt.Get(&dest, map[string]interface{}{})
 	}
 	if err != nil {
 		return nil, err
