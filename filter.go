@@ -22,9 +22,10 @@ func (s *Schema) SubstringMatch(q *Query, val string, i int) {
 		q.Query += fmt.Sprintf("e.attrs_norm->>'%s' ILIKE :%s", s.Name, paramKey)
 	} else {
 		if s.IsCaseIgnoreSubstr() {
-			q.Query += fmt.Sprintf("e.attrs_norm->>'%s' LIKE :%s", s.Name, paramKey)
+			//exists( select 1 from jsonb_array_elements_text(attrs_norm->'uid') as a where  a like 'user111%')
+			q.Query += fmt.Sprintf("EXISTS ( SELECT 1 FROM jsonb_array_elements_text(e.attrs_norm->'%s') AS attr WHERE attr LIKE :%s )", s.Name, paramKey)
 		} else {
-			q.Query += fmt.Sprintf("e.attrs_norm->>'%s' LIKE :%s", s.Name, paramKey)
+			q.Query += fmt.Sprintf("EXISTS ( SELECT 1 FROM jsonb_array_elements_text(e.attrs_norm->'%s') AS attr WHERE attr LIKE :%s )", s.Name, paramKey)
 		}
 	}
 	q.Params[paramKey] = sv.GetNorm()[0]
