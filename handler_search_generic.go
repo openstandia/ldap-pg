@@ -72,8 +72,23 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
+	// TODO optimize collecting all container DN orig
+	dnOrigCache, err := collectAllNodeOrig()
+	if err != nil {
+		log.Printf("error: Failed to collect all node orig. err: %w", err)
+		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultUnavailable)
+		w.Write(res)
+		return
+	}
+	// create cache and hold it in query object for using in query filter process
+	parentIDCache := make(map[string]int64, len(dnOrigCache))
+	for k, v := range dnOrigCache {
+		dn, _ := s.NormalizeDN(v)
+		parentIDCache[dn.DNNormStr()] = k
+	}
+
 	// Phase 3: filter converting
-	q, err := ToQuery(schemaMap, r.Filter())
+	q, err := ToQuery(schemaMap, r.Filter(), dnOrigCache, parentIDCache)
 	if err != nil {
 		log.Printf("info: query error: %#v", err)
 

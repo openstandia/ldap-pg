@@ -51,6 +51,28 @@ func (s *Schema) EqualityMatch(q *Query, val string) {
 		} else {
 			q.Query += fmt.Sprintf("e.%s = :%s", s.ColumnName, paramKey)
 		}
+	} else if s.IsMemberTable() {
+		reqDN, err := s.server.NormalizeDN(val)
+		if err != nil {
+			log.Printf("warn: Ignore filter due to invalid DN syntax of member. attrName: %s, value: %s, err: %+v", s.Name, val, err)
+			return
+		}
+
+		parentID := q.parentIDCache[reqDN.ParentDN().DNNormStr()]
+
+		paramKeyName := paramKey + "_name"
+		paramKeyParentID := paramKey + "_parent_id"
+
+		q.Query += fmt.Sprintf(`EXISTS
+			(
+				SELECT 1 FROM ldap_member lm
+					LEFT JOIN ldap_entry le ON le.id = lm.member_of_id
+				WHERE lm.attr_name_norm = :%s AND lm.member_id = e.id AND le.parent_id = :%s AND le.rdn_norm = :%s
+			)`, paramKeyName, paramKeyParentID, paramKey)
+		q.Params[paramKeyName] = s.Name
+		q.Params[paramKeyParentID] = parentID
+		q.Params[paramKey] = reqDN.RDNNormStr()
+		return
 	} else {
 		if s.IsCaseIgnore() {
 			if s.SingleValue {
@@ -117,19 +139,23 @@ func (s *Schema) ApproxMatch(q *Query, val string) {
 }
 
 type Query struct {
-	hasOr  bool
-	Query  string
-	Params map[string]interface{}
+	hasOr         bool
+	Query         string
+	Params        map[string]interface{}
+	parentIDCache map[string]int64 // dn_norm => id
+	dnOrigCache   map[int64]string // id => dn_norm
 }
 
 func (q *Query) nextParamKey(name string) string {
 	return fmt.Sprintf("%d_%s", len(q.Params), name)
 }
 
-func ToQuery(schemaMap SchemaMap, packet message.Filter) (*Query, error) {
+func ToQuery(schemaMap SchemaMap, packet message.Filter, dnOrigCache map[int64]string, parentIDCache map[string]int64) (*Query, error) {
 	q := &Query{
-		Query:  "",
-		Params: map[string]interface{}{},
+		Query:         "",
+		Params:        map[string]interface{}{},
+		dnOrigCache:   dnOrigCache,
+		parentIDCache: parentIDCache,
 	}
 
 	err := translateFilter(schemaMap, packet, q)

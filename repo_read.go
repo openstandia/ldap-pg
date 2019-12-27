@@ -141,11 +141,8 @@ type FetchedDNOrig struct {
 }
 
 func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []string, reqMemberOf bool, handler func(entry *SearchEntry) error) (int32, int32, error) {
-	// TODO optimize collecting all container DN orig
-	dnOrigCache, err := collectAllNodeOrig()
-	if err != nil {
-		return 0, 0, err
-	}
+	// TODO
+	dnOrigCache := q.dnOrigCache
 
 	baseDNID, cid, err := r.collectParentIDs(baseDN, scope, dnOrigCache)
 	if err != nil {

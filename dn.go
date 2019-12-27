@@ -7,20 +7,18 @@ import (
 )
 
 type DN struct {
-	dn              *goldap.DN
-	dnNorm          []string
-	dnOrig          []string
-	suffix          []string
-	ReverseParentDN string
-	cachedRDN       map[string]string
+	dn        *goldap.DN
+	dnNorm    []string
+	dnOrig    []string
+	suffix    []string
+	cachedRDN map[string]string
 }
 
 var anonymousDN = &DN{
-	dn:              &goldap.DN{RDNs: nil},
-	dnNorm:          nil,
-	dnOrig:          nil,
-	suffix:          nil,
-	ReverseParentDN: "",
+	dn:     &goldap.DN{RDNs: nil},
+	dnNorm: nil,
+	dnOrig: nil,
+	suffix: nil,
 }
 
 func NormalizeDN(suffix []string, dn string) (*DN, error) {
@@ -37,22 +35,20 @@ func NormalizeDN(suffix []string, dn string) (*DN, error) {
 	if len(dnNorm)-len(suffix) < 0 {
 		// return nil, xerrors.Errorf("Invalid DN. It must have suffix. DN: %s", dn)
 		return &DN{
-			dn:              d,
-			dnNorm:          dnNorm,
-			dnOrig:          dnOrig,
-			suffix:          suffix,
-			ReverseParentDN: "",
+			dn:     d,
+			dnNorm: dnNorm,
+			dnOrig: dnOrig,
+			suffix: suffix,
 		}, nil
 	}
 
 	for i, s := range suffix {
 		if dnNorm[len(dnNorm)-len(suffix)+i] != s {
 			return &DN{
-				dn:              d,
-				dnNorm:          dnNorm,
-				dnOrig:          dnOrig,
-				suffix:          suffix,
-				ReverseParentDN: "",
+				dn:     d,
+				dnNorm: dnNorm,
+				dnOrig: dnOrig,
+				suffix: suffix,
 			}, nil
 		}
 	}

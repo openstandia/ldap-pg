@@ -153,6 +153,13 @@ func (s *Server) Start() {
 	if s, ok := schemaMap.Get("modifyTimestamp"); ok {
 		s.UseIndependentColumn("updated")
 	}
+	// TODO
+	memberAttrs := []string{"member", "uniqueMember"}
+	for _, v := range memberAttrs {
+		if s, ok := schemaMap.Get(v); ok {
+			s.UseMemberTable(true)
+		}
+	}
 
 	// Init mapper
 	mapper = NewMapper(s, schemaMap)
