@@ -30,7 +30,7 @@ func IntegrationTestRunner(m *testing.M) int {
 		i := 0
 		for {
 			if i > 10 {
-				log.Fatalf("error: Faild to stop test ldap server within 10 seconds.")
+				log.Fatalf("error: Failed to stop test ldap server within 10 seconds.")
 			}
 
 			_, err := ldap.Dial("tcp", fmt.Sprintf("%s:%d", "localhost", 8389))
@@ -61,7 +61,7 @@ func runTestCases(t *testing.T, tcs []Command) {
 	for i, tc := range tcs {
 		conn, err = tc.Run(conn)
 		if err != nil {
-			t.Errorf("Unexpected error on testcase: %d, got error: %+v", i, err)
+			t.Errorf("Unexpected error on testcase: %d, got error: %w", i, err)
 			break
 		}
 	}
@@ -104,6 +104,21 @@ func (c Bind) Run(conn *ldap.Conn) (*ldap.Conn, error) {
 	return conn, err
 }
 
+func AddDC() Add {
+	type A []string
+	type M map[string][]string
+
+	return Add{
+		"",
+		"",
+		M{
+			"objectClass": A{"top", "dcObject", "organization"},
+			"o":           A{"Example Inc."},
+		},
+		nil,
+	}
+}
+
 func AddOU(ou string) Add {
 	type A []string
 	type M map[string][]string
@@ -122,7 +137,7 @@ type Add struct {
 	rdn    string
 	baseDN string
 	attrs  map[string][]string
-	assert *AssertEntry
+	assert Assert
 }
 
 type ModifyAdd struct {
@@ -198,7 +213,9 @@ func (s Search) Run(conn *ldap.Conn) (*ldap.Conn, error) {
 
 func (a Add) Run(conn *ldap.Conn) (*ldap.Conn, error) {
 	var dn string
-	if a.baseDN != "" {
+	if a.rdn == "" {
+		dn = server.GetSuffix()
+	} else if a.baseDN != "" {
 		dn = fmt.Sprintf("%s,%s,%s", a.rdn, a.baseDN, server.GetSuffix())
 	} else {
 		dn = fmt.Sprintf("%s,%s", a.rdn, server.GetSuffix())
@@ -319,6 +336,22 @@ func (a AssertResponse) AssertResponse(conn *ldap.Conn, err error) error {
 		}
 	}
 	return nil
+}
+
+type Assert interface {
+	AssertEntry(conn *ldap.Conn, err error, rdn, baseDN string, attrs map[string][]string) error
+}
+
+type AssertLDAPError struct {
+	expectErrorCode uint16
+}
+
+func (a AssertLDAPError) AssertEntry(conn *ldap.Conn, err error, rdn, baseDN string, attrs map[string][]string) error {
+	if ldap.IsErrorWithCode(err, a.expectErrorCode) {
+		return nil
+	}
+	return xerrors.Errorf("Unexpected LDAP error response when previous operation. rdn: %s, want: %d  err: %w",
+		rdn, a.expectErrorCode, err)
 }
 
 type AssertEntry struct {
@@ -456,9 +489,13 @@ func (n AssertNoEntry) AssertNoEntry(conn *ldap.Conn, err error, rdn, baseDN str
 		return xerrors.Errorf("Unexpected error response when previous operation. err: %w", err)
 	}
 
-	_, err = searchEntry(conn, "", baseDN, ldap.ScopeWholeSubtree, fmt.Sprintf("(%s)", rdn), nil)
-	if !ldap.IsErrorWithCode(err, 32) {
+	sr, err := searchEntry(conn, "", baseDN, ldap.ScopeWholeSubtree, fmt.Sprintf("(%s)", rdn), nil)
+	// expected return success
+	if err != nil {
 		return xerrors.Errorf("Unexpected error when searching the deleted entry. err: %w", err)
+	}
+	if len(sr.Entries) != 0 {
+		return xerrors.Errorf("Unexpected error when searching the deleted entry. Hit count: %d", len(sr.Entries))
 	}
 
 	return nil
@@ -503,11 +540,20 @@ func searchEntry(c *ldap.Conn, rdn, baseDN string, scope int, filter string, att
 	)
 	sr, err := c.Search(search)
 	if err != nil {
+		log.Printf("error: search error: baseDN: %s, filter: %s", bd, filter)
 		return nil, err
 	}
 
 	return sr, nil
 }
+
+// You can boot the postgres server for tests using docker.
+//
+// docker run --rm -e POSTGRES_DB=ldap -e POSTGRES_USER=dev  -e POSTGRES_PASSWORD=dev -p 5432:5432 -v (pwd)/misc:/docker-entrypoint-initdb.d postgres:11-alpine \
+//   -c log_destination=stderr \
+//   -c log_statement=all \
+//   -c log_connections=on \
+//   -c log_disconnections=on
 
 func setupLDAPServer() *Server {
 	go func() {
@@ -533,7 +579,7 @@ func setupLDAPServer() *Server {
 	i := 0
 	for {
 		if i > 10 {
-			log.Fatalf("Faild to start test ldap server within 10 seconds.")
+			log.Fatalf("Failed to start test ldap server within 10 seconds.")
 		}
 
 		_, err := ldap.Dial("tcp", fmt.Sprintf("%s:%d", "localhost", 8389))
@@ -554,6 +600,14 @@ func truncateTables() {
 	defer db.Close()
 
 	_, err = db.Exec("TRUNCATE ldap_entry")
+	if err != nil {
+		log.Fatal("truncate table error:", err)
+	}
+	_, err = db.Exec("TRUNCATE ldap_tree")
+	if err != nil {
+		log.Fatal("truncate table error:", err)
+	}
+	_, err = db.Exec("TRUNCATE ldap_member")
 	if err != nil {
 		log.Fatal("truncate table error:", err)
 	}

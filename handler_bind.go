@@ -11,25 +11,15 @@ import (
 	"golang.org/x/xerrors"
 )
 
-type BindHandler struct {
-	server *Server
-}
-
-func NewBindHandler(s *Server) *BindHandler {
-	return &BindHandler{
-		server: s,
-	}
-}
-
-func (h *BindHandler) HandleBind(w ldap.ResponseWriter, m *ldap.Message) {
+func handleBind(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	r := m.GetBindRequest()
 	res := ldap.NewBindResponse(ldap.LDAPResultSuccess)
+
 	if r.AuthenticationChoice() == "simple" {
-		// For rootdn
 		name := string(r.Name())
 		pass := string(r.AuthenticationSimple())
 
-		dn, err := normalizeDN(name)
+		dn, err := s.NormalizeDN(name)
 		if err != nil {
 			log.Printf("info: Bind failed. DN: %s err: %s", name, err)
 			res.SetResultCode(ldap.LDAPResultInvalidCredentials)
@@ -38,8 +28,9 @@ func (h *BindHandler) HandleBind(w ldap.ResponseWriter, m *ldap.Message) {
 			return
 		}
 
-		if dn.Equal(h.server.GetRootDN()) {
-			if ok := h.validateCred(pass, h.server.GetRootPW()); !ok {
+		// For rootdn
+		if dn.Equal(s.GetRootDN()) {
+			if ok := validateCred(s, pass, s.GetRootPW()); !ok {
 				log.Printf("info: Bind failed. DN: %s", name)
 				res.SetResultCode(ldap.LDAPResultInvalidCredentials)
 				res.SetDiagnosticMessage("invalid credentials")
@@ -48,57 +39,65 @@ func (h *BindHandler) HandleBind(w ldap.ResponseWriter, m *ldap.Message) {
 			}
 			log.Printf("info: Bind ok. DN: %s", name)
 
-			err := saveAuthencatedDN(m, dn)
-			if err != nil {
-				res.SetResultCode(ldap.LDAPResultInvalidCredentials)
-				res.SetDiagnosticMessage("invalid credentials")
-				w.Write(res)
-				return
-			}
+			saveAuthencatedDN(m, dn)
 
 			w.Write(res)
 			return
 		}
 
 		// Anonymous
-		if dn.DNNorm == "" {
+		if dn.IsAnonymous() {
 			log.Printf("info: Bind anonymous user.")
 
 			w.Write(res)
 			return
 		}
 
-		log.Printf("info: Find bind user. DN: %s", dn.DNNorm)
+		log.Printf("info: Find bind user. DN: %s", dn.DNNormStr())
 
-		bindUserCred, err := findCredByDN(dn)
-		if err == nil && len(bindUserCred) > 0 {
-			log.Printf("Fetched userPassword: %v", bindUserCred)
-			if ok := h.validateCreds(pass, bindUserCred); !ok {
-				log.Printf("info: Bind failed. DN: %s", name)
-				res.SetResultCode(ldap.LDAPResultInvalidCredentials)
+		bindUserCred, err := s.Repo().FindCredByDN(dn)
+		if err != nil {
+			if lerr, ok := err.(*LDAPError); ok {
+				res.SetResultCode(lerr.Code)
 				res.SetDiagnosticMessage("invalid credentials")
 				w.Write(res)
 				return
 			}
 
-			log.Printf("info: Bind ok. DN: %s", name)
+			log.Printf("error: Failed to find cred by DN: %s, err: %v", dn.DNNormStr(), err)
 
-			err := saveAuthencatedDN(m, dn)
-			if err != nil {
-				res.SetResultCode(ldap.LDAPResultInvalidCredentials)
-				res.SetDiagnosticMessage("invalid credentials")
-				w.Write(res)
-				return
-			}
+			// Return 'invalid credentials' even if the cause is system error.
+			res.SetResultCode(ldap.LDAPResultInvalidCredentials)
+			res.SetDiagnosticMessage("invalid credentials")
+			return
+		}
 
+		// If the user doesn't have credentials, always return 'invalid credential'.
+		if len(bindUserCred) == 0 {
+			log.Printf("info: Bind failed - Not found credentials. DN: %s, err: %s", name, err)
+
+			res.SetResultCode(ldap.LDAPResultInvalidCredentials)
+			res.SetDiagnosticMessage("invalid credentials")
 			w.Write(res)
 			return
 		}
 
-		log.Printf("info: Bind failed - Not found. DN: %s, err: %s", name, err)
+		if ok := validateCreds(s, pass, bindUserCred); !ok {
+			log.Printf("info: Bind failed - Invalid credentials. DN: %s", name)
 
-		res.SetResultCode(ldap.LDAPResultInvalidCredentials)
-		res.SetDiagnosticMessage("invalid credentials")
+			res.SetResultCode(ldap.LDAPResultInvalidCredentials)
+			res.SetDiagnosticMessage("invalid credentials")
+			w.Write(res)
+			return
+		}
+
+		saveAuthencatedDN(m, dn)
+
+		// Success
+		log.Printf("info: Bind ok. DN: %s", name)
+
+		w.Write(res)
+		return
 
 	} else {
 		res.SetResultCode(ldap.LDAPResultUnwillingToPerform)
@@ -108,16 +107,16 @@ func (h *BindHandler) HandleBind(w ldap.ResponseWriter, m *ldap.Message) {
 	w.Write(res)
 }
 
-func (h *BindHandler) validateCreds(input string, cred []string) bool {
+func validateCreds(s *Server, input string, cred []string) bool {
 	for _, v := range cred {
-		if ok := h.validateCred(input, v); ok {
+		if ok := validateCred(s, input, v); ok {
 			return true
 		}
 	}
 	return false
 }
 
-func (h *BindHandler) validateCred(input, cred string) bool {
+func validateCred(s *Server, input, cred string) bool {
 	var ok bool
 	var err error
 	if len(cred) > 7 && string(cred[0:6]) == "{SSHA}" {
@@ -130,7 +129,7 @@ func (h *BindHandler) validateCred(input, cred string) bool {
 		ok, err = ssha512.Validate(input, cred)
 
 	} else if len(cred) > 7 && string(cred[0:6]) == "{SASL}" {
-		ok, err = h.doPassThrough(input, cred[6:])
+		ok, err = doPassThrough(s, input, cred[6:])
 	} else {
 		// Plain
 		ok = input == cred
@@ -155,7 +154,7 @@ func (i InvalidCredentials) Error() string {
 	return i.err.Error()
 }
 
-func (h *BindHandler) doPassThrough(input, passThroughKey string) (bool, error) {
+func doPassThrough(s *Server, input, passThroughKey string) (bool, error) {
 	log.Printf("Handle pass-through authentication: %s", passThroughKey)
 
 	i := strings.LastIndex(passThroughKey, "@")
@@ -170,7 +169,7 @@ func (h *BindHandler) doPassThrough(input, passThroughKey string) (bool, error) 
 		return false, xerrors.Errorf("Invalid stored credential. It isn't '<ID>@<DOMAIN>' format. cred: %s", passThroughKey)
 	}
 
-	if c, ok := h.server.config.PassThroughConfig.Get(domain); ok {
+	if c, ok := s.config.PassThroughConfig.Get(domain); ok {
 		return c.Authenticate(domain, uid, input)
 	}
 
@@ -179,12 +178,11 @@ func (h *BindHandler) doPassThrough(input, passThroughKey string) (bool, error) 
 	return false, xerrors.Errorf("Invalid domain. domain: %s, uid: %s", domain, uid)
 }
 
-func saveAuthencatedDN(m *ldap.Message, dn *DN) error {
+func saveAuthencatedDN(m *ldap.Message, dn *DN) {
 	session := getAuthSession(m)
 	if v, ok := session["dn"]; ok {
-		log.Printf("info: Switching authenticated user: %s -> %s", v.DNNorm, dn.DNNorm)
+		log.Printf("info: Switching authenticated user: %s -> %s", v.DNNormStr(), dn.DNNormStr())
 	}
 	session["dn"] = dn
-	log.Printf("Saved authenticated DN: %s", dn.DNNorm)
-	return nil
+	log.Printf("Saved authenticated DN: %s", dn.DNNormStr())
 }

@@ -2,13 +2,15 @@ package main
 
 import (
 	"log"
+	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/openstandia/goldap/message"
 	ldap "github.com/openstandia/ldapserver"
 )
 
-func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
+func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	r := m.GetSearchRequest()
 
 	var pageControl *message.SimplePagedResultsControl
@@ -43,7 +45,18 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 	default:
 	}
 
-	baseDN, err := normalizeDN(string(r.BaseObject()))
+	scope := int(r.Scope())
+	if scope < 0 || scope > 3 {
+		log.Printf("warn: Invalid scope: %d", scope)
+
+		// TODO return correct error code
+		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultOperationsError)
+		w.Write(res)
+		return
+	}
+
+	// Phase 1: normalize DN
+	baseDN, err := s.NormalizeDN(string(r.BaseObject()))
 	if err != nil {
 		log.Printf("info: Invalid baseDN error: %#v", err)
 
@@ -53,14 +66,29 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
+	// Phase 2: authorization
 	if !requiredAuthz(m, "search", baseDN) {
 		responseSearchError(w, NewInsufficientAccess())
 		return
 	}
 
-	scope := int(r.Scope())
+	// TODO optimize collecting all container DN orig
+	dnOrigCache, err := collectAllNodeOrig()
+	if err != nil {
+		log.Printf("error: Failed to collect all node orig. err: %w", err)
+		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultUnavailable)
+		w.Write(res)
+		return
+	}
+	// create cache and hold it in query object for using in query filter process
+	parentIDCache := make(map[string]int64, len(dnOrigCache))
+	for k, v := range dnOrigCache {
+		dn, _ := s.NormalizeDN(v)
+		parentIDCache[dn.DNNormStr()] = k
+	}
 
-	q, err := ToQuery(schemaMap, r.Filter())
+	// Phase 3: filter converting
+	q, err := ToQuery(schemaMap, r.Filter(), dnOrigCache, parentIDCache)
 	if err != nil {
 		log.Printf("info: query error: %#v", err)
 
@@ -69,41 +97,14 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 		w.Write(res)
 		return
 	}
-
-	// Scope handling, one and sub need to includ base.
-	// 0: base
-	// 1: one
-	// 2: sub
-	// 3: children
-	var pathQuery string
-	path := baseDN.ToPath()
-	if scope == 0 {
-		pathQuery = "dn_norm = :baseDNNorm"
-		q.Params["baseDNNorm"] = baseDN.DNNorm
-
-	} else if scope == 1 {
-		pathQuery = "(dn_norm = :baseDNNorm OR path = :path)"
-		q.Params["baseDNNorm"] = baseDN.DNNorm
-		q.Params["path"] = path
-
-	} else if scope == 2 {
-		pathQuery = "(dn_norm = :baseDNNorm OR path LIKE :path)"
-		q.Params["baseDNNorm"] = baseDN.DNNorm
-		q.Params["path"] = path + "%"
-
-	} else if scope == 3 {
-		pathQuery = "path LIKE :path"
-		q.Params["path"] = path + "%"
-
-	} else {
-		log.Printf("warn: Invalid scope: %d", scope)
-
-		// TODO return correct error code
-		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultOperationsError)
+	// If the filter doesn't contain supported attributes, return success.
+	if q.Query == "" && r.FilterString() != "" {
+		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultSuccess)
 		w.Write(res)
 		return
 	}
 
+	// Phase 4: execute SQL and return entries
 	// TODO configurable default pageSize
 	var pageSize int32 = 500
 	if pageControl != nil {
@@ -124,12 +125,21 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 	q.Params["pageSize"] = pageSize
 	q.Params["offset"] = offset
 
-	maxCount, limittedCount, err := findByFilter(pathQuery, q, isMemberOfAttributesRequested(r), func(searchEntry *SearchEntry) error {
-		responseEntry(w, r, searchEntry)
-		return nil
-	})
+	maxCount, limittedCount, err := s.Repo().Search(baseDN, scope, q,
+		getRequestedMemberAttrs(r), isMemberOfRequested(r), func(searchEntry *SearchEntry) error {
+			responseEntry(s, w, r, searchEntry)
+			return nil
+		})
 	if err != nil {
-		log.Printf("error: Search  error: %#v", err)
+		if lerr, ok := err.(*LDAPError); ok {
+			log.Printf("info: Search failed: %v", err)
+
+			res := ldap.NewSearchResultDoneResponse(lerr.Code)
+			w.Write(res)
+			return
+		}
+
+		log.Printf("error: Search error: %v", err)
 
 		// TODO return correct error code
 		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultOperationsError)
@@ -138,9 +148,10 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 	}
 
 	if maxCount == 0 {
-		log.Printf("info: Not found")
+		log.Printf("debug: Not found")
 
-		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultNoSuchObject)
+		// Must return success if no hit
+		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultSuccess)
 		w.Write(res)
 		return
 	}
@@ -170,10 +181,16 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 	return
 }
 
-func responseEntry(w ldap.ResponseWriter, r message.SearchRequest, searchEntry *SearchEntry) {
+func responseEntry(s *Server, w ldap.ResponseWriter, r message.SearchRequest, searchEntry *SearchEntry) {
 	log.Printf("Response Entry: %+v", searchEntry)
 
-	e := ldap.NewSearchResultEntry(searchEntry.GetDNNorm())
+	var dn string
+	if searchEntry.DNOrigStr() == "" {
+		dn = s.SuffixOrigStr()
+	} else {
+		dn = searchEntry.DNOrigStr() + "," + s.SuffixOrigStr()
+	}
+	e := ldap.NewSearchResultEntry(dn)
 
 	sentAttrs := map[string]struct{}{}
 
@@ -232,7 +249,7 @@ func responseEntry(w ldap.ResponseWriter, r message.SearchRequest, searchEntry *
 
 	w.Write(e)
 
-	log.Printf("Response an entry. dn: %s", searchEntry.GetDNNorm())
+	log.Printf("Response an entry. dn: %s", searchEntry.DNOrigStr())
 }
 
 func responseSearchError(w ldap.ResponseWriter, err error) {
@@ -245,4 +262,16 @@ func responseSearchError(w ldap.ResponseWriter, err error) {
 		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultProtocolError)
 		w.Write(res)
 	}
+}
+
+func expandIn(cid []int64) (string, map[string]int64) {
+	s := make([]string, len(cid))
+	m := make(map[string]int64, len(cid))
+
+	for i, id := range cid {
+		k := "parent_id_" + strconv.Itoa(i)
+		s[i] = ":" + k
+		m[k] = id
+	}
+	return strings.Join(s, ","), m
 }

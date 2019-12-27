@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"regexp"
@@ -39,13 +40,17 @@ func getAuthSession(m *ldap.Message) map[string]*DN {
 
 func requiredAuthz(m *ldap.Message, operation string, targetDN *DN) bool {
 	session := getAuthSession(m)
-	var ok bool
-	if _, ok = session["dn"]; !ok {
-		return false
+	if dn, ok := session["dn"]; ok {
+		log.Printf("info: Authorized: %s", dn.DNNormStr())
+
+		// TODO authz
+
+		return true
 	}
 
-	// TODO authz
-	return true
+	log.Printf("warn: Not Authorized")
+
+	return false
 }
 
 func getPageSession(m *ldap.Message) map[string]int32 {
@@ -80,9 +85,51 @@ func isAllAttributesRequested(r message.SearchRequest) bool {
 	return false
 }
 
-func isMemberOfAttributesRequested(r message.SearchRequest) bool {
+func isMemberOfRequested(r message.SearchRequest) bool {
 	for _, attr := range r.Attributes() {
 		if strings.ToLower(string(attr)) == "memberof" {
+			return true
+		}
+	}
+	return false
+}
+
+func getRequestedMemberAttrs(r message.SearchRequest) []string {
+	if len(r.Attributes()) == 0 {
+		return []string{"member", "uniqueMember"}
+	}
+	list := []string{}
+	for _, attr := range r.Attributes() {
+		if string(attr) == "*" {
+			// TODO move to schema
+			return []string{"member", "uniqueMember"}
+		}
+		a := strings.ToLower(string(attr))
+
+		// TODO move to schema
+		if a == "member" {
+			list = append(list, "member")
+		}
+		if a == "uniquemember" {
+			list = append(list, "uniqueMember")
+		}
+	}
+	return list
+}
+
+func isMemberRequested(r message.SearchRequest) bool {
+	if len(r.Attributes()) == 0 {
+		return true
+	}
+	for _, attr := range r.Attributes() {
+		if string(attr) == "*" {
+			return true
+		}
+		a := strings.ToLower(string(attr))
+
+		// TODO move to schema
+		if a == "member" ||
+			a == "uniqueMember" {
 			return true
 		}
 	}
@@ -173,7 +220,7 @@ func normalize(s *Schema, value string) (string, error) {
 	case "caseIgnoreMatch":
 		return strings.ToLower(normalizeSpace(value)), nil
 	case "distinguishedNameMatch":
-		return normalizeDistinguishedName(value)
+		return normalizeDistinguishedName(s.server.SuffixNorm(), value)
 	case "caseExactIA5Match":
 		return normalizeSpace(value), nil
 	case "caseIgnoreIA5Match":
@@ -188,6 +235,13 @@ func normalize(s *Schema, value string) (string, error) {
 		return value, nil
 	case "UUIDMatch":
 		return normalizeUUID(value)
+	case "uniqueMemberMatch":
+		nv, err := normalizeDistinguishedName(s.server.SuffixNorm(), value)
+		if err != nil {
+			// fallback
+			return strings.ToLower(normalizeSpace(value)), nil
+		}
+		return nv, nil
 	}
 
 	switch s.Substr {
@@ -217,43 +271,48 @@ func removeAllSpace(value string) string {
 	return str
 }
 
-func parseDN(value string) ([]string, error) {
+func parseDN(value string) (*goldap.DN, []string, []string, error) {
 	d, err := goldap.ParseDN(value)
 	if err != nil {
 		log.Printf("warn: Invalid DN syntax. dn: %s", value)
-		return nil, NewInvalidDNSyntax()
+		return nil, nil, nil, NewInvalidDNSyntax()
 	}
 
 	n := make([]string, len(d.RDNs))
+	no := make([]string, len(d.RDNs))
 	for i, v := range d.RDNs {
 		nn := make([]string, len(v.Attributes))
+		nno := make([]string, len(v.Attributes))
 		for j, a := range v.Attributes {
 			sv, err := NewSchemaValue(a.Type, []string{a.Value})
 			if err != nil {
 				log.Printf("warn: Invalid DN syntax. Not found in schema. dn: %s err: %+v", value, err)
-				return nil, NewInvalidDNSyntax()
+				return nil, nil, nil, NewInvalidDNSyntax()
 			}
 
 			vv, err := sv.Normalize()
 			if err != nil {
 				log.Printf("warn: Invalid RDN of DN syntax. dn: %s", value)
-				return nil, NewInvalidDNSyntax()
+				return nil, nil, nil, NewInvalidDNSyntax()
 			}
 
+			// TODO normalize type
 			nn[j] = fmt.Sprintf("%s=%s", strings.ToLower(a.Type), vv[0])
+			nno[j] = fmt.Sprintf("%s=%s", strings.ToLower(a.Type), a.Value)
 		}
 		n[i] = strings.Join(nn, ",")
+		no[i] = strings.Join(nno, ",")
 	}
-	return n, nil
+	return d, n, no, nil
 }
 
-func normalizeDistinguishedName(value string) (string, error) {
-	d, err := parseDN(value)
+func normalizeDistinguishedName(suffix []string, value string) (string, error) {
+	dn, err := NormalizeDN(suffix, value)
 	if err != nil {
 		return "", err
 	}
 
-	return strings.Join(d, ","), nil
+	return dn.DNNormStr(), nil
 }
 
 func normalizeGeneralizedTime(value string) (string, error) {
@@ -270,4 +329,9 @@ func normalizeUUID(value string) (string, error) {
 		return "", err
 	}
 	return u.String(), nil
+}
+
+func isNoResult(err error) bool {
+	// see https://golang.org/pkg/database/sql/#pkg-variables
+	return err == sql.ErrNoRows
 }

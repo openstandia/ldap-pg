@@ -6,9 +6,9 @@ import (
 	ldap "github.com/openstandia/ldapserver"
 )
 
-func handleDelete(w ldap.ResponseWriter, m *ldap.Message) {
+func handleDelete(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	r := m.GetDeleteRequest()
-	dn, err := normalizeDN(string(r))
+	dn, err := s.NormalizeDN(string(r))
 	if err != nil {
 		log.Printf("warn: Invalid dn: %s err: %s", r, err)
 
@@ -23,22 +23,17 @@ func handleDelete(w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	log.Printf("info: Deleting entry: %s", dn.DNNorm)
+	log.Printf("info: Deleting entry: %s", dn.DNNormStr())
 
-	tx := db.MustBegin()
-
-	err = deleteByDN(tx, dn)
+	err = s.Repo().DeleteByDN(dn)
 	if err != nil {
 		log.Printf("info: Failed to delete entry: %#v", err)
-		tx.Rollback()
 
 		responseDeleteError(w, err)
 		return
 	}
 
-	tx.Commit()
-
-	log.Printf("info: Deleted. dn: %s", dn.DNNorm)
+	log.Printf("info: Deleted. dn: %s", dn.DNNormStr())
 
 	res := ldap.NewDeleteResponse(ldap.LDAPResultSuccess)
 	w.Write(res)

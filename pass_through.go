@@ -44,13 +44,13 @@ type LDAPPassThroughClient struct {
 func (c *LDAPPassThroughClient) Authenticate(domain, user, password string) (bool, error) {
 	l, err := ldap.Dial("tcp", c.Server)
 	if err != nil {
-		return false, xerrors.Errorf("Faild to connect pass-through LDAP server. domain: %s, err: %w", domain, err)
+		return false, xerrors.Errorf("Failed to connect pass-through LDAP server. domain: %s, err: %w", domain, err)
 	}
 	defer l.Close()
 
 	err = l.Bind(c.BindDN, c.Password)
 	if err != nil {
-		return false, xerrors.Errorf("Faild to bind pass-through LDAP. Check your configuration. domain: %s, BindDN: %s. err: %w", domain, c.BindDN, err)
+		return false, xerrors.Errorf("Failed to bind pass-through LDAP. Check your configuration. domain: %s, BindDN: %s. err: %w", domain, c.BindDN, err)
 	}
 
 	// Resolve scope
@@ -101,7 +101,7 @@ func (c *LDAPPassThroughClient) Authenticate(domain, user, password string) (boo
 		if ldap.IsErrorWithCode(err, 49) {
 			return false, InvalidCredentials{err}
 		}
-		return false, xerrors.Errorf("Faild to bind pass-through LDAP. domain: %s, BindDN: %s. err: %w", domain, c.BindDN, err)
+		return false, xerrors.Errorf("Failed to bind pass-through LDAP. domain: %s, BindDN: %s. err: %w", domain, c.BindDN, err)
 	}
 
 	return true, nil

@@ -29,8 +29,10 @@ func TestNewSchemaValue(t *testing.T) {
 			[]string{"a b c"},
 		},
 	}
-
-	schemaMap = InitSchemaMap()
+	server := NewServer(&ServerConfig{
+		Suffix: "dc=example,dc=com",
+	})
+	schemaMap = InitSchemaMap(server)
 
 	for i, tc := range testcases {
 		sv, err := NewSchemaValue(tc.Name, tc.Value)
@@ -39,7 +41,7 @@ func TestNewSchemaValue(t *testing.T) {
 			continue
 		}
 
-		if !reflect.DeepEqual(sv.GetNorm(), tc.ExpectedNorm) {
+		if !reflect.DeepEqual(sv.Norm(), tc.ExpectedNorm) {
 			t.Errorf("Unexpected error on %d:\nSchema: %v\n'%s' -> %s' expected, got '%v'\n", i, tc.Name, tc.Value, tc.ExpectedNorm, sv)
 			continue
 		}
@@ -77,7 +79,10 @@ func TestSchemaValueOp(t *testing.T) {
 		},
 	}
 
-	schemaMap = InitSchemaMap()
+	server := NewServer(&ServerConfig{
+		Suffix: "dc=example,dc=com",
+	})
+	schemaMap = InitSchemaMap(server)
 
 	var sv *SchemaValue
 	var err error
@@ -110,12 +115,12 @@ func TestSchemaValueOp(t *testing.T) {
 					continue
 				}
 			}
-			if !reflect.DeepEqual(sv.GetNorm(), tc.ExpectedNorm) {
-				t.Errorf("Unexpected error on %d:\nSchema: %v\n'%v' -> %v' expected, got '%v'\n", i, tc.Name, tc.Value, tc.ExpectedNorm, sv.GetNorm())
+			if !reflect.DeepEqual(sv.Norm(), tc.ExpectedNorm) {
+				t.Errorf("Unexpected error on %d:\nSchema: %v\n'%v' -> %v' expected, got '%v'\n", i, tc.Name, tc.Value, tc.ExpectedNorm, sv.Norm())
 				continue
 			}
-			if !reflect.DeepEqual(sv.GetOrig(), tc.ExpectedOrig) {
-				t.Errorf("Unexpected error on %d:\nSchema: %v\n'%v' -> %v' expected, got '%v'\n", i, tc.Name, tc.Value, tc.ExpectedOrig, sv.GetOrig())
+			if !reflect.DeepEqual(sv.Orig(), tc.ExpectedOrig) {
+				t.Errorf("Unexpected error on %d:\nSchema: %v\n'%v' -> %v' expected, got '%v'\n", i, tc.Name, tc.Value, tc.ExpectedOrig, sv.Orig())
 				continue
 			}
 		}

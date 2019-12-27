@@ -9,6 +9,7 @@ type ModifyEntry struct {
 	dn         *DN
 	attributes map[string]*SchemaValue
 	dbEntryId  int64
+	dbParentID int64
 }
 
 func NewModifyEntry(dn *DN, valuesOrig map[string][]string) (*ModifyEntry, error) {
@@ -52,23 +53,24 @@ func (j *ModifyEntry) HasAttr(attrName string) bool {
 func (j *ModifyEntry) SetDN(dn *DN) {
 	j.dn = dn
 
-	rdn := dn.GetRDN()
+	rdn := dn.RDN()
 	for k, v := range rdn {
-		// rdn is validated already
-		j.attributes[k], _ = NewSchemaValue(k, []string{v})
+		// rdn is validated already, ignore error
+		sv, _ := NewSchemaValue(k, []string{v})
+		j.attributes[sv.Name()] = sv
 	}
 }
 
-func (j *ModifyEntry) GetDN() *DN {
+func (j *ModifyEntry) DN() *DN {
 	return j.dn
 }
 
 func (j *ModifyEntry) GetDNNorm() string {
-	return j.dn.DNNorm
+	return j.dn.DNNormStr()
 }
 
 func (j *ModifyEntry) GetDNOrig() string {
-	return j.dn.DNOrig
+	return j.dn.DNOrigStr()
 }
 
 func (j *ModifyEntry) Validate() error {
@@ -146,7 +148,7 @@ func (j *ModifyEntry) deletesv(value *SchemaValue) error {
 
 	current, ok := j.attributes[value.Name()]
 	if !ok {
-		log.Printf("warn: Failed to modify/delete because of no attribute. dn: %s, attrName: %s", j.GetDN().DNNorm, value.Name())
+		log.Printf("warn: Failed to modify/delete because of no attribute. dn: %s, attrName: %s", j.DN().DNNormStr(), value.Name())
 		return NewNoSuchAttribute("modify/delete", value.Name())
 	}
 
@@ -167,7 +169,7 @@ func (j *ModifyEntry) deletesv(value *SchemaValue) error {
 
 func (j *ModifyEntry) deleteAll(s *Schema) error {
 	if !j.HasAttr(s.Name) {
-		log.Printf("warn: Failed to modify/delete because of no attribute. dn: %s", j.GetDN().DNNorm)
+		log.Printf("warn: Failed to modify/delete because of no attribute. dn: %s", j.DN().DNNormStr())
 		return NewNoSuchAttribute("modify/delete", s.Name)
 	}
 	delete(j.attributes, s.Name)
@@ -184,13 +186,13 @@ func (j *ModifyEntry) GetAttrNorm(attrName string) ([]string, bool) {
 	if !ok {
 		return nil, false
 	}
-	return v.GetNorm(), true
+	return v.Norm(), true
 }
 
 func (j *ModifyEntry) GetAttrsOrig() map[string][]string {
 	orig := make(map[string][]string, len(j.attributes))
 	for k, v := range j.attributes {
-		orig[k] = v.GetOrig()
+		orig[k] = v.Orig()
 	}
 	return orig
 }
@@ -200,7 +202,7 @@ func (j *ModifyEntry) GetAttrs() (map[string]interface{}, map[string][]string) {
 	orig := make(map[string][]string, len(j.attributes))
 	for k, v := range j.attributes {
 		norm[k] = v.GetForJSON()
-		orig[k] = v.GetOrig()
+		orig[k] = v.Orig()
 	}
 	return norm, orig
 }
@@ -253,7 +255,7 @@ func (e *ModifyEntry) Clone() *ModifyEntry {
 	return clone
 }
 
-func (e *ModifyEntry) ModifyDN(newDN *DN) *ModifyEntry {
+func (e *ModifyEntry) ModifyRDN(newDN *DN) *ModifyEntry {
 	m := e.Clone()
 	m.SetDN(newDN)
 

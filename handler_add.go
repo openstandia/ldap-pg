@@ -6,18 +6,20 @@ import (
 	ldap "github.com/openstandia/ldapserver"
 )
 
-func handleAdd(w ldap.ResponseWriter, m *ldap.Message) {
+func handleAdd(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	r := m.GetAddRequest()
 	log.Printf("info: Adding entry: %s", r.Entry())
 	//attributes values
 
-	dn, err := normalizeDN(string(r.Entry()))
+	dn, err := s.NormalizeDN(string(r.Entry()))
 	if err != nil {
 		log.Printf("warn: Invalid DN: %s err: %s", r.Entry(), err)
 
 		responseAddError(w, err)
 		return
 	}
+
+	log.Printf("debug: Adding Internal DN: %v", dn)
 
 	if !requiredAuthz(m, "add", dn) {
 		responseAddError(w, NewInsufficientAccess())
@@ -30,17 +32,11 @@ func handleAdd(w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	tx := db.MustBegin()
-
-	id, err := insert(tx, addEntry)
+	id, err := s.Repo().Insert(addEntry)
 	if err != nil {
-		tx.Rollback()
-
 		responseAddError(w, err)
 		return
 	}
-
-	tx.Commit()
 
 	log.Printf("Added. Id: %d", id)
 
@@ -55,6 +51,9 @@ func responseAddError(w ldap.ResponseWriter, err error) {
 		res := ldap.NewAddResponse(ldapErr.Code)
 		if ldapErr.Msg != "" {
 			res.SetDiagnosticMessage(ldapErr.Msg)
+		}
+		if ldapErr.MatchedDN != "" {
+			res.SetMatchedDN(ldapErr.MatchedDN)
 		}
 		w.Write(res)
 	} else {

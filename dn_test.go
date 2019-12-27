@@ -3,6 +3,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -13,24 +14,26 @@ func TestDNNormalize(t *testing.T) {
 	}{
 		{
 			"cn = test , ou=People, DC=example, DC=com",
-			"cn=test,ou=people,dc=example,dc=com",
+			"cn=test,ou=people",
 		},
 	}
-
-	schemaMap = InitSchemaMap()
+	server := NewServer(&ServerConfig{
+		Suffix: "dc=example,dc=com",
+	})
+	schemaMap = InitSchemaMap(server)
 
 	for i, tc := range testcases {
-		dn, err := normalizeDN(tc.Value)
+		dn, err := NormalizeDN([]string{"dc=example", "dc=com"}, tc.Value)
 		if err != nil {
 			t.Errorf("Unexpected error on %d:\n'%s' -> '%s' expected, got err: %+v\n", i, tc.Value, tc.Expected, err)
 			continue
 		}
-		if dn.DNNorm != tc.Expected {
-			t.Errorf("Unexpected error on %d:\nDNNorm:\n'%s' -> %s' expected, got '%s'\n", i, tc.Value, tc.Expected, dn.DNNorm)
+		if dn.DNNormStr() != tc.Expected {
+			t.Errorf("Unexpected error on %d:\nDNNorm:\n'%s' -> %s' expected, got '%s'\n", i, tc.Value, tc.Expected, dn.DNNormStr())
 			continue
 		}
-		if dn.DNOrig != tc.Value {
-			t.Errorf("Unexpected error on %d:\nDNOrig:\n'%s' -> %s' expected, got '%s'\n", i, tc.Value, tc.Value, dn.DNNorm)
+		if strings.HasPrefix(tc.Value, dn.DNOrigStr()) {
+			t.Errorf("Unexpected error on %d:\nDNOrig:\n'%s' -> %s' expected, got '%s'\n", i, tc.Value, tc.Value, dn.DNOrigStr())
 			continue
 		}
 	}

@@ -12,11 +12,13 @@ import (
 )
 
 type Mapper struct {
+	server    *Server
 	schemaMap SchemaMap
 }
 
-func NewMapper(s SchemaMap) *Mapper {
+func NewMapper(server *Server, s SchemaMap) *Mapper {
 	return &Mapper{
+		server:    server,
 		schemaMap: s,
 	}
 }
@@ -35,7 +37,7 @@ func (m *Mapper) LDAPMessageToAddEntry(dn *DN, ldapAttrs message.AttributeList) 
 
 		err := entry.Add(attrName, arr)
 		if err != nil {
-			log.Printf("warn: Invalid attribute. attrName: %s err: %s", k, err)
+			log.Printf("warn: Invalid attribute. attrName: %s, err: %s", k, err)
 			return nil, err
 		}
 	}
@@ -49,7 +51,7 @@ func (m *Mapper) LDAPMessageToAddEntry(dn *DN, ldapAttrs message.AttributeList) 
 }
 
 func (m *Mapper) AddEntryToDBEntry(entry *AddEntry) (*DBEntry, error) {
-	norm, orig := entry.GetAttrs()
+	norm, orig := entry.Attrs()
 
 	created := time.Now()
 	updated := created
@@ -71,6 +73,12 @@ func (m *Mapper) AddEntryToDBEntry(entry *AddEntry) (*DBEntry, error) {
 		entryUUID = u.String()
 	}
 
+	// TODO move to schema?
+	delete(norm, "member")
+	delete(orig, "member")
+	delete(norm, "uniqueMember")
+	delete(orig, "uniqueMember")
+
 	delete(norm, "entryUUID")
 	delete(orig, "entryUUID")
 
@@ -78,8 +86,8 @@ func (m *Mapper) AddEntryToDBEntry(entry *AddEntry) (*DBEntry, error) {
 	bOrig, _ := json.Marshal(orig)
 
 	dbEntry := &DBEntry{
-		DNNorm:    entry.GetDN().DNNorm,
-		Path:      entry.GetDN().ReverseParentDN,
+		DNNorm:    entry.DN().DNNormStr(),
+		DNOrig:    entry.DN().DNOrigStr(),
 		EntryUUID: entryUUID,
 		Created:   created,
 		Updated:   updated,
@@ -93,13 +101,22 @@ func (m *Mapper) AddEntryToDBEntry(entry *AddEntry) (*DBEntry, error) {
 func (m *Mapper) ModifyEntryToDBEntry(entry *ModifyEntry) (*DBEntry, error) {
 	norm, orig := entry.GetAttrs()
 
+	// TODO move to schema?
+	delete(norm, "member")
+	delete(orig, "member")
+	delete(norm, "uniqueMember")
+	delete(orig, "uniqueMember")
+
+	delete(norm, "entryUUID")
+	delete(orig, "entryUUID")
+
 	bNorm, _ := json.Marshal(norm)
 	bOrig, _ := json.Marshal(orig)
 
 	updated := time.Now()
 
 	dbEntry := &DBEntry{
-		Id:        entry.dbEntryId,
+		ID:        entry.dbEntryId,
 		Updated:   updated,
 		AttrsNorm: types.JSONText(string(bNorm)),
 		AttrsOrig: types.JSONText(string(bOrig)),
@@ -108,8 +125,21 @@ func (m *Mapper) ModifyEntryToDBEntry(entry *ModifyEntry) (*DBEntry, error) {
 	return dbEntry, nil
 }
 
-func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry) (*SearchEntry, error) {
-	dn, err := normalizeDN(dbEntry.DNNorm)
+func (m *Mapper) ModifyEntryToAddEntry(entry *ModifyEntry) (*AddEntry, error) {
+	add := NewAddEntry(entry.DN())
+
+	// TODO
+
+	return add, nil
+}
+
+func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry, dnOrigCache map[int64]string) (*SearchEntry, error) {
+	if !dbEntry.IsDC() && dbEntry.DNOrig == "" {
+		log.Printf("error: Invalid state. FetchedDBEntiry mush have DNOrig always...")
+		return nil, NewUnavailable()
+	}
+
+	dn, err := m.normalizeDN(dbEntry.DNOrig)
 	if err != nil {
 		return nil, err
 	}
@@ -118,23 +148,53 @@ func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry) (*SearchEn
 	orig["createTimestamp"] = []string{dbEntry.Created.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 	orig["modifyTimestamp"] = []string{dbEntry.Updated.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 
+	// member
+	members, err := dbEntry.Members(dnOrigCache, m.server.SuffixOrigStr())
+	if err != nil {
+		log.Printf("warn: Invalid state. FetchedDBEntiry cannot resolve member DN. err: %v", err)
+		// TODO busy?
+		return nil, NewUnavailable()
+	}
+	for k, v := range members {
+		orig[k] = v
+	}
+
+	// memberOf
+	memberOfs, err := dbEntry.MemberOfs(dnOrigCache, m.server.SuffixOrigStr())
+	if err != nil {
+		log.Printf("warn: Invalid state. FetchedDBEntiry cannot resolve memberOf DN. err: %v", err)
+		// TODO busy?
+		return nil, NewUnavailable()
+	}
+	orig["memberOf"] = memberOfs
+
 	readEntry := NewSearchEntry(dn, orig)
 
 	return readEntry, nil
 }
 
-func (m *Mapper) FetchedDBEntryToModifyEntry(dbEntry *FetchedDBEntry) (*ModifyEntry, error) {
-	dn, err := normalizeDN(dbEntry.DNNorm)
+func (m *Mapper) FetchedDBEntryToModifyEntry(dbEntry *FetchedDBEntry, dnOrigCache map[int64]string) (*ModifyEntry, error) {
+	dn, err := m.normalizeDN(dbEntry.DNOrig)
 	if err != nil {
 		return nil, err
 	}
 	orig := dbEntry.GetAttrsOrig()
 
+	members, err := dbEntry.Members(dnOrigCache, "") // For modification, don't need suffix
+	for k, v := range members {
+		orig[k] = v
+	}
+
 	entry, err := NewModifyEntry(dn, orig)
 	if err != nil {
 		return nil, err
 	}
-	entry.dbEntryId = dbEntry.Id
+	entry.dbEntryId = dbEntry.ID
+	entry.dbParentID = dbEntry.ParentID
 
 	return entry, nil
+}
+
+func (m *Mapper) normalizeDN(dn string) (*DN, error) {
+	return m.server.NormalizeDN(dn)
 }

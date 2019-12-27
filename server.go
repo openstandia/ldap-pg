@@ -11,10 +11,12 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/comail/colog"
-	"github.com/jsimonetti/pwscheme/ssha512"
 	"net/http"
 	_ "net/http/pprof"
+
+	"github.com/comail/colog"
+	"github.com/jsimonetti/pwscheme/ssha512"
+
 	//"github.com/hashicorp/logutils"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -44,12 +46,16 @@ type ServerConfig struct {
 	LogLevel          string
 	PProfServer       string
 	GoMaxProcs        int
+	MigrationEnabled  bool
 }
 
 type Server struct {
-	config   *ServerConfig
-	rootDN   *DN
-	internal *ldap.Server
+	config     *ServerConfig
+	rootDN     *DN
+	internal   *ldap.Server
+	suffixOrig []string
+	suffixNorm []string
+	repo       *Repository
 }
 
 func NewServer(c *ServerConfig) *Server {
@@ -59,9 +65,23 @@ func NewServer(c *ServerConfig) *Server {
 	}
 	c.RootPW = hashedRootPW
 
-	return &Server{
-		config: c,
+	s := strings.Split(c.Suffix, ",")
+	sn := make([]string, len(s))
+	so := make([]string, len(s))
+	for i := 0; i < len(s); i++ {
+		so[i] = strings.TrimSpace(s[i])
+		sn[i] = strings.ToLower(so[i])
 	}
+
+	return &Server{
+		config:     c,
+		suffixOrig: sn,
+		suffixNorm: sn,
+	}
+}
+
+func (s *Server) Repo() *Repository {
+	return s.repo
 }
 
 func (s *Server) Start() {
@@ -116,38 +136,21 @@ func (s *Server) Start() {
 
 	var err error
 
-	// Init DB connection
-	db, err = sqlx.Connect("postgres", fmt.Sprintf("host=%s port=%d user=%s dbname=%s password=%s sslmode=disable", s.config.DBHostName, s.config.DBPort, s.config.DBUser, s.config.DBName, s.config.DBPassword))
-	if err != nil {
-		log.Fatalf("fatal: Connect error. host=%s, port=%d, user=%s, dbname=%s, error=%s", s.config.DBHostName, s.config.DBPort, s.config.DBUser, s.config.DBName, err)
-	}
-	db.SetMaxOpenConns(s.config.DBMaxOpenConns)
-	db.SetMaxIdleConns(s.config.DBMaxIdleConns)
-	// db.SetConnMaxLifetime(time.Hour)
-
-	// Init prepared statement
-	err = initStmt(db)
+	// Init DB
+	repo, err := NewRepository(s)
 	if err != nil {
 		log.Fatalf("fatal: Prepare statement error:  %+v", err)
 	}
+	s.repo = repo // TODO Remove bidirectional dependency
 
 	// Init schema map
-	schemaMap = InitSchemaMap()
-	if s, ok := schemaMap.Get("entryUUID"); ok {
-		s.UseIndependentColumn("uuid")
-	}
-	if s, ok := schemaMap.Get("createTimestamp"); ok {
-		s.UseIndependentColumn("created")
-	}
-	if s, ok := schemaMap.Get("modifyTimestamp"); ok {
-		s.UseIndependentColumn("updated")
-	}
+	s.LoadSchema()
 
 	// Init mapper
-	mapper = NewMapper(schemaMap)
+	mapper = NewMapper(s, schemaMap)
 
 	// Init rootDN
-	s.rootDN, err = normalizeDN(s.config.RootDN)
+	s.rootDN, err = s.NormalizeDN(s.config.RootDN)
 	if err != nil {
 		log.Fatalf("fatal: Invalid root-dn format: %s, err: %s", s.config.RootDN, err)
 	}
@@ -160,12 +163,12 @@ func (s *Server) Start() {
 	routes := ldap.NewRouteMux()
 	routes.NotFound(handleNotFound)
 	routes.Abandon(handleAbandon)
-	routes.Bind(NewBindHandler(s).HandleBind)
+	routes.Bind(NewHandler(s, handleBind))
 	routes.Compare(handleCompare)
-	routes.Add(handleAdd)
-	routes.Delete(handleDelete)
-	routes.Modify(handleModify)
-	routes.ModifyDN(handleModifyDN)
+	routes.Add(NewHandler(s, handleAdd))
+	routes.Delete(NewHandler(s, handleDelete))
+	routes.Modify(NewHandler(s, handleModify))
+	routes.ModifyDN(NewHandler(s, handleModifyDN))
 
 	routes.Extended(handleStartTLS).
 		RequestName(ldap.NoticeOfStartTLS).Label("StartTLS")
@@ -175,7 +178,7 @@ func (s *Server) Start() {
 
 	routes.Extended(handleExtended).Label("Ext - Generic")
 
-	routes.Search(NewSearchDSEHandler(s).HandleSearchDSE).
+	routes.Search(NewHandler(s, handleSearchDSE)).
 		BaseDn("").
 		Scope(ldap.SearchRequestScopeBaseObject).
 		Filter("(objectclass=*)").
@@ -187,7 +190,7 @@ func (s *Server) Start() {
 		Filter("(objectclass=*)").
 		Label("Search - Subschema")
 
-	routes.Search(handleSearch).Label("Search - Generic")
+	routes.Search(NewHandler(s, handleSearch)).Label("Search - Generic")
 
 	//Attach routes to server
 	server.Handle(routes)
@@ -210,8 +213,49 @@ func (s *Server) Start() {
 	server.Stop()
 }
 
+func (s *Server) LoadSchema() {
+	schemaMap = InitSchemaMap(s)
+	if s, ok := schemaMap.Get("entryUUID"); ok {
+		s.UseIndependentColumn("uuid")
+	}
+	if s, ok := schemaMap.Get("createTimestamp"); ok {
+		s.UseIndependentColumn("created")
+	}
+	if s, ok := schemaMap.Get("modifyTimestamp"); ok {
+		s.UseIndependentColumn("updated")
+	}
+	// TODO
+	memberAttrs := []string{"member", "uniqueMember"}
+	for _, v := range memberAttrs {
+		if s, ok := schemaMap.Get(v); ok {
+			s.UseMemberTable(true)
+		}
+	}
+	if s, ok := schemaMap.Get("memberOf"); ok {
+		s.UseMemberOfTable(true)
+	}
+}
+
 func (s *Server) Stop() {
 	s.internal.Stop()
+}
+
+func (s *Server) SuffixOrigStr() string {
+	return strings.Join(s.suffixOrig, ",")
+}
+
+func (s *Server) SuffixOrig() []string {
+	return s.suffixOrig
+}
+
+func (s *Server) SuffixNorm() []string {
+	return s.suffixNorm
+}
+
+func NewHandler(s *Server, handler func(s *Server, w ldap.ResponseWriter, r *ldap.Message)) func(w ldap.ResponseWriter, r *ldap.Message) {
+	return func(w ldap.ResponseWriter, r *ldap.Message) {
+		handler(s, w, r)
+	}
 }
 
 func handleNotFound(w ldap.ResponseWriter, r *ldap.Message) {
@@ -316,10 +360,18 @@ func (s *Server) GetSuffix() string {
 	return s.config.Suffix
 }
 
+func (s *Server) DCRDN() string {
+	return strings.Split(s.SuffixNorm()[0], "=")[1]
+}
+
 func (s *Server) GetRootDN() *DN {
 	return s.rootDN
 }
 
 func (s *Server) GetRootPW() string {
 	return s.config.RootPW
+}
+
+func (s *Server) NormalizeDN(dn string) (*DN, error) {
+	return NormalizeDN(s.SuffixNorm(), dn)
 }

@@ -6,6 +6,11 @@ type AddEntry struct {
 	attributes map[string]*SchemaValue
 }
 
+type MemberEntry struct {
+	AttrNameNorm   string
+	MemberOfDNNorm string
+}
+
 func NewAddEntry(dn *DN) *AddEntry {
 	entry := &AddEntry{
 		schemaMap:  &schemaMap,
@@ -29,19 +34,59 @@ func (j *AddEntry) HasAttr(attrName string) bool {
 func (j *AddEntry) SetDN(dn *DN) {
 	j.dn = dn
 
-	rdn := dn.GetRDN()
+	rdn := dn.RDN()
 	for k, v := range rdn {
 		// rdn is validated already
 		j.attributes[k], _ = NewSchemaValue(k, []string{v})
 	}
 }
 
-func (j *AddEntry) GetDN() *DN {
+func (j *AddEntry) IsContainer() bool {
+	return j.dn.IsContainer()
+}
+
+func (j *AddEntry) Member() []*MemberEntry {
+	list := []*MemberEntry{}
+
+	for _, sv := range j.attributes {
+		if sv.IsMemberAttribute() {
+			for _, v := range sv.Norm() {
+				m := &MemberEntry{
+					AttrNameNorm:   sv.Name(),
+					MemberOfDNNorm: v,
+				}
+				list = append(list, m)
+			}
+		}
+	}
+
+	return list
+}
+
+func (j *AddEntry) RDNNorm() string {
+	if j.dn.IsDC() {
+		return ""
+	}
+	return j.dn.RDNNormStr()
+}
+
+func (j *AddEntry) RDNOrig() string {
+	if j.dn.IsDC() {
+		return ""
+	}
+	return j.dn.RDNOrigStr()
+}
+
+func (j *AddEntry) DN() *DN {
 	return j.dn
 }
 
-func (j *AddEntry) GetDNNorm() string {
-	return j.dn.DNNorm
+func (j *AddEntry) ParentDN() *DN {
+	return j.dn.ParentDN()
+}
+
+func (j *AddEntry) IsDC() bool {
+	return j.dn.IsDC()
 }
 
 func (j *AddEntry) Validate() error {
@@ -80,7 +125,7 @@ func (j *AddEntry) addsv(value *SchemaValue) error {
 	return nil
 }
 
-func (j *AddEntry) GetAttrNorm(attrName string) ([]string, bool) {
+func (j *AddEntry) AttrNorm(attrName string) ([]string, bool) {
 	s, ok := j.schemaMap.Get(attrName)
 	if !ok {
 		return nil, false
@@ -90,15 +135,15 @@ func (j *AddEntry) GetAttrNorm(attrName string) ([]string, bool) {
 	if !ok {
 		return nil, false
 	}
-	return v.GetNorm(), true
+	return v.Norm(), true
 }
 
-func (j *AddEntry) GetAttrs() (map[string]interface{}, map[string][]string) {
+func (j *AddEntry) Attrs() (map[string]interface{}, map[string][]string) {
 	norm := make(map[string]interface{}, len(j.attributes))
 	orig := make(map[string][]string, len(j.attributes))
 	for k, v := range j.attributes {
 		norm[k] = v.GetForJSON()
-		orig[k] = v.GetOrig()
+		orig[k] = v.Orig()
 	}
 	return norm, orig
 }

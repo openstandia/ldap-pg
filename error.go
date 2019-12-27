@@ -2,15 +2,24 @@ package main
 
 import (
 	"fmt"
+
+	ldap "github.com/openstandia/ldapserver"
 )
 
 type LDAPError struct {
-	Code int
-	Msg  string
+	Code      int
+	Msg       string
+	MatchedDN string
 }
 
 func (e *LDAPError) Error() string {
 	return fmt.Sprintf("LDAPError: %d %s", e.Code, e.Msg)
+}
+
+func NewSuccess() *LDAPError {
+	return &LDAPError{
+		Code: ldap.LDAPResultSuccess,
+	}
 }
 
 func NewNoSuchAttribute(op, attr string) *LDAPError {
@@ -19,6 +28,7 @@ func NewNoSuchAttribute(op, attr string) *LDAPError {
 		Msg:  fmt.Sprintf("%s: %s: no such value", op, attr),
 	}
 }
+
 func NewUndefinedType(attr string) *LDAPError {
 	return &LDAPError{
 		Code: 17,
@@ -68,9 +78,16 @@ func NewInvalidPerSyntax(attr string, valueidx int) *LDAPError {
 	}
 }
 
+func NewNoSuchObjectWithMatchedDN(dn string) *LDAPError {
+	return &LDAPError{
+		Code:      ldap.LDAPResultNoSuchObject,
+		MatchedDN: dn,
+	}
+}
+
 func NewNoSuchObject() *LDAPError {
 	return &LDAPError{
-		Code: 32,
+		Code: ldap.LDAPResultNoSuchObject,
 	}
 }
 
@@ -100,8 +117,21 @@ func NewObjectClassViolation() *LDAPError {
 	}
 }
 
+func NewNotAllowedOnNonLeaf() *LDAPError {
+	return &LDAPError{
+		Code: ldap.LDAPResultNotAllowedOnNonLeaf,
+		Msg:  fmt.Sprintf("subordinate objects must be deleted first"),
+	}
+}
+
 func NewAlreadyExists() *LDAPError {
 	return &LDAPError{
 		Code: 68,
+	}
+}
+
+func NewUnavailable() *LDAPError {
+	return &LDAPError{
+		Code: ldap.LDAPResultUnavailable,
 	}
 }

@@ -67,6 +67,7 @@ func (s SchemaMap) resolve() error {
 }
 
 type Schema struct {
+	server             *Server
 	Name               string
 	AName              []string
 	Oid                string
@@ -78,15 +79,17 @@ type Schema struct {
 	Usage              string
 	IndexType          string
 	ColumnName         string
+	IsUseMemberTable   bool
+	IsUseMemberOfTable bool
 	SingleValue        bool
 	NoUserModification bool
 }
 
-func InitSchemaMap() SchemaMap {
+func InitSchemaMap(server *Server) SchemaMap {
 	m := SchemaMap{}
 
 	mergedSchema = mergeSchema(SCHEMA_OPENLDAP24, customSchema)
-	parseSchema(m, mergedSchema)
+	parseSchema(server, m, mergedSchema)
 
 	err := m.resolve()
 	if err != nil {
@@ -108,7 +111,7 @@ var (
 	usagePattern    = regexp.MustCompile(" USAGE (.*?) ")
 )
 
-func parseSchema(m SchemaMap, schemaDef string) {
+func parseSchema(server *Server, m SchemaMap, schemaDef string) {
 	for _, line := range strings.Split(strings.TrimSuffix(schemaDef, "\n"), "\n") {
 		if strings.HasPrefix(line, "attributeTypes") {
 			stype, oid := parseOid(line)
@@ -127,6 +130,7 @@ func parseSchema(m SchemaMap, schemaDef string) {
 			}
 
 			s := &Schema{
+				server:      server,
 				IndexType:   "", // TODO configurable
 				SingleValue: false,
 			}
@@ -162,7 +166,7 @@ func parseSchema(m SchemaMap, schemaDef string) {
 			if strings.Contains(line, "SINGLE-VALUE") {
 				s.SingleValue = true
 			}
-			if !*migrationEnabled && strings.Contains(line, "NO-USER-MODIFICATION") {
+			if !server.config.MigrationEnabled && strings.Contains(line, "NO-USER-MODIFICATION") {
 				s.NoUserModification = true
 			}
 
@@ -366,7 +370,7 @@ func (s *SchemaValue) Name() string {
 func (s *SchemaValue) HasDuplicate(value *SchemaValue) bool {
 	s.Normalize()
 
-	for _, v := range value.GetNorm() {
+	for _, v := range value.Norm() {
 		if _, ok := s.cachedNormIndex[v]; ok {
 			return true
 		}
@@ -392,6 +396,10 @@ func (s *SchemaValue) IsEmpty() bool {
 	return len(s.value) == 0
 }
 
+func (s *SchemaValue) IsMemberAttribute() bool {
+	return s.schema.IsMemberAttribute()
+}
+
 func (s *SchemaValue) Clone() *SchemaValue {
 	newValue := make([]string, len(s.value))
 	copy(newValue, s.value)
@@ -407,7 +415,7 @@ func (s *SchemaValue) Equals(value *SchemaValue) bool {
 		return false
 	}
 	if s.IsSingle() {
-		return s.GetNorm()[0] == value.GetNorm()[0]
+		return s.Norm()[0] == value.Norm()[0]
 	} else {
 		if len(s.value) != len(value.value) {
 			return false
@@ -415,7 +423,7 @@ func (s *SchemaValue) Equals(value *SchemaValue) bool {
 
 		s.Normalize()
 
-		for _, v := range value.GetNorm() {
+		for _, v := range value.Norm() {
 			if _, ok := s.cachedNormIndex[v]; !ok {
 				return false
 			}
@@ -448,7 +456,7 @@ func (s *SchemaValue) Delete(value *SchemaValue) error {
 	// TODO Duplicate delete error
 
 	// Check the values
-	for _, v := range value.GetNorm() {
+	for _, v := range value.Norm() {
 		if _, ok := s.cachedNormIndex[v]; !ok {
 			// Not found the value
 			return NewNoSuchAttribute("modify/delete", value.Name())
@@ -460,7 +468,7 @@ func (s *SchemaValue) Delete(value *SchemaValue) error {
 	newValueNorm := make([]string, len(newValue))
 
 	i := 0
-	for j, v := range s.GetNorm() {
+	for j, v := range s.Norm() {
 		if _, ok := value.cachedNormIndex[v]; !ok {
 			newValue[i] = s.value[j]
 			newValueNorm[i] = s.cachedNorm[j]
@@ -475,11 +483,11 @@ func (s *SchemaValue) Delete(value *SchemaValue) error {
 	return nil
 }
 
-func (s *SchemaValue) GetOrig() []string {
+func (s *SchemaValue) Orig() []string {
 	return s.value
 }
 
-func (s *SchemaValue) GetAsTime() []time.Time {
+func (s *SchemaValue) AsTime() []time.Time {
 	t := make([]time.Time, len(s.value))
 	for i, _ := range s.value {
 		// Already validated, ignore error
@@ -488,7 +496,7 @@ func (s *SchemaValue) GetAsTime() []time.Time {
 	return t
 }
 
-func (s *SchemaValue) GetNorm() []string {
+func (s *SchemaValue) Norm() []string {
 	s.Normalize()
 	return s.cachedNorm
 }
@@ -549,10 +557,26 @@ func (s *Schema) IsOperationalAttribute() bool {
 	return false
 }
 
+func (s *Schema) IsMemberAttribute() bool {
+	if s.Name == "member" ||
+		s.Name == "uniqueMember" {
+		return true
+	}
+	return false
+}
+
 func (s *Schema) IsIndependentColumn() bool {
 	return s.ColumnName != ""
 }
 
 func (s *Schema) UseIndependentColumn(c string) {
 	s.ColumnName = c
+}
+
+func (s *Schema) UseMemberTable(use bool) {
+	s.IsUseMemberTable = use
+}
+
+func (s *Schema) UseMemberOfTable(use bool) {
+	s.IsUseMemberOfTable = use
 }

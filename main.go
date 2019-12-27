@@ -80,11 +80,6 @@ var (
 		0,
 		"GOMAXPROCS (Use CPU num with default)",
 	)
-	twowayEnabled = fs.Bool(
-		"two-way",
-		false,
-		"Two-way support for member-memberOf association (Default: false)",
-	)
 	passThroughLDAPDomain = fs.String(
 		"pass-through-ldap-domain",
 		"",
@@ -192,5 +187,6 @@ func main() {
 		LogLevel:          *logLevel,
 		PProfServer:       *pprofServer,
 		GoMaxProcs:        *gomaxprocs,
+		MigrationEnabled:  *migrationEnabled,
 	}).Start()
 }

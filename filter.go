@@ -19,15 +19,16 @@ func (s *Schema) SubstringMatch(q *Query, val string, i int) {
 	}
 
 	if s.IndexType == "fts" {
-		q.Query += fmt.Sprintf("attrs_norm->>'%s' ILIKE :%s", s.Name, paramKey)
+		q.Query += fmt.Sprintf("e.attrs_norm->>'%s' ILIKE :%s", s.Name, paramKey)
 	} else {
 		if s.IsCaseIgnoreSubstr() {
-			q.Query += fmt.Sprintf("attrs_norm->>'%s' LIKE :%s", s.Name, paramKey)
+			//exists( select 1 from jsonb_array_elements_text(attrs_norm->'uid') as a where  a like 'user111%')
+			q.Query += fmt.Sprintf("EXISTS ( SELECT 1 FROM jsonb_array_elements_text(e.attrs_norm->'%s') AS attr WHERE attr LIKE :%s )", s.Name, paramKey)
 		} else {
-			q.Query += fmt.Sprintf("attrs_norm->>'%s' LIKE :%s", s.Name, paramKey)
+			q.Query += fmt.Sprintf("EXISTS ( SELECT 1 FROM jsonb_array_elements_text(e.attrs_norm->'%s') AS attr WHERE attr LIKE :%s )", s.Name, paramKey)
 		}
 	}
-	q.Params[paramKey] = sv.GetNorm()[0]
+	q.Params[paramKey] = sv.Norm()[0]
 }
 
 func (s *Schema) EqualityMatch(q *Query, val string) {
@@ -43,29 +44,71 @@ func (s *Schema) EqualityMatch(q *Query, val string) {
 
 	if s.IndexType == "fts" {
 		// TODO Escapse %
-		q.Query += fmt.Sprintf("attrs_norm->>'%s' ILIKE :%s", s.Name, paramKey)
+		q.Query += fmt.Sprintf("e.attrs_norm->>'%s' ILIKE :%s", s.Name, paramKey)
 	} else if s.IsIndependentColumn() {
 		if s.IsCaseIgnore() {
-			q.Query += fmt.Sprintf("%s = :%s", s.ColumnName, paramKey)
+			q.Query += fmt.Sprintf("e.%s = :%s", s.ColumnName, paramKey)
 		} else {
-			q.Query += fmt.Sprintf("%s = :%s", s.ColumnName, paramKey)
+			q.Query += fmt.Sprintf("e.%s = :%s", s.ColumnName, paramKey)
 		}
+	} else if s.IsUseMemberTable {
+		reqDN, err := s.server.NormalizeDN(val)
+		if err != nil {
+			log.Printf("warn: Ignore filter due to invalid DN syntax of member. attrName: %s, value: %s, err: %+v", s.Name, val, err)
+			return
+		}
+
+		parentID := q.parentIDCache[reqDN.ParentDN().DNNormStr()]
+
+		paramKeyName := paramKey + "_name"
+		paramKeyParentID := paramKey + "_parent_id"
+
+		q.Query += fmt.Sprintf(`EXISTS
+			(
+				SELECT 1 FROM ldap_member lm
+					LEFT JOIN ldap_entry le ON le.id = lm.member_of_id
+				WHERE lm.attr_name_norm = :%s AND lm.member_id = e.id AND le.parent_id = :%s AND le.rdn_norm = :%s
+			)`, paramKeyName, paramKeyParentID, paramKey)
+		q.Params[paramKeyName] = s.Name
+		q.Params[paramKeyParentID] = parentID
+		q.Params[paramKey] = reqDN.RDNNormStr()
+		return
+	} else if s.IsUseMemberOfTable {
+		reqDN, err := s.server.NormalizeDN(val)
+		if err != nil {
+			log.Printf("warn: Ignore filter due to invalid DN syntax of memberOf. attrName: %s, value: %s, err: %+v", s.Name, val, err)
+			return
+		}
+
+		parentID := q.parentIDCache[reqDN.ParentDN().DNNormStr()]
+
+		paramKeyParentID := paramKey + "_parent_id"
+
+		q.Query += fmt.Sprintf(`EXISTS
+			(
+				SELECT 1 FROM ldap_member lm
+					LEFT JOIN ldap_entry le ON le.id = lm.member_id
+				WHERE lm.member_of_id = e.id AND le.parent_id = :%s AND le.rdn_norm = :%s
+			)`, paramKeyParentID, paramKey)
+		q.Params[paramKeyParentID] = parentID
+		q.Params[paramKey] = reqDN.RDNNormStr()
+		return
 	} else {
 		if s.IsCaseIgnore() {
 			if s.SingleValue {
-				q.Query += fmt.Sprintf("attrs_norm->>'%s' = :%s", s.Name, paramKey)
+				q.Query += fmt.Sprintf("e.attrs_norm->>'%s' = :%s", s.Name, paramKey)
 			} else {
-				q.Query += fmt.Sprintf("attrs_norm->'%s' @> jsonb_build_array(:%s ::::text)", s.Name, paramKey)
+				q.Query += fmt.Sprintf("e.attrs_norm->'%s' @> jsonb_build_array(:%s ::::text)", s.Name, paramKey)
 			}
 		} else {
 			if s.SingleValue {
-				q.Query += fmt.Sprintf("attrs_norm->>'%s' = :%s", s.Name, paramKey)
+				q.Query += fmt.Sprintf("e.attrs_norm->>'%s' = :%s", s.Name, paramKey)
 			} else {
-				q.Query += fmt.Sprintf("attrs_norm->'%s' @> jsonb_build_array(:%s ::::text)", s.Name, paramKey)
+				q.Query += fmt.Sprintf("e.attrs_norm->'%s' @> jsonb_build_array(:%s ::::text)", s.Name, paramKey)
 			}
 		}
 	}
-	q.Params[paramKey] = sv.GetNorm()[0]
+	q.Params[paramKey] = sv.Norm()[0]
 }
 
 func (s *Schema) GreaterOrEqualMatch(q *Query, val string) {
@@ -77,8 +120,8 @@ func (s *Schema) GreaterOrEqualMatch(q *Query, val string) {
 		return
 	}
 
-	q.Query += fmt.Sprintf("(attrs_norm->>'%s')::numeric >= :%s", s.Name, paramKey)
-	q.Params[paramKey] = sv.GetNorm()[0]
+	q.Query += fmt.Sprintf("(e.attrs_norm->>'%s')::::numeric >= :%s", s.Name, paramKey)
+	q.Params[paramKey] = sv.Norm()[0]
 }
 
 func (s *Schema) LessOrEqualMatch(q *Query, val string) {
@@ -90,15 +133,15 @@ func (s *Schema) LessOrEqualMatch(q *Query, val string) {
 		return
 	}
 
-	q.Query += fmt.Sprintf("(attrs_norm->>'%s')::numeric <= :%s", s.Name, paramKey)
-	q.Params[paramKey] = sv.GetNorm()[0]
+	q.Query += fmt.Sprintf("(e.attrs_norm->>'%s')::::numeric <= :%s", s.Name, paramKey)
+	q.Params[paramKey] = sv.Norm()[0]
 }
 
 func (s *Schema) PresentMatch(q *Query) {
 	if s.IndexType == "jsonb_ops" {
-		q.Query += fmt.Sprintf("attrs_norm ? '%s'", s.Name)
+		q.Query += fmt.Sprintf("e.attrs_norm ? '%s'", s.Name)
 	} else {
-		q.Query += fmt.Sprintf("(attrs_norm->>'%s') IS NOT NULL", s.Name)
+		q.Query += fmt.Sprintf("(e.attrs_norm->>'%s') IS NOT NULL", s.Name)
 	}
 }
 
@@ -111,24 +154,28 @@ func (s *Schema) ApproxMatch(q *Query, val string) {
 		return
 	}
 
-	q.Query += fmt.Sprintf("attrs_norm->>'%s' ILIKE :%s", s.Name, paramKey)
-	q.Params[paramKey] = sv.GetNorm()[0]
+	q.Query += fmt.Sprintf("e.attrs_norm->>'%s' ILIKE :%s", s.Name, paramKey)
+	q.Params[paramKey] = sv.Norm()[0]
 }
 
 type Query struct {
-	hasOr  bool
-	Query  string
-	Params map[string]interface{}
+	hasOr         bool
+	Query         string
+	Params        map[string]interface{}
+	parentIDCache map[string]int64 // dn_norm => id
+	dnOrigCache   map[int64]string // id => dn_norm
 }
 
 func (q *Query) nextParamKey(name string) string {
 	return fmt.Sprintf("%d_%s", len(q.Params), name)
 }
 
-func ToQuery(schemaMap SchemaMap, packet message.Filter) (*Query, error) {
+func ToQuery(schemaMap SchemaMap, packet message.Filter, dnOrigCache map[int64]string, parentIDCache map[string]int64) (*Query, error) {
 	q := &Query{
-		Query:  "",
-		Params: map[string]interface{}{},
+		Query:         "",
+		Params:        map[string]interface{}{},
+		dnOrigCache:   dnOrigCache,
+		parentIDCache: parentIDCache,
 	}
 
 	err := translateFilter(schemaMap, packet, q)
