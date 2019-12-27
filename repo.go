@@ -64,6 +64,7 @@ func (m *StmtCache) Put(key string, value *sqlx.NamedStmt) {
 var filterStmtMap StmtCache
 var treeStmtCache StmtCache
 var findByDNStmtCache StmtCache
+var findCredByDNStmtCache StmtCache
 var deleteByDNStmtCache StmtCache
 var insertStmtCache StmtCache
 
@@ -112,24 +113,6 @@ func (r *Repository) initStmt(db *sqlx.DB) error {
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
-
-	// findByDNSQL := "SELECT id, uuid, created, updated, dn_norm, attrs_orig FROM ldap_entry WHERE parent_id =rdn_norm = :dn_norm"
-	// findByDNWithMemberOfSQL := "SELECT id, uuid, created, updated, dn_norm, attrs_orig, (select jsonb_agg(e2.dn_norm) AS memberOf FROM ldap_entry e2 WHERE e2.attrs_norm->'member' @> jsonb_build_array(e1.dn_norm)) AS memberOf FROM ldap_entry e1 WHERE dn_norm = :dnNorm"
-
-	// findByDNStmt, err = db.PrepareNamed(findByDNSQL)
-	// if err != nil {
-	// 	return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	// }
-
-	// findByDNWithMemberOfStmt, err = db.PrepareNamed(findByDNWithMemberOfSQL)
-	// if err != nil {
-	// 	return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	// }
-
-	// findByDNWithLockStmt, err = db.PrepareNamed(findByDNSQL + " FOR UPDATE")
-	// if err != nil {
-	// 	return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	// }
 
 	findByIDWithLockStmt, err = db.PrepareNamed(`SELECT id, uuid, created, updated, rdn_orig, attrs_orig
 		FROM ldap_entry

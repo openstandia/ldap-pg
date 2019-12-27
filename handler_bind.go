@@ -14,8 +14,8 @@ import (
 func handleBind(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	r := m.GetBindRequest()
 	res := ldap.NewBindResponse(ldap.LDAPResultSuccess)
+
 	if r.AuthenticationChoice() == "simple" {
-		// For rootdn
 		name := string(r.Name())
 		pass := string(r.AuthenticationSimple())
 
@@ -28,6 +28,7 @@ func handleBind(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 			return
 		}
 
+		// For rootdn
 		if dn.Equal(s.GetRootDN()) {
 			if ok := validateCred(s, pass, s.GetRootPW()); !ok {
 				log.Printf("info: Bind failed. DN: %s", name)
@@ -38,13 +39,7 @@ func handleBind(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 			}
 			log.Printf("info: Bind ok. DN: %s", name)
 
-			err := saveAuthencatedDN(m, dn)
-			if err != nil {
-				res.SetResultCode(ldap.LDAPResultInvalidCredentials)
-				res.SetDiagnosticMessage("invalid credentials")
-				w.Write(res)
-				return
-			}
+			saveAuthencatedDN(m, dn)
 
 			w.Write(res)
 			return
@@ -60,35 +55,49 @@ func handleBind(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 		log.Printf("info: Find bind user. DN: %s", dn.DNNormStr())
 
-		bindUserCred, err := findCredByDN(dn)
-		if err == nil && len(bindUserCred) > 0 {
-			log.Printf("Fetched userPassword: %v", bindUserCred)
-			if ok := validateCreds(s, pass, bindUserCred); !ok {
-				log.Printf("info: Bind failed. DN: %s", name)
-				res.SetResultCode(ldap.LDAPResultInvalidCredentials)
+		bindUserCred, err := s.Repo().FindCredByDN(dn)
+		if err != nil {
+			if lerr, ok := err.(*LDAPError); ok {
+				res.SetResultCode(lerr.Code)
 				res.SetDiagnosticMessage("invalid credentials")
 				w.Write(res)
 				return
 			}
 
-			log.Printf("info: Bind ok. DN: %s", name)
+			log.Printf("error: Failed to find cred by DN: %s, err: %v", dn.DNNormStr(), err)
 
-			err := saveAuthencatedDN(m, dn)
-			if err != nil {
-				res.SetResultCode(ldap.LDAPResultInvalidCredentials)
-				res.SetDiagnosticMessage("invalid credentials")
-				w.Write(res)
-				return
-			}
+			// Return 'invalid credentials' even if the cause is system error.
+			res.SetResultCode(ldap.LDAPResultInvalidCredentials)
+			res.SetDiagnosticMessage("invalid credentials")
+			return
+		}
 
+		// If the user doesn't have credentials, always return 'invalid credential'.
+		if len(bindUserCred) == 0 {
+			log.Printf("info: Bind failed - Not found credentials. DN: %s, err: %s", name, err)
+
+			res.SetResultCode(ldap.LDAPResultInvalidCredentials)
+			res.SetDiagnosticMessage("invalid credentials")
 			w.Write(res)
 			return
 		}
 
-		log.Printf("info: Bind failed - Not found. DN: %s, err: %s", name, err)
+		if ok := validateCreds(s, pass, bindUserCred); !ok {
+			log.Printf("info: Bind failed - Invalid credentials. DN: %s", name)
 
-		res.SetResultCode(ldap.LDAPResultInvalidCredentials)
-		res.SetDiagnosticMessage("invalid credentials")
+			res.SetResultCode(ldap.LDAPResultInvalidCredentials)
+			res.SetDiagnosticMessage("invalid credentials")
+			w.Write(res)
+			return
+		}
+
+		saveAuthencatedDN(m, dn)
+
+		// Success
+		log.Printf("info: Bind ok. DN: %s", name)
+
+		w.Write(res)
+		return
 
 	} else {
 		res.SetResultCode(ldap.LDAPResultUnwillingToPerform)
@@ -169,12 +178,11 @@ func doPassThrough(s *Server, input, passThroughKey string) (bool, error) {
 	return false, xerrors.Errorf("Invalid domain. domain: %s, uid: %s", domain, uid)
 }
 
-func saveAuthencatedDN(m *ldap.Message, dn *DN) error {
+func saveAuthencatedDN(m *ldap.Message, dn *DN) {
 	session := getAuthSession(m)
 	if v, ok := session["dn"]; ok {
 		log.Printf("info: Switching authenticated user: %s -> %s", v.DNNormStr(), dn.DNNormStr())
 	}
 	session["dn"] = dn
 	log.Printf("Saved authenticated DN: %s", dn.DNNormStr())
-	return nil
 }

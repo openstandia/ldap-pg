@@ -312,6 +312,7 @@ func getDCDNOrig(tx *sqlx.Tx) (*FetchedDNOrig, error) {
 type FindOption struct {
 	Lock       bool
 	FetchAttrs bool
+	FetchCred  bool
 }
 
 func (r *Repository) FindByDN(tx *sqlx.Tx, dn *DN, option *FindOption) (*FetchedDBEntry, error) {
@@ -434,9 +435,9 @@ func (r *Repository) CreateFindByDNQuery(dn *DN, option *FindOption) (string, ma
 	var fetchAttrsProjection string
 	var memberJoin string
 	if option.FetchAttrs {
-		fetchAttrsProjection = `, e0.parent_id, e0.rdn_orig, e0.attrs_orig, to_jsonb(ma.member_array) as member`
+		fetchAttrsProjection += `, e0.parent_id, e0.rdn_orig, e0.attrs_orig, to_jsonb(ma.member_array) as member`
 		// TODO use join when the entry's schema has member
-		memberJoin = `, LATERAL (
+		memberJoin += `, LATERAL (
 				SELECT ARRAY (
 					SELECT jsonb_build_object('r', ee.rdn_orig, 'p', ee.parent_id::::TEXT, 'a', lm.attr_name_norm) 
 						FROM ldap_member lm
@@ -444,6 +445,9 @@ func (r *Repository) CreateFindByDNQuery(dn *DN, option *FindOption) (string, ma
 						WHERE lm.member_id = e0.id 
 				) AS member_array
 			) ma`
+	}
+	if option.FetchCred {
+		fetchAttrsProjection += `, e0.attrs_norm->>'userPassword' as cred`
 	}
 
 	if dn.IsDC() {
@@ -572,20 +576,44 @@ func (r *Repository) FindByDNWithLock(tx *sqlx.Tx, dn *DN) (*ModifyEntry, error)
 	return mapper.FetchedDBEntryToModifyEntry(entry, dnOrigCache)
 }
 
-func findCredByDN(dn *DN) ([]string, error) {
-	var j types.JSONText
-	err := findCredByDNStmt.Get(&j, map[string]interface{}{
-		"dnNorm": dn.DNNormStr(),
-	})
-	if err != nil {
-		return nil, xerrors.Errorf("Failed to find cred by DN. dn: %s, err: %w", dn.DNNormStr(), err)
+func (r *Repository) FindCredByDN(dn *DN) ([]string, error) {
+	q, params := r.CreateFindByDNQuery(dn, &FindOption{Lock: false, FetchCred: true})
+
+	key := "DEPTH:" + strconv.Itoa(len(dn.dnNorm))
+
+	dest := struct {
+		ID     int64          `db:"id"`
+		DNOrig string         `db:"dn_orig"`
+		Cred   types.JSONText `db:"cred"`
+	}{}
+
+	var stmt *sqlx.NamedStmt
+	var ok bool
+
+	if stmt, ok = findCredByDNStmtCache.Get(key); !ok {
+		var err error
+		stmt, err = r.db.PrepareNamed(q)
+		if err != nil {
+			return nil, xerrors.Errorf("Failed to prepare name query. query: %s, params: %v, dn: %s, err: %w", q, params, dn.DNOrigStr(), err)
+		}
+		findCredByDNStmtCache.Put(key, stmt)
 	}
-	var bindUserCred []string
-	err = j.Unmarshal(&bindUserCred)
+
+	err := stmt.Get(&dest, params)
 	if err != nil {
-		return nil, xerrors.Errorf("Failed to unmarshal cred. dn: %s, err: %w", dn.DNNormStr(), err)
+		if isNoResult(err) {
+			return nil, NewInvalidCredentials()
+		}
+		return nil, xerrors.Errorf("Failed to find cred by DN. dn: %s, err: %w", dn.DNOrigStr(), err)
 	}
-	return bindUserCred, nil
+
+	var cred []string
+	err = dest.Cred.Unmarshal(&cred)
+	if err != nil {
+		return nil, xerrors.Errorf("Failed to unmarshal cred array. dn: %s, err: %w", dn.DNOrigStr(), err)
+	}
+
+	return cred, nil
 }
 
 func appenScopeFilter(scope int, q *Query, baseDNID int64, childrenDNIDs []int64) (string, error) {
