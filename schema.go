@@ -79,7 +79,8 @@ type Schema struct {
 	Usage              string
 	IndexType          string
 	ColumnName         string
-	UserMemberTable    bool
+	IsUseMemberTable   bool
+	IsUseMemberOfTable bool
 	SingleValue        bool
 	NoUserModification bool
 }
@@ -572,10 +573,10 @@ func (s *Schema) UseIndependentColumn(c string) {
 	s.ColumnName = c
 }
 
-func (s *Schema) IsMemberTable() bool {
-	return s.UserMemberTable
+func (s *Schema) UseMemberTable(use bool) {
+	s.IsUseMemberTable = use
 }
 
-func (s *Schema) UseMemberTable(use bool) {
-	s.UserMemberTable = use
+func (s *Schema) UseMemberOfTable(use bool) {
+	s.IsUseMemberOfTable = use
 }

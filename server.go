@@ -160,6 +160,9 @@ func (s *Server) Start() {
 			s.UseMemberTable(true)
 		}
 	}
+	if s, ok := schemaMap.Get("memberOf"); ok {
+		s.UseMemberOfTable(true)
+	}
 
 	// Init mapper
 	mapper = NewMapper(s, schemaMap)

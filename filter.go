@@ -51,7 +51,7 @@ func (s *Schema) EqualityMatch(q *Query, val string) {
 		} else {
 			q.Query += fmt.Sprintf("e.%s = :%s", s.ColumnName, paramKey)
 		}
-	} else if s.IsMemberTable() {
+	} else if s.IsUseMemberTable {
 		reqDN, err := s.server.NormalizeDN(val)
 		if err != nil {
 			log.Printf("warn: Ignore filter due to invalid DN syntax of member. attrName: %s, value: %s, err: %+v", s.Name, val, err)
@@ -70,6 +70,26 @@ func (s *Schema) EqualityMatch(q *Query, val string) {
 				WHERE lm.attr_name_norm = :%s AND lm.member_id = e.id AND le.parent_id = :%s AND le.rdn_norm = :%s
 			)`, paramKeyName, paramKeyParentID, paramKey)
 		q.Params[paramKeyName] = s.Name
+		q.Params[paramKeyParentID] = parentID
+		q.Params[paramKey] = reqDN.RDNNormStr()
+		return
+	} else if s.IsUseMemberOfTable {
+		reqDN, err := s.server.NormalizeDN(val)
+		if err != nil {
+			log.Printf("warn: Ignore filter due to invalid DN syntax of memberOf. attrName: %s, value: %s, err: %+v", s.Name, val, err)
+			return
+		}
+
+		parentID := q.parentIDCache[reqDN.ParentDN().DNNormStr()]
+
+		paramKeyParentID := paramKey + "_parent_id"
+
+		q.Query += fmt.Sprintf(`EXISTS
+			(
+				SELECT 1 FROM ldap_member lm
+					LEFT JOIN ldap_entry le ON le.id = lm.member_id
+				WHERE lm.member_of_id = e.id AND le.parent_id = :%s AND le.rdn_norm = :%s
+			)`, paramKeyParentID, paramKey)
 		q.Params[paramKeyParentID] = parentID
 		q.Params[paramKey] = reqDN.RDNNormStr()
 		return
