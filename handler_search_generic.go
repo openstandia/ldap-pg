@@ -28,14 +28,8 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		}
 	}
 
-	log.Printf("info: handleGenericSearch")
-	log.Printf("info: Request baseDN=%s", r.BaseObject())
-	log.Printf("info: Request Scope=%d", r.Scope())
-	log.Printf("info: Request SizeLimit=%d", r.SizeLimit())
-	log.Printf("info: Request Filter=%s", r.Filter())
-	log.Printf("info: Request FilterString=%s", r.FilterString())
-	log.Printf("info: Request Attributes=%s", r.Attributes())
-	log.Printf("info: Request TimeLimit=%d", r.TimeLimit().Int())
+	log.Printf("info: handleGenericSearch baseDN=%s, scope=%d, sizeLimit=%d, filter=%s, attributes=%s, timeLimit=%d",
+		r.BaseObject(), r.Scope(), r.SizeLimit(), r.FilterString(), r.Attributes(), r.TimeLimit().Int())
 
 	// Handle Stop Signal (server stop / client disconnected / Abandoned request....)
 	select {
@@ -73,7 +67,7 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	}
 
 	// TODO optimize collecting all container DN orig
-	dnOrigCache, err := collectAllNodeOrig()
+	dnOrigCache, err := collectAllNodeOrig(nil)
 	if err != nil {
 		log.Printf("error: Failed to collect all node orig. err: %w", err)
 		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultUnavailable)

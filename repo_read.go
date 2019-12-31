@@ -511,12 +511,12 @@ func collectAllNodeNorm() (map[string]int64, error) {
 	return cache, nil
 }
 
-func collectAllNodeOrig() (map[int64]string, error) {
-	dc, err := getDCDNOrig(nil)
+func collectAllNodeOrig(tx *sqlx.Tx) (map[int64]string, error) {
+	dc, err := getDCDNOrig(tx)
 	if err != nil {
 		return nil, err
 	}
-	nodes, err := collectNodeOrigByParentID(dc.ID)
+	nodes, err := collectNodeOrigByParentID(tx, dc.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -531,13 +531,21 @@ func collectAllNodeOrig() (map[int64]string, error) {
 	return cache, nil
 }
 
-func collectNodeOrigByParentID(parentID int64) ([]*FetchedDNOrig, error) {
+func collectNodeOrigByParentID(tx *sqlx.Tx, parentID int64) ([]*FetchedDNOrig, error) {
 	if parentID == ROOT_ID {
 		return nil, xerrors.Errorf("Invalid parentID: %d", parentID)
 	}
-	rows, err := collectNodeOrigByParentIDStmt.Queryx(map[string]interface{}{
-		"parent_id": parentID,
-	})
+	var rows *sqlx.Rows
+	var err error
+	if tx != nil {
+		rows, err = tx.NamedStmt(collectNodeOrigByParentIDStmt).Queryx(map[string]interface{}{
+			"parent_id": parentID,
+		})
+	} else {
+		rows, err = collectNodeOrigByParentIDStmt.Queryx(map[string]interface{}{
+			"parent_id": parentID,
+		})
+	}
 	if err != nil {
 		return nil, xerrors.Errorf("Failed to fetch child ID by parentID: %s, err: %w", parentID, err)
 	}
@@ -561,7 +569,7 @@ func collectNodeOrigByParentID(parentID int64) ([]*FetchedDNOrig, error) {
 
 func (r *Repository) FindByDNWithLock(tx *sqlx.Tx, dn *DN) (*ModifyEntry, error) {
 	// TODO optimize collecting all container DN orig
-	dnOrigCache, err := collectAllNodeOrig()
+	dnOrigCache, err := collectAllNodeOrig(tx)
 	if err != nil {
 		return nil, err
 	}

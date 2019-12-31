@@ -194,7 +194,7 @@ func (r *Repository) updateDN(tx *sqlx.Tx, oldDN, newDN *DN, deleteOld bool) err
 		if err != nil {
 			return err
 		}
-		_, err = r.Insert(add)
+		_, err = r.insertWithTx(tx, add)
 		if err != nil {
 			return err
 		}

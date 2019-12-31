@@ -8,8 +8,6 @@ import (
 
 func handleAdd(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	r := m.GetAddRequest()
-	log.Printf("info: Adding entry: %s", r.Entry())
-	//attributes values
 
 	dn, err := s.NormalizeDN(string(r.Entry()))
 	if err != nil {
@@ -31,6 +29,8 @@ func handleAdd(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		responseAddError(w, err)
 		return
 	}
+
+	log.Printf("info: Adding entry: %s", r.Entry())
 
 	id, err := s.Repo().Insert(addEntry)
 	if err != nil {

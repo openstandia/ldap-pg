@@ -32,7 +32,7 @@ func handleModifyDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	log.Printf("info: Modify entry: %s", dn.DNNormStr())
+	log.Printf("info: Modify DN entry: %s", dn.DNNormStr())
 
 	if r.NewSuperior() != nil {
 		sup := string(*r.NewSuperior())

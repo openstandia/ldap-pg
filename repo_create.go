@@ -12,7 +12,10 @@ import (
 
 func (r *Repository) Insert(entry *AddEntry) (int64, error) {
 	tx := r.db.MustBegin()
+	return r.insertWithTx(tx, entry)
+}
 
+func (r *Repository) insertWithTx(tx *sqlx.Tx, entry *AddEntry) (int64, error) {
 	if !entry.IsDC() {
 		has, err := r.hasParent(tx, entry.DN())
 		if err != nil {
