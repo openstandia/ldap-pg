@@ -211,12 +211,6 @@ func (r *Repository) insertMember(tx *sqlx.Tx, subjectID int64, entry *AddEntry)
 		return nil
 	}
 
-	// Resolve IDs from memberOfDNs
-	dns := make([]string, len(members))
-	for i, m := range members {
-		dns[i] = m.MemberOfDNNorm
-	}
-
 	// First, cache all parent IDs
 	// TODO should optimize if ldap_tree tables is too big
 	dc, err := getDCDNOrig(tx)
@@ -235,21 +229,45 @@ func (r *Repository) insertMember(tx *sqlx.Tx, subjectID int64, entry *AddEntry)
 		dnIDCache[node.DNNorm] = node.ID
 	}
 
+	max := 100
+	gcount := len(members) / max
+	remain := len(members) % max
+
+	for i := 0; i < gcount; i++ {
+		start := i * max
+		m := members[start : start+max]
+		r.insertSubMembers(tx, subjectID, entry.DN(), m, dnIDCache)
+	}
+
+	if remain > 0 {
+		start := gcount * max
+		m := members[start : start+remain]
+		r.insertSubMembers(tx, subjectID, entry.DN(), m, dnIDCache)
+	}
+
+	return nil
+}
+
+func (r *Repository) insertSubMembers(tx *sqlx.Tx, subjectID int64, dn *DN, members []*MemberEntry, dnIDCache map[string]int64) error {
+	// Resolve IDs from memberOfDNs
+	dns := make([]string, len(members))
 	where := make([]string, len(members))
 	params := make(map[string]interface{}, len(members))
 
 	memberTypeCache := map[string]string{}
 
 	for i, m := range members {
+		dns[i] = m.MemberOfDNNorm
+
 		dn, err := r.server.NormalizeDN(m.MemberOfDNNorm)
 		if err != nil {
-			log.Printf("info: Invalid member DN sintax. DN: %s, %s DN: %s", entry.DN().DNOrigStr(), m.AttrNameNorm, m.MemberOfDNNorm)
+			log.Printf("info: Invalid member DN sintax. DN: %s, %s DN: %s", dn.DNOrigStr(), m.AttrNameNorm, m.MemberOfDNNorm)
 			return NewInvalidDNSyntax()
 		}
 		parent := dn.ParentDN()
 		parentID, ok := dnIDCache[parent.DNNormStr()]
 		if !ok {
-			log.Printf("info: Not found member DN. DN: %s, %s DN: %s", entry.DN().DNOrigStr(), m.AttrNameNorm, m.MemberOfDNNorm)
+			log.Printf("info: Not found member DN. DN: %s, %s DN: %s", dn.DNOrigStr(), m.AttrNameNorm, m.MemberOfDNNorm)
 			return NewInvalidDNSyntax()
 		}
 		where[i] = fmt.Sprintf("(parent_id = :parent_id_%d AND rdn_norm = :rdn_norm_%d)", i, i)
@@ -260,6 +278,8 @@ func (r *Repository) insertMember(tx *sqlx.Tx, subjectID int64, entry *AddEntry)
 		memberTypeCache[fmt.Sprintf("%d_%s", parentID, dn.RDNNormStr())] = m.AttrNameNorm
 	}
 
+	log.Printf("debug: Fetch start")
+
 	query := fmt.Sprintf("SELECT id, parent_id, rdn_norm FROM ldap_entry WHERE %s", strings.Join(where, " OR "))
 
 	rows, err := tx.NamedQuery(query, params)
@@ -269,8 +289,8 @@ func (r *Repository) insertMember(tx *sqlx.Tx, subjectID int64, entry *AddEntry)
 
 	defer rows.Close()
 
-	values := make([]string, len(members))
-	params = make(map[string]interface{}, len(members))
+	values := make([]string, len(where))
+	params = make(map[string]interface{}, len(where))
 	count := 0
 
 	for rows.Next() {
@@ -293,6 +313,7 @@ func (r *Repository) insertMember(tx *sqlx.Tx, subjectID int64, entry *AddEntry)
 
 		count++
 	}
+	log.Printf("debuginfo: Fetch end")
 
 	// Not found the member DN
 	if count != len(dns) {
@@ -303,12 +324,16 @@ func (r *Repository) insertMember(tx *sqlx.Tx, subjectID int64, entry *AddEntry)
 	// work around
 	rows.Close()
 
+	log.Printf("debug: Insert start")
+
 	insert := fmt.Sprintf("INSERT INTO ldap_member VALUES %s", strings.Join(values, ", "))
 
 	_, err = tx.NamedExec(insert, params)
 	if err != nil {
 		return xerrors.Errorf("Failed to bulk insert members. err: %w", err)
 	}
+
+	log.Printf("debug: Insert end")
 
 	return nil
 }
