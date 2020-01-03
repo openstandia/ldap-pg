@@ -9,6 +9,9 @@ import (
 )
 
 var (
+	version  string
+	revision string
+
 	fs         = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	dbHostName = fs.String(
 		"h",
@@ -68,7 +71,7 @@ var (
 	logLevel = fs.String(
 		"log-level",
 		"info",
-		"Log level, on of: debug, info, warn, error, fatal",
+		"Log level, on of: debug, info, warn, error, alert",
 	)
 	pprofServer = fs.String(
 		"pprof",
@@ -142,10 +145,11 @@ var customSchema arrayFlags
 
 func main() {
 	fs.Var(&customSchema, "schema", "Additional/overwriting custom schema")
+
+	fmt.Fprintf(os.Stdout, "ldap-pg %s (rev: %s)\n", version, revision)
 	fs.Usage = func() {
 		_, exe := filepath.Split(os.Args[0])
-		fmt.Fprint(os.Stderr, "ldap-pg.\n\n")
-		fmt.Fprintf(os.Stderr, "Usage:\n\n  %s [options]\n\nOptions:\n\n", exe)
+		fmt.Fprintf(os.Stderr, "\nUsage:\n\n  %s [options]\n\nOptions:\n\n", exe)
 		fs.PrintDefaults()
 	}
 	fs.Parse(os.Args[1:])

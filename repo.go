@@ -68,7 +68,7 @@ func NewRepository(server *Server) (*Repository, error) {
 	db, err := sqlx.Connect("postgres", fmt.Sprintf("host=%s port=%d user=%s dbname=%s password=%s sslmode=disable",
 		server.config.DBHostName, server.config.DBPort, server.config.DBUser, server.config.DBName, server.config.DBPassword))
 	if err != nil {
-		log.Fatalf("fatal: Connect error. host=%s, port=%d, user=%s, dbname=%s, error=%s",
+		log.Fatalf("alert: Connect error. host=%s, port=%d, user=%s, dbname=%s, error=%s",
 			server.config.DBHostName, server.config.DBPort, server.config.DBUser, server.config.DBName, err)
 	}
 	db.SetMaxOpenConns(server.config.DBMaxOpenConns)
