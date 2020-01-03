@@ -1,0 +1,40 @@
+name: release
+on:
+  push:
+    tags:
+    - v*
+
+jobs:
+  release:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+
+    - name: Set up Go 1.13
+      uses: actions/setup-go@v1
+      with:
+        version: 1.13
+      id: go
+
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@master
+
+    - name: Build
+      env:
+        GOPATH: /home/runner/work/
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        REF: ${{ github.ref }}
+      run: |
+        export TAGNAME=`git describe --tags --abbrev=0`
+        echo "========================================================="
+        echo "DEBUG:" $REF
+        echo "DEBUG:" $TAGNAME
+        echo "========================================================="
+        make dist
+        echo "========================================================="
+        echo "DEBUG: ls dist/"
+        ls dist/
+        echo "========================================================="
+        go get -u github.com/tcnksm/ghr
+        $GOPATH/bin/ghr -n ${TAGNAME} -b "Release ${TAGNAME}" -prerelease ${TAGNAME} dist/
+

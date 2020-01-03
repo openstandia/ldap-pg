@@ -139,7 +139,7 @@ func (s *Server) Start() {
 	// Init DB
 	repo, err := NewRepository(s)
 	if err != nil {
-		log.Fatalf("fatal: Prepare statement error:  %+v", err)
+		log.Fatalf("alert: Prepare statement error:  %+v", err)
 	}
 	s.repo = repo // TODO Remove bidirectional dependency
 
@@ -152,7 +152,7 @@ func (s *Server) Start() {
 	// Init rootDN
 	s.rootDN, err = s.NormalizeDN(s.config.RootDN)
 	if err != nil {
-		log.Fatalf("fatal: Invalid root-dn format: %s, err: %s", s.config.RootDN, err)
+		log.Fatalf("alert: Invalid root-dn format: %s, err: %s", s.config.RootDN, err)
 	}
 
 	//Create a new LDAP Server
