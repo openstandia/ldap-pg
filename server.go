@@ -275,7 +275,7 @@ func handleNotFound(w ldap.ResponseWriter, r *ldap.Message) {
 
 func handleAbandon(w ldap.ResponseWriter, m *ldap.Message) {
 	var req = m.GetAbandonRequest()
-	// retreive the request to abandon, and send a abort signal to it
+	// retrieve the request to abandon, and send a abort signal to it
 	if requestToAbandon, ok := m.Client.GetMessageByID(int(req)); ok {
 		requestToAbandon.Abandon()
 		log.Printf("info: Abandon signal sent to request processor [messageID=%d]", int(req))

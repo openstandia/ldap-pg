@@ -39,7 +39,10 @@ func TestNormalize(t *testing.T) {
 		},
 	}
 
-	schemaMap := InitSchemaMap(nil)
+	server := NewServer(&ServerConfig{
+		Suffix: "dc=example,dc=com",
+	})
+	schemaMap := InitSchemaMap(server)
 
 	for i, tc := range testcases {
 		s, ok := schemaMap.Get(tc.Name)
