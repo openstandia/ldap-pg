@@ -231,9 +231,9 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []st
 		if dnOrig, ok = dnOrigCache[dbEntry.ID]; !ok {
 			parentDNOrig, ok := dnOrigCache[dbEntry.ParentID]
 			if !ok {
-				log.Printf("warn: Failed to retrive parent by parent_id: %d. The parent might be removed or renamed.", dbEntry.ParentID)
+				log.Printf("warn: Failed to retrieve parent by parent_id: %d. The parent might be removed or renamed.", dbEntry.ParentID)
 				// TODO return busy?
-				return 0, 0, xerrors.Errorf("Failed to retrive parent by parent_id: %d", dbEntry.ParentID)
+				return 0, 0, xerrors.Errorf("Failed to retrieve parent by parent_id: %d", dbEntry.ParentID)
 			}
 
 			// Set dn_orig using cache from fetching ldap_tree table
@@ -624,7 +624,7 @@ func (r *Repository) FindCredByDN(dn *DN) ([]string, error) {
 func appenScopeFilter(scope int, q *Query, baseDNID int64, childrenDNIDs []int64) (string, error) {
 	// Make query based on the requested scope
 
-	// Scope handling, one and sub need to includ base.
+	// Scope handling, one and sub need to include base.
 	// 0: base
 	// 1: one
 	// 2: sub

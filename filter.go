@@ -43,7 +43,7 @@ func (s *Schema) EqualityMatch(q *Query, val string) {
 	log.Printf("s: %+v", s)
 
 	if s.IndexType == "fts" {
-		// TODO Escapse %
+		// TODO Escape %
 		q.Query += fmt.Sprintf("e.attrs_norm->>'%s' ILIKE :%s", s.Name, paramKey)
 	} else if s.IsIndependentColumn() {
 		if s.IsCaseIgnore() {
@@ -241,19 +241,19 @@ func translateFilter(schemaMap SchemaMap, packet message.Filter, q *Query) (err 
 
 			switch fsv := fs.(type) {
 			case message.SubstringInitial:
-				// TODO Escapse %
+				// TODO Escape %
 				s.SubstringMatch(q, string(fsv)+"%", i)
 			case message.SubstringAny:
 				if i > 0 {
 					q.Query += " AND "
 				}
-				// TODO Escapse %
+				// TODO Escape %
 				s.SubstringMatch(q, "%"+string(fsv)+"%", i)
 			case message.SubstringFinal:
 				if i > 0 {
 					q.Query += " AND "
 				}
-				// TODO Escapse %
+				// TODO Escape %
 				s.SubstringMatch(q, "%"+string(fsv), i)
 			}
 		}
