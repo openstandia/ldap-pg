@@ -168,6 +168,118 @@ func TestBind(t *testing.T) {
 	runTestCases(t, tcs)
 }
 
+func TestSearch(t *testing.T) {
+	type A []string
+	type M map[string][]string
+
+	tcs := []Command{
+		Conn{},
+		Bind{"cn=Manager", "secret", &AssertResponse{}},
+		AddDC(),
+		AddOU("Users"),
+		Add{
+			"uid=user1", "ou=Users",
+			M{
+				"objectClass":    A{"inetOrgPerson"},
+				"sn":             A{"user1"},
+				"userPassword":   A{SSHA("password1")},
+				"employeeNumber": A{"emp1"},
+			},
+			&AssertEntry{},
+		},
+		Add{
+			"uid=user2", "ou=Users",
+			M{
+				"objectClass":    A{"inetOrgPerson"},
+				"sn":             A{"user2"},
+				"userPassword":   A{SSHA("password2")},
+				"employeeNumber": A{"emp2"},
+			},
+			&AssertEntry{},
+		},
+		// Equal by Multi-value
+		Search{
+			"ou=Users," + server.GetSuffix(),
+			"uid=user1",
+			ldap.ScopeWholeSubtree,
+			A{"*"},
+			&AssertEntries{
+				ExpectEntry{
+					"uid=user1",
+					"ou=Users",
+					M{
+						"sn": A{"user1"},
+					},
+				},
+			},
+		},
+		// Equal by Single-value
+		Search{
+			"ou=Users," + server.GetSuffix(),
+			"employeeNumber=emp1",
+			ldap.ScopeWholeSubtree,
+			A{"*"},
+			&AssertEntries{
+				ExpectEntry{
+					"uid=user1",
+					"ou=Users",
+					M{
+						"sn": A{"user1"},
+					},
+				},
+			},
+		},
+		// Substr by Multi-value
+		Search{
+			"ou=Users," + server.GetSuffix(),
+			"uid=user*",
+			ldap.ScopeWholeSubtree,
+			A{"*"},
+			&AssertEntries{
+				ExpectEntry{
+					"uid=user1",
+					"ou=Users",
+					M{
+						"sn": A{"user1"},
+					},
+				},
+				ExpectEntry{
+					"uid=user2",
+					"ou=Users",
+					M{
+						"sn": A{"user2"},
+					},
+				},
+			},
+		},
+		// Substr by Single-value
+		Search{
+			"ou=Users," + server.GetSuffix(),
+			"employeeNumber=emp*",
+			ldap.ScopeWholeSubtree,
+			A{"*"},
+			&AssertEntries{
+				ExpectEntry{
+					"uid=user1",
+					"ou=Users",
+					M{
+						"sn": A{"user1"},
+					},
+				},
+				ExpectEntry{
+					"uid=user2",
+					"ou=Users",
+					M{
+						"sn": A{"user2"},
+					},
+				},
+			},
+		},
+	}
+
+	runTestCases(t, tcs)
+}
+
 func TestBasicCRUD(t *testing.T) {
 	type A []string
 	type M map[string][]string
