@@ -64,11 +64,12 @@ func handleBind(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 				return
 			}
 
-			log.Printf("error: Failed to find cred by DN: %s, err: %v", dn.DNNormStr(), err)
+			log.Printf("warn: Failed to find cred by DN: %s, err: %v", dn.DNNormStr(), err)
 
 			// Return 'invalid credentials' even if the cause is system error.
 			res.SetResultCode(ldap.LDAPResultInvalidCredentials)
 			res.SetDiagnosticMessage("invalid credentials")
+			w.Write(res)
 			return
 		}
 

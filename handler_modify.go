@@ -37,10 +37,9 @@ func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		if err == sql.ErrNoRows {
 			responseModifyError(w, NewNoSuchObject())
 			return
-		} else {
-			responseModifyError(w, fmt.Errorf("Failed to fetch the current entry for modification. dn: %s, err: %#v", dn.DNNormStr(), err))
-			return
 		}
+		responseModifyError(w, fmt.Errorf("Failed to fetch the current entry for modification. dn: %s, err: %v", dn.DNNormStr(), err))
+		return
 	}
 
 	newEntry := oldEntry.Clone()
@@ -73,7 +72,7 @@ func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		if err != nil {
 			tx.Rollback()
 
-			log.Printf("warn: Failed to modify. dn: %s, err: %s", dn.DNNormStr(), err)
+			log.Printf("warn: Failed to modify. dn: %s, err: %v", dn.DNNormStr(), err)
 			responseModifyError(w, err)
 			return
 		}
@@ -109,7 +108,7 @@ func responseModifyError(w ldap.ResponseWriter, err error) {
 		}
 		w.Write(res)
 	} else {
-		log.Printf("error: Modify error. err: %+v", err)
+		log.Printf("error: Modify error. err: %v", err)
 		// TODO
 		res := ldap.NewModifyResponse(ldap.LDAPResultProtocolError)
 		w.Write(res)
