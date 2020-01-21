@@ -151,7 +151,7 @@ func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry, dnOrigCach
 	// member
 	members, err := dbEntry.Members(dnOrigCache, m.server.SuffixOrigStr())
 	if err != nil {
-		log.Printf("warn: Invalid state. FetchedDBEntiry cannot resolve member DN. err: %v", err)
+		log.Printf("warn: Invalid state. FetchedDBEntiry cannot resolve member DN. err: %+v", err)
 		// TODO busy?
 		return nil, NewUnavailable()
 	}
@@ -162,7 +162,7 @@ func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry, dnOrigCach
 	// memberOf
 	memberOfs, err := dbEntry.MemberOfs(dnOrigCache, m.server.SuffixOrigStr())
 	if err != nil {
-		log.Printf("warn: Invalid state. FetchedDBEntiry cannot resolve memberOf DN. err: %v", err)
+		log.Printf("warn: Invalid state. FetchedDBEntiry cannot resolve memberOf DN. err: %+v", err)
 		// TODO busy?
 		return nil, NewUnavailable()
 	}

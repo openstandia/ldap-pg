@@ -4,6 +4,7 @@ import (
 	"log"
 
 	ldap "github.com/openstandia/ldapserver"
+	"golang.org/x/xerrors"
 )
 
 func handleAdd(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
@@ -47,7 +48,10 @@ func handleAdd(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 }
 
 func responseAddError(w ldap.ResponseWriter, err error) {
-	if ldapErr, ok := err.(*LDAPError); ok {
+	var ldapErr *LDAPError
+	if ok := xerrors.As(err, &ldapErr); ok {
+		log.Printf("warn: Add LDAP error. err: %+v", err)
+
 		res := ldap.NewAddResponse(ldapErr.Code)
 		if ldapErr.Msg != "" {
 			res.SetDiagnosticMessage(ldapErr.Msg)
@@ -57,7 +61,8 @@ func responseAddError(w ldap.ResponseWriter, err error) {
 		}
 		w.Write(res)
 	} else {
-		log.Printf("error: %+v", err)
+		log.Printf("error: Add error. err: %+v", err)
+
 		// TODO
 		res := ldap.NewAddResponse(ldap.LDAPResultProtocolError)
 		w.Write(res)

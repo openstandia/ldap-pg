@@ -2,7 +2,6 @@ package main
 
 import (
 	"database/sql"
-	"fmt"
 	"log"
 
 	ldap "github.com/openstandia/ldapserver"
@@ -38,7 +37,7 @@ func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 			responseModifyError(w, NewNoSuchObject())
 			return
 		}
-		responseModifyError(w, fmt.Errorf("Failed to fetch the current entry for modification. dn: %s, err: %v", dn.DNNormStr(), err))
+		responseModifyError(w, xerrors.Errorf("Failed to fetch the current entry for modification. dn: %s, err: %w", dn.DNNormStr(), err))
 		return
 	}
 
@@ -72,8 +71,7 @@ func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		if err != nil {
 			tx.Rollback()
 
-			log.Printf("warn: Failed to modify. dn: %s, err: %v", dn.DNNormStr(), err)
-			responseModifyError(w, err)
+			responseModifyError(w, xerrors.Errorf("Failed to modify the entry. dn: %s, err: %w", dn.DNNormStr(), err))
 			return
 		}
 	}
@@ -101,14 +99,18 @@ func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 }
 
 func responseModifyError(w ldap.ResponseWriter, err error) {
-	if ldapErr, ok := err.(*LDAPError); ok {
+	var ldapErr *LDAPError
+	if ok := xerrors.As(err, &ldapErr); ok {
+		log.Printf("warn: Modify LDAP error. err: %+v", err)
+
 		res := ldap.NewModifyResponse(ldapErr.Code)
 		if ldapErr.Msg != "" {
 			res.SetDiagnosticMessage(ldapErr.Msg)
 		}
 		w.Write(res)
 	} else {
-		log.Printf("error: Modify error. err: %v", err)
+		log.Printf("error: Modify error. err: %+v", err)
+
 		// TODO
 		res := ldap.NewModifyResponse(ldap.LDAPResultProtocolError)
 		w.Write(res)

@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/openstandia/goldap/message"
 	ldap "github.com/openstandia/ldapserver"
+	"golang.org/x/xerrors"
 )
 
 func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
@@ -132,15 +133,16 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 			return nil
 		})
 	if err != nil {
-		if lerr, ok := err.(*LDAPError); ok {
-			log.Printf("info: Search failed: %v", err)
+		var lerr *LDAPError
+		if ok := xerrors.As(err, &lerr); ok {
+			log.Printf("error: Search failed: %+v", err)
 
 			res := ldap.NewSearchResultDoneResponse(lerr.Code)
 			w.Write(res)
 			return
 		}
 
-		log.Printf("error: Search error: %v", err)
+		log.Printf("error: Search error: %+v", err)
 
 		// TODO return correct error code
 		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultOperationsError)
@@ -254,11 +256,15 @@ func responseEntry(s *Server, w ldap.ResponseWriter, r message.SearchRequest, se
 }
 
 func responseSearchError(w ldap.ResponseWriter, err error) {
-	if ldapErr, ok := err.(*LDAPError); ok {
+	var ldapErr *LDAPError
+	if ok := xerrors.As(err, &ldapErr); ok {
+		log.Printf("warn: Search LDAP error. err: %+v", err)
+
 		res := ldap.NewSearchResultDoneResponse(ldapErr.Code)
 		w.Write(res)
 	} else {
-		log.Printf("error: %s", err)
+		log.Printf("error: Search error. err: %+v", err)
+
 		// TODO
 		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultProtocolError)
 		w.Write(res)

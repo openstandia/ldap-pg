@@ -93,7 +93,7 @@ func InitSchemaMap(server *Server) SchemaMap {
 
 	err := m.resolve()
 	if err != nil {
-		log.Printf("error: Resolving schema error. %v", err)
+		log.Printf("error: Resolving schema error. %+v", err)
 	}
 
 	return m

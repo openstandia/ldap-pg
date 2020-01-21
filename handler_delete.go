@@ -4,6 +4,7 @@ import (
 	"log"
 
 	ldap "github.com/openstandia/ldapserver"
+	"golang.org/x/xerrors"
 )
 
 func handleDelete(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
@@ -40,14 +41,17 @@ func handleDelete(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 }
 
 func responseDeleteError(w ldap.ResponseWriter, err error) {
-	if ldapErr, ok := err.(*LDAPError); ok {
+	var ldapErr *LDAPError
+	if ok := xerrors.As(err, &ldapErr); ok {
+		log.Printf("warn: Delete LDAP error. err: %+v", err)
+
 		res := ldap.NewDeleteResponse(ldapErr.Code)
 		if ldapErr.Msg != "" {
 			res.SetDiagnosticMessage(ldapErr.Msg)
 		}
 		w.Write(res)
 	} else {
-		log.Printf("error: %s", err)
+		log.Printf("error: Delete error. err: %+v", err)
 		// TODO
 		res := ldap.NewDeleteResponse(ldap.LDAPResultProtocolError)
 		w.Write(res)

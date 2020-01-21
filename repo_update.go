@@ -202,7 +202,7 @@ func (r *Repository) updateDN(tx *sqlx.Tx, oldDN, newDN *DN, deleteOld bool) err
 
 	if err != nil {
 		if strings.Contains(err.Error(), "duplicate key value violates unique constraint") {
-			log.Printf("warn: Failed to update entry DN because of already exists. oldDN: %s newDN: %s err: %v", oldDN.DNNormStr(), newDN.DNNormStr(), err)
+			log.Printf("warn: Failed to update entry DN because of already exists. oldDN: %s newDN: %s err: %+v", oldDN.DNNormStr(), newDN.DNNormStr(), err)
 			return NewAlreadyExists()
 		}
 		return xerrors.Errorf("Failed to update entry DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)

@@ -4,6 +4,7 @@ import (
 	"log"
 
 	ldap "github.com/openstandia/ldapserver"
+	"golang.org/x/xerrors"
 )
 
 func handleModifyDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
@@ -64,14 +65,18 @@ func handleModifyDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 }
 
 func responseModifyDNError(w ldap.ResponseWriter, err error) {
-	if ldapErr, ok := err.(*LDAPError); ok {
+	var ldapErr *LDAPError
+	if ok := xerrors.As(err, &ldapErr); ok {
+		log.Printf("warn: ModifyDN LDAP error. err: %+v", err)
+
 		res := ldap.NewModifyDNResponse(ldapErr.Code)
 		if ldapErr.Msg != "" {
 			res.SetDiagnosticMessage(ldapErr.Msg)
 		}
 		w.Write(res)
 	} else {
-		log.Printf("error: %s", err)
+		log.Printf("error: ModifyDN error. err: %+v", err)
+
 		// TODO
 		res := ldap.NewModifyDNResponse(ldap.LDAPResultProtocolError)
 		w.Write(res)

@@ -57,14 +57,18 @@ func handleBind(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 		bindUserCred, err := s.Repo().FindCredByDN(dn)
 		if err != nil {
-			if lerr, ok := err.(*LDAPError); ok {
+			var lerr *LDAPError
+			if ok := xerrors.As(err, &lerr); ok {
+				log.Printf("info: Failed to bind. DN: %s", dn.DNNormStr())
+				log.Printf("debug: err: %+v", err)
+
 				res.SetResultCode(lerr.Code)
 				res.SetDiagnosticMessage("invalid credentials")
 				w.Write(res)
 				return
 			}
 
-			log.Printf("warn: Failed to find cred by DN: %s, err: %v", dn.DNNormStr(), err)
+			log.Printf("warn: Failed to find cred by DN: %s, err: %+v", dn.DNNormStr(), err)
 
 			// Return 'invalid credentials' even if the cause is system error.
 			res.SetResultCode(ldap.LDAPResultInvalidCredentials)

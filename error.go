@@ -10,10 +10,15 @@ type LDAPError struct {
 	Code      int
 	Msg       string
 	MatchedDN string
+	err       error
 }
 
 func (e *LDAPError) Error() string {
 	return fmt.Sprintf("LDAPError: %d %s", e.Code, e.Msg)
+}
+
+func (e *LDAPError) Unwrap() error {
+	return e.err
 }
 
 func NewSuccess() *LDAPError {

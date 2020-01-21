@@ -345,7 +345,7 @@ func handleStartTLS(w ldap.ResponseWriter, m *ldap.Message) {
 	w.Write(res)
 
 	if err := tlsConn.Handshake(); err != nil {
-		log.Printf("warn: StartTLS Handshake error %v", err)
+		log.Printf("warn: StartTLS Handshake error %+v", err)
 		res.SetDiagnosticMessage(fmt.Sprintf("StartTLS Handshake error : \"%s\"", err.Error()))
 		res.SetResultCode(ldap.LDAPResultOperationsError)
 		w.Write(res)
