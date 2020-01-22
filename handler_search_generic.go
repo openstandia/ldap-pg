@@ -77,7 +77,7 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	// TODO optimize collecting all container DN orig
 	dnOrigCache, err := collectAllNodeOrig(nil)
 	if err != nil {
-		log.Printf("error: Failed to collect all node orig. err: %w", err)
+		log.Printf("error: Failed to collect all node orig. err: %+v", err)
 		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultUnavailable)
 		w.Write(res)
 		return
