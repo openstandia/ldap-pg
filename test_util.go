@@ -61,7 +61,7 @@ func runTestCases(t *testing.T, tcs []Command) {
 	for i, tc := range tcs {
 		conn, err = tc.Run(conn)
 		if err != nil {
-			t.Errorf("Unexpected error on testcase: %d, got error: %w", i, err)
+			t.Errorf("Unexpected error on testcase: %d, got error: %+v", i, err)
 			break
 		}
 	}
