@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"strconv"
@@ -300,7 +301,11 @@ func getDCDNOrig(tx *sqlx.Tx) (*FetchedDNOrig, error) {
 		err = getDCDNOrigStmt.Get(&dest, map[string]interface{}{})
 	}
 	if err != nil {
-		return nil, err
+		if err == sql.ErrNoRows {
+			log.Printf("warn: Not found DC in the tree.")
+			return nil, NewNoSuchObject()
+		}
+		return nil, xerrors.Errorf("Failed to get DC DN. err: %w", err)
 	}
 
 	return &dest, nil
