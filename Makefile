@@ -19,7 +19,6 @@ DIST_DIRS := find * -type d -exec
 build: $(SRCS)
 	@mkdir -p bin
 	@echo "Building $(GOOS)-$(GOARCH)"
-	CGO_ENABLED=0
 ifeq ($(GOOS),darwin)
 	go build -o bin $(DARWIN_OPTS)
 endif
