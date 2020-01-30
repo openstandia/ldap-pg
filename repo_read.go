@@ -346,7 +346,8 @@ func (r *Repository) FindByDN(tx *sqlx.Tx, dn *DN, option *FindOption) (*Fetched
 
 func (r *Repository) PrepareFindByDN(dn *DN, option *FindOption) (*sqlx.NamedStmt, map[string]interface{}, error) {
 	//  Key for stmt cache
-	key := fmt.Sprintf("LOCK:%v/DEPTH:%d", option.Lock, len(dn.dnNorm))
+	key := fmt.Sprintf("LOCK:%v/FETCH_ATTRS:%v/FETCH_CRED:%v/DEPTH:%d",
+		option.Lock, option.FetchAttrs, option.FetchCred, len(dn.dnNorm))
 
 	if stmt, ok := findByDNStmtCache.Get(key); ok {
 		// Already cached, make params only
