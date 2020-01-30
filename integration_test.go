@@ -330,18 +330,160 @@ func TestScopeSearch(t *testing.T) {
 			},
 			&AssertEntry{},
 		},
-		// admin base for not container
+		// base for container
+		Search{
+			"ou=Users," + server.GetSuffix(),
+			"objectclass=*",
+			ldap.ScopeBaseObject,
+			A{"*", "+"},
+			&AssertEntries{
+				ExpectEntry{
+					"ou=Users",
+					"",
+					M{
+						"hasSubordinates": A{"TRUE"},
+					},
+				},
+			},
+		},
+		// sub for container
+		Search{
+			"ou=Users," + server.GetSuffix(),
+			"objectclass=*",
+			ldap.ScopeWholeSubtree,
+			A{"*", "+"},
+			&AssertEntries{
+				ExpectEntry{
+					"ou=Users",
+					"",
+					M{
+						"hasSubordinates": A{"TRUE"},
+					},
+				},
+				ExpectEntry{
+					"ou=SubUsers",
+					"ou=Users",
+					M{
+						"hasSubordinates": A{"TRUE"},
+					},
+				},
+				ExpectEntry{
+					"uid=user1",
+					"ou=Users",
+					M{
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+				ExpectEntry{
+					"uid=user2",
+					"ou=Users",
+					M{
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+				ExpectEntry{
+					"uid=user3",
+					"ou=SubUsers,ou=Users",
+					M{
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+				ExpectEntry{
+					"uid=user4",
+					"ou=SubUsers,ou=Users",
+					M{
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+			},
+		},
+		// one for container
+		Search{
+			"ou=Users," + server.GetSuffix(),
+			"objectclass=*",
+			ldap.ScopeSingleLevel,
+			A{"*", "+"},
+			&AssertEntries{
+				ExpectEntry{
+					"ou=SubUsers",
+					"ou=Users",
+					M{
+						"hasSubordinates": A{"TRUE"},
+					},
+				},
+				ExpectEntry{
+					"uid=user1",
+					"ou=Users",
+					M{
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+				ExpectEntry{
+					"uid=user2",
+					"ou=Users",
+					M{
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+			},
+		},
+		// children for container
+		Search{
+			"ou=Users," + server.GetSuffix(),
+			"objectclass=*",
+			3,
+			A{"*", "+"},
+			&AssertEntries{
+				ExpectEntry{
+					"ou=SubUsers",
+					"ou=Users",
+					M{
+						"hasSubordinates": A{"TRUE"},
+					},
+				},
+				ExpectEntry{
+					"uid=user1",
+					"ou=Users",
+					M{
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+				ExpectEntry{
+					"uid=user2",
+					"ou=Users",
+					M{
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+				ExpectEntry{
+					"uid=user3",
+					"ou=SubUsers,ou=Users",
+					M{
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+				ExpectEntry{
+					"uid=user4",
+					"ou=SubUsers,ou=Users",
+					M{
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+			},
+		},
+		// base for not container(admin virtual entry)
 		Search{
 			"cn=Manager," + server.GetSuffix(),
 			"objectClass=*",
 			ldap.ScopeBaseObject,
-			A{"*"},
+			A{"*", "+"},
 			&AssertEntries{
 				ExpectEntry{
 					"cn=Manager",
 					"",
 					M{
 						"description": A{"LDAP administrator"},
+						"hasSubordinates": A{"FALSE"},
 					},
 				},
 			},
@@ -351,15 +493,51 @@ func TestScopeSearch(t *testing.T) {
 			"uid=user1,ou=Users," + server.GetSuffix(),
 			"uid=user1",
 			ldap.ScopeBaseObject,
-			A{"*"},
+			A{"*", "+"},
 			&AssertEntries{
 				ExpectEntry{
 					"uid=user1",
 					"ou=Users",
 					M{
 						"sn": A{"user1"},
+						"hasSubordinates": A{"FALSE"},
 					},
 				},
+			},
+		},
+		// sub for not container
+		Search{
+			"uid=user1,ou=Users," + server.GetSuffix(),
+			"uid=user1",
+			ldap.ScopeWholeSubtree,
+			A{"*", "+"},
+			&AssertEntries{
+				ExpectEntry{
+					"uid=user1",
+					"ou=Users",
+					M{
+						"sn": A{"user1"},
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+			},
+		},
+		// one for not container
+		Search{
+			"uid=user1,ou=Users," + server.GetSuffix(),
+			"uid=user1",
+			ldap.ScopeSingleLevel,
+			A{"*", "+"},
+			&AssertEntries{
+			},
+		},
+		// children for not container
+		Search{
+			"uid=user1,ou=Users," + server.GetSuffix(),
+			"uid=user1",
+			3,
+			A{"*", "+"},
+			&AssertEntries{
 			},
 		},
 	}

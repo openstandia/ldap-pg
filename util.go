@@ -94,6 +94,15 @@ func isMemberOfRequested(r message.SearchRequest) bool {
 	return false
 }
 
+func isHasSubOrdinatesRequested(r message.SearchRequest) bool {
+	for _, attr := range r.Attributes() {
+		if strings.ToLower(string(attr)) == "hassubordinates" || string(attr) == "+" {
+			return true
+		}
+	}
+	return false
+}
+
 func getRequestedMemberAttrs(r message.SearchRequest) []string {
 	if len(r.Attributes()) == 0 {
 		return []string{"member", "uniqueMember"}

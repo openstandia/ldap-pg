@@ -168,6 +168,11 @@ func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry, dnOrigCach
 	}
 	orig["memberOf"] = memberOfs
 
+	// hasSubordinates
+	if dbEntry.HasSubordinates != "" {
+		orig["hasSubordinates"] = []string{dbEntry.HasSubordinates}
+	}
+
 	readEntry := NewSearchEntry(dn, orig)
 
 	return readEntry, nil

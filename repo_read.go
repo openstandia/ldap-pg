@@ -14,18 +14,19 @@ import (
 )
 
 type FetchedDBEntry struct {
-	ID           int64          `db:"id"`
-	ParentID     int64          `db:"parent_id"`
-	EntryUUID    string         `db:"uuid"`
-	Created      time.Time      `db:"created"`
-	Updated      time.Time      `db:"updated"`
-	RDNOrig      string         `db:"rdn_orig"`
-	AttrsOrig    types.JSONText `db:"attrs_orig"`
-	Member       types.JSONText `db:"member"`    // No real column in the table
-	MemberOf     types.JSONText `db:"member_of"` // No real column in the table
-	DNOrig       string         `db:"dn_orig"`   // No real clumn in t he table
-	Count        int32          `db:"count"`     // No real column in the table
-	ParentDNOrig string         // No real column in t he table
+	ID              int64          `db:"id"`
+	ParentID        int64          `db:"parent_id"`
+	EntryUUID       string         `db:"uuid"`
+	Created         time.Time      `db:"created"`
+	Updated         time.Time      `db:"updated"`
+	RDNOrig         string         `db:"rdn_orig"`
+	AttrsOrig       types.JSONText `db:"attrs_orig"`
+	Member          types.JSONText `db:"member"`          // No real column in the table
+	MemberOf        types.JSONText `db:"member_of"`       // No real column in the table
+	HasSubordinates string         `db:"hassubordinates"` // No real column in the table
+	DNOrig          string         `db:"dn_orig"`         // No real clumn in t he table
+	Count           int32          `db:"count"`           // No real column in the table
+	ParentDNOrig    string         // No real column in t he table
 }
 
 type FetchedMember struct {
@@ -141,7 +142,8 @@ type FetchedDNOrig struct {
 	DNOrig string `db:"dn_orig"`
 }
 
-func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []string, reqMemberOf bool, handler func(entry *SearchEntry) error) (int32, int32, error) {
+func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []string,
+	reqMemberOf, isHasSubordinatesRequested bool, handler func(entry *SearchEntry) error) (int32, int32, error) {
 	// TODO
 	dnOrigCache := q.dnOrigCache
 
@@ -189,13 +191,22 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []st
 		) moa`
 	}
 
+	var hasSubordinatesCol string
+	if isHasSubordinatesRequested {
+		hasSubordinatesCol = `,
+			CASE
+			WHEN EXISTS (
+				SELECT 1 FROM ldap_entry sle WHERE sle.parent_id = e.id
+			) THEN 'TRUE' ELSE 'FALSE' END as hassubordinates`
+	}
+
 	// LEFT JOIN LATERAL(
 	// 		SELECT t.rdn_norm, t.rdn_orig FROM ldap_tree t WHERE t.id = e.parent_id
 	// 	) p ON true
-	searchQuery := fmt.Sprintf(`SELECT e.id, e.parent_id, e.uuid, e.created, e.updated, e.rdn_orig, '' AS dn_orig, e.attrs_orig %s %s, count(e.id) over() AS count
+	searchQuery := fmt.Sprintf(`SELECT e.id, e.parent_id, e.uuid, e.created, e.updated, e.rdn_orig, '' AS dn_orig, e.attrs_orig %s %s %s, count(e.id) over() AS count
 		FROM ldap_entry e %s %s
 		WHERE %s
-		LIMIT :pageSize OFFSET :offset`, memberCol, memberOfCol, memberJoin, memberOfJoin, where)
+		LIMIT :pageSize OFFSET :offset`, memberCol, memberOfCol, hasSubordinatesCol, memberJoin, memberOfJoin, where)
 
 	log.Printf("Fetch Query: %s Params: %v", searchQuery, q.Params)
 
