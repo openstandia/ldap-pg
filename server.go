@@ -184,6 +184,11 @@ func (s *Server) Start() {
 		Filter("(objectclass=*)").
 		Label("Search - ROOT DSE")
 
+	routes.Search(NewHandler(s, handleSearchRootDN)).
+		BaseDn(s.rootDN.DNOrigStr() + "," + s.GetSuffix()).
+		Scope(ldap.SearchRequestScopeBaseObject).
+		Label("Search - root DN")
+
 	routes.Search(handleSearchSubschema).
 		BaseDn("cn=Subschema").
 		Scope(ldap.SearchRequestScopeBaseObject).

@@ -280,6 +280,93 @@ func TestSearch(t *testing.T) {
 	runTestCases(t, tcs)
 }
 
+func TestScopeSearch(t *testing.T) {
+	type A []string
+	type M map[string][]string
+
+	tcs := []Command{
+		Conn{},
+		Bind{"cn=Manager", "secret", &AssertResponse{}},
+		AddDC(),
+		AddOU("Users"),
+		AddOU("SubUsers", "ou=Users"),
+		Add{
+			"uid=user1", "ou=Users",
+			M{
+				"objectClass":    A{"inetOrgPerson"},
+				"sn":             A{"user1"},
+				"userPassword":   A{SSHA("password1")},
+				"employeeNumber": A{"emp1"},
+			},
+			&AssertEntry{},
+		},
+		Add{
+			"uid=user2", "ou=Users",
+			M{
+				"objectClass":    A{"inetOrgPerson"},
+				"sn":             A{"user2"},
+				"userPassword":   A{SSHA("password2")},
+				"employeeNumber": A{"emp2"},
+			},
+			&AssertEntry{},
+		},
+		Add{
+			"uid=user3", "ou=SubUsers,ou=Users",
+			M{
+				"objectClass":    A{"inetOrgPerson"},
+				"sn":             A{"user3"},
+				"userPassword":   A{SSHA("password3")},
+				"employeeNumber": A{"emp3"},
+			},
+			&AssertEntry{},
+		},
+		Add{
+			"uid=user4", "ou=SubUsers,ou=Users",
+			M{
+				"objectClass":    A{"inetOrgPerson"},
+				"sn":             A{"user4"},
+				"userPassword":   A{SSHA("password4")},
+				"employeeNumber": A{"emp4"},
+			},
+			&AssertEntry{},
+		},
+		// admin base for not container
+		Search{
+			"cn=Manager," + server.GetSuffix(),
+			"objectClass=*",
+			ldap.ScopeBaseObject,
+			A{"*"},
+			&AssertEntries{
+				ExpectEntry{
+					"cn=Manager",
+					"",
+					M{
+						"description": A{"LDAP administrator"},
+					},
+				},
+			},
+		},
+		// base for not container
+		Search{
+			"uid=user1,ou=Users," + server.GetSuffix(),
+			"uid=user1",
+			ldap.ScopeBaseObject,
+			A{"*"},
+			&AssertEntries{
+				ExpectEntry{
+					"uid=user1",
+					"ou=Users",
+					M{
+						"sn": A{"user1"},
+					},
+				},
+			},
+		},
+	}
+
+	runTestCases(t, tcs)
+}
+
 func TestBasicCRUD(t *testing.T) {
 	type A []string
 	type M map[string][]string

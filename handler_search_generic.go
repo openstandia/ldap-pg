@@ -132,20 +132,7 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 			return nil
 		})
 	if err != nil {
-		var lerr *LDAPError
-		if ok := xerrors.As(err, &lerr); ok {
-			log.Printf("error: Search failed: %+v", err)
-
-			res := ldap.NewSearchResultDoneResponse(lerr.Code)
-			w.Write(res)
-			return
-		}
-
-		log.Printf("error: Search error: %+v", err)
-
-		// TODO return correct error code
-		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultOperationsError)
-		w.Write(res)
+		responseSearchError(w, err)
 		return
 	}
 
@@ -257,7 +244,9 @@ func responseEntry(s *Server, w ldap.ResponseWriter, r message.SearchRequest, se
 func responseSearchError(w ldap.ResponseWriter, err error) {
 	var ldapErr *LDAPError
 	if ok := xerrors.As(err, &ldapErr); ok {
-		log.Printf("warn: Search LDAP error. err: %+v", err)
+		if ldapErr.Code != ldap.LDAPResultSuccess {
+			log.Printf("warn: Search LDAP error. err: %+v", err)
+		}
 
 		res := ldap.NewSearchResultDoneResponse(ldapErr.Code)
 		w.Write(res)

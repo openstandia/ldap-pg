@@ -61,7 +61,7 @@ func runTestCases(t *testing.T, tcs []Command) {
 	for i, tc := range tcs {
 		conn, err = tc.Run(conn)
 		if err != nil {
-			t.Errorf("Unexpected error on testcase: %d, got error: %+v", i, err)
+			t.Errorf("Unexpected error on testcase: %d %v, got error: %+v", i, tc, err)
 			break
 		}
 	}
@@ -119,13 +119,15 @@ func AddDC() Add {
 	}
 }
 
-func AddOU(ou string) Add {
+func AddOU(ou string, parents ...string) Add {
 	type A []string
 	type M map[string][]string
 
+	parentDN := strings.Join(parents, ",")
+
 	return Add{
 		"ou=" + ou,
-		"",
+		parentDN,
 		M{
 			"objectClass": A{"organizationalUnit"},
 		},
@@ -367,7 +369,7 @@ func (a AssertEntry) AssertEntry(conn *ldap.Conn, err error, rdn, baseDN string,
 		return xerrors.Errorf("Unexpected error when searching the entry. err: %w", err)
 	}
 	if len(sr.Entries) != 1 {
-		return xerrors.Errorf("Unexpected entry count. want = [1] got = %d", len(sr.Entries))
+		return xerrors.Errorf("Unexpected entry count. want = [1] got = %d. searched by baseDN: %s", len(sr.Entries), baseDN)
 	}
 	var expectAttrs map[string][]string
 	if len(a.expectAttrs) > 0 {
@@ -387,6 +389,9 @@ func (a AssertEntry) AssertEntry(conn *ldap.Conn, err error, rdn, baseDN string,
 type AssertEntries []ExpectEntry
 
 func (e AssertEntries) AssertEntries(conn *ldap.Conn, err error, sr *ldap.SearchResult) error {
+	if len(sr.Entries) != len(e) {
+		return xerrors.Errorf("Unexpected entry size. want = [%d] got = %d", len(e), len(sr.Entries))
+	}
 	m := make(map[string]ExpectEntry, len(sr.Entries))
 	for _, expect := range e {
 		var dn string
@@ -405,7 +410,7 @@ func (e AssertEntries) AssertEntries(conn *ldap.Conn, err error, sr *ldap.Search
 	for _, v := range sr.Entries {
 		expect, ok := m[strings.ToLower(v.DN)]
 		if !ok {
-			return xerrors.Errorf("Unexpected entry. dn: %s, entry: %v", v.DN, *v)
+			return xerrors.Errorf("Unexpected entry. want = [%v] got = dn: %s, entry: %v", m, v.DN, *v)
 		}
 
 		for k, expectAttrs := range expect.attrs {
