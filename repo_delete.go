@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"strconv"
 	"strings"
 
 	"github.com/jmoiron/sqlx"
@@ -57,7 +56,7 @@ func (r *Repository) hasChildren(tx *sqlx.Tx, dn *DN) (bool, error) {
 		FROM (%s) p
 			LEFT JOIN ldap_entry e ON e.parent_id = p.id`, pq)
 
-	stmt, err := r.db.PrepareNamed(q)
+	stmt, err := tx.PrepareNamed(q)
 	if err != nil {
 		return true, xerrors.Errorf("Failed to prepare query: %s, params: %v, err: %w", q, params, err)
 	}
@@ -95,49 +94,38 @@ func (r *Repository) deleteByDN(tx *sqlx.Tx, dn *DN) (int64, error) {
 	last := size - 1
 	params := make(map[string]interface{}, size)
 
-	key := strconv.Itoa(size)
-
 	var fetchStmt *sqlx.NamedStmt
-	var ok bool
 	var err error
-	if fetchStmt, ok = deleteByDNStmtCache.Get(key); !ok {
-		join := make([]string, size)
-		where := make([]string, size)
 
-		for i := last; i >= 0; i-- {
-			if i == last {
-				join[last-i] = fmt.Sprintf("ldap_tree e%d", i)
-			} else if i > 0 {
-				join[last-i] = fmt.Sprintf("INNER JOIN ldap_tree e%d ON e%d.parent_id = e%d.id", i, i, i+1)
-			} else {
-				join[last-i] = "INNER JOIN ldap_entry e0 ON e0.parent_id = e1.id"
-			}
-			where[last-i] = fmt.Sprintf("e%d.rdn_norm = :rdn_norm_%d", i, i)
+	join := make([]string, size)
+	where := make([]string, size)
 
-			params[fmt.Sprintf("rdn_norm_%d", i)] = dn.dnNorm[i]
+	for i := last; i >= 0; i-- {
+		if i == last {
+			join[last-i] = fmt.Sprintf("ldap_tree e%d", i)
+		} else if i > 0 {
+			join[last-i] = fmt.Sprintf("INNER JOIN ldap_tree e%d ON e%d.parent_id = e%d.id", i, i, i+1)
+		} else {
+			join[last-i] = "INNER JOIN ldap_entry e0 ON e0.parent_id = e1.id"
 		}
+		where[last-i] = fmt.Sprintf("e%d.rdn_norm = :rdn_norm_%d", i, i)
 
-		q := fmt.Sprintf(`DELETE FROM ldap_entry e WHERE e.id IN 
+		params[fmt.Sprintf("rdn_norm_%d", i)] = dn.dnNorm[i]
+	}
+
+	q := fmt.Sprintf(`DELETE FROM ldap_entry e WHERE e.id IN 
 			(
 				SELECT e0.id
 					FROM %s
 					WHERE %s
 			) RETURNING e.id`,
-			strings.Join(join, " "), strings.Join(where, " AND "))
+		strings.Join(join, " "), strings.Join(where, " AND "))
 
-		log.Printf("debug: deleteByDN query: %s, params: %v", q, params)
+	log.Printf("debug: deleteByDN query: %s, params: %v", q, params)
 
-		// cache
-		fetchStmt, err = r.db.PrepareNamed(q)
-		if err != nil {
-			return 0, xerrors.Errorf("Failed to prepare deleteByDN query. query: %s, err: %w", q, err)
-		}
-		deleteByDNStmtCache.Put(key, fetchStmt)
-
-	} else {
-		for i := last; i >= 0; i-- {
-			params[fmt.Sprintf("rdn_norm_%d", i)] = dn.dnNorm[i]
-		}
+	fetchStmt, err = tx.PrepareNamed(q)
+	if err != nil {
+		return 0, xerrors.Errorf("Failed to prepare deleteByDN query. query: %s, err: %w", q, err)
 	}
 
 	var delID int64

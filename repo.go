@@ -16,7 +16,6 @@ var (
 	insertTreeStmt    *sqlx.NamedStmt
 	insertDCStmt      *sqlx.NamedStmt
 	insertUnderDCStmt *sqlx.NamedStmt
-	insertStmtCache   StmtCache
 
 	// repo_read
 	collectNodeOrigByParentIDStmt *sqlx.NamedStmt
@@ -36,7 +35,6 @@ var (
 	deleteDCStmt           *sqlx.NamedStmt
 	deleteTreeNodeByIDStmt *sqlx.NamedStmt
 	deleteMemberByIDStmt   *sqlx.NamedStmt
-	deleteByDNStmtCache    StmtCache
 
 	ROOT_ID int64 = 0
 )

@@ -336,7 +336,7 @@ func (r *Repository) FindByDN(tx *sqlx.Tx, dn *DN, option *FindOption) (*Fetched
 		return getDC(tx)
 	}
 
-	stmt, params, err := r.PrepareFindByDN(dn, option)
+	stmt, params, err := r.PrepareFindByDN(tx, dn, option)
 	if err != nil {
 		return nil, err
 	}
@@ -355,7 +355,7 @@ func (r *Repository) FindByDN(tx *sqlx.Tx, dn *DN, option *FindOption) (*Fetched
 	return &dest, nil
 }
 
-func (r *Repository) PrepareFindByDN(dn *DN, option *FindOption) (*sqlx.NamedStmt, map[string]interface{}, error) {
+func (r *Repository) PrepareFindByDN(tx *sqlx.Tx, dn *DN, option *FindOption) (*sqlx.NamedStmt, map[string]interface{}, error) {
 	//  Key for stmt cache
 	key := fmt.Sprintf("LOCK:%v/FETCH_ATTRS:%v/FETCH_CRED:%v/DEPTH:%d",
 		option.Lock, option.FetchAttrs, option.FetchCred, len(dn.dnNorm))
@@ -375,7 +375,13 @@ func (r *Repository) PrepareFindByDN(dn *DN, option *FindOption) (*sqlx.NamedStm
 	// Not cached yet, create query and params, then cache the stmt
 	q, params := r.CreateFindByDNQuery(dn, option)
 
-	stmt, err := r.db.PrepareNamed(q)
+	var err error
+	var stmt *sqlx.NamedStmt
+	if tx != nil {
+		stmt, err = tx.PrepareNamed(q)
+	} else {
+		stmt, err = r.db.PrepareNamed(q)
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -513,7 +519,7 @@ func collectAllNodeNorm() (map[string]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	nodes, err := collectNodeNormByParentID(dc.ID)
+	nodes, err := collectNodeNormByParentID(nil, dc.ID)
 	if err != nil {
 		return nil, err
 	}

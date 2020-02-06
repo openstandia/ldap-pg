@@ -8,6 +8,7 @@ import (
 	"log"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -59,7 +60,7 @@ func runTestCases(t *testing.T, tcs []Command) {
 	var conn *ldap.Conn
 	var err error
 	for i, tc := range tcs {
-		conn, err = tc.Run(conn)
+		conn, err = tc.Run(t, conn)
 		if err != nil {
 			t.Errorf("Unexpected error on testcase: %d %v, got error: %+v", i, tc, err)
 			break
@@ -70,12 +71,46 @@ func runTestCases(t *testing.T, tcs []Command) {
 }
 
 type Command interface {
-	Run(conn *ldap.Conn) (*ldap.Conn, error)
+	Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error)
+}
+
+type Parallel struct {
+	count int
+	ops   [][]Command
+}
+
+func (c Parallel) Run(t *testing.T, unused *ldap.Conn) (*ldap.Conn, error) {
+	wg := &sync.WaitGroup{}
+
+	for _, commands := range c.ops {
+		cms := commands
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			var conn *ldap.Conn
+			var err error
+			for i := 0; i < c.count; i++ {
+				for i, tc := range cms {
+					conn, err = tc.Run(t, conn)
+					if err != nil {
+						t.Errorf("Unexpected error on testcase: %d %v, got error: %+v", i, tc, err)
+						break
+					}
+				}
+			}
+			time.Sleep(1 * time.Second)
+			conn.Close()
+		}()
+	}
+	wg.Wait()
+
+	return unused, nil
 }
 
 type Conn struct{}
 
-func (c Conn) Run(conn *ldap.Conn) (*ldap.Conn, error) {
+func (c Conn) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 	var err error
 	connect := func() {
 		conn, err = ldap.Dial("tcp", fmt.Sprintf("%s:%d", "localhost", 8389))
@@ -98,7 +133,7 @@ type Bind struct {
 	assert   *AssertResponse
 }
 
-func (c Bind) Run(conn *ldap.Conn) (*ldap.Conn, error) {
+func (c Bind) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 	err := conn.Bind(c.rdn+","+server.GetSuffix(), c.password)
 	err = c.assert.AssertResponse(conn, err)
 	return conn, err
@@ -186,7 +221,7 @@ type Search struct {
 	assert *AssertEntries
 }
 
-func (s Search) Run(conn *ldap.Conn) (*ldap.Conn, error) {
+func (s Search) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 	search := ldap.NewSearchRequest(
 		s.baseDN,
 		s.scope,
@@ -213,7 +248,7 @@ func (s Search) Run(conn *ldap.Conn) (*ldap.Conn, error) {
 	return conn, nil
 }
 
-func (a Add) Run(conn *ldap.Conn) (*ldap.Conn, error) {
+func (a Add) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 	var dn string
 	if a.rdn == "" {
 		dn = server.GetSuffix()
@@ -234,7 +269,7 @@ func (a Add) Run(conn *ldap.Conn) (*ldap.Conn, error) {
 	return conn, err
 }
 
-func (m ModifyAdd) Run(conn *ldap.Conn) (*ldap.Conn, error) {
+func (m ModifyAdd) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 	var dn string
 	if m.baseDN != "" {
 		dn = fmt.Sprintf("%s,%s,%s", m.rdn, m.baseDN, server.GetSuffix())
@@ -253,7 +288,7 @@ func (m ModifyAdd) Run(conn *ldap.Conn) (*ldap.Conn, error) {
 	return conn, err
 }
 
-func (m ModifyReplace) Run(conn *ldap.Conn) (*ldap.Conn, error) {
+func (m ModifyReplace) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 	var dn string
 	if m.baseDN != "" {
 		dn = fmt.Sprintf("%s,%s,%s", m.rdn, m.baseDN, server.GetSuffix())
@@ -272,7 +307,7 @@ func (m ModifyReplace) Run(conn *ldap.Conn) (*ldap.Conn, error) {
 	return conn, err
 }
 
-func (m ModifyDelete) Run(conn *ldap.Conn) (*ldap.Conn, error) {
+func (m ModifyDelete) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 	var dn string
 	if m.baseDN != "" {
 		dn = fmt.Sprintf("%s,%s,%s", m.rdn, m.baseDN, server.GetSuffix())
@@ -291,7 +326,7 @@ func (m ModifyDelete) Run(conn *ldap.Conn) (*ldap.Conn, error) {
 	return conn, err
 }
 
-func (m ModifyDN) Run(conn *ldap.Conn) (*ldap.Conn, error) {
+func (m ModifyDN) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 	var dn string
 	if m.baseDN != "" {
 		dn = fmt.Sprintf("%s,%s,%s", m.rdn, m.baseDN, server.GetSuffix())
@@ -307,7 +342,7 @@ func (m ModifyDN) Run(conn *ldap.Conn) (*ldap.Conn, error) {
 	return conn, err
 }
 
-func (d Delete) Run(conn *ldap.Conn) (*ldap.Conn, error) {
+func (d Delete) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 	var dn string
 	if d.baseDN != "" {
 		dn = fmt.Sprintf("%s,%s,%s", d.rdn, d.baseDN, server.GetSuffix())
@@ -573,9 +608,9 @@ func setupLDAPServer() *Server {
 			Suffix:         "dc=example,dc=com",
 			RootDN:         "cn=Manager,dc=example,dc=com",
 			RootPW:         "secret",
-			BindAddress:    "127.0.0.1.8389",
+			BindAddress:    "127.0.0.1:8389",
 			LogLevel:       "warn",
-			PProfServer:    "",
+			PProfServer:    "127.0.0.1:10000",
 			GoMaxProcs:     0,
 		})
 		server.Start()

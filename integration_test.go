@@ -18,6 +18,71 @@ func TestMain(m *testing.M) {
 	os.Exit(rtn + rtn)
 }
 
+func TestParallel(t *testing.T) {
+	type A []string
+	type M map[string][]string
+
+	tcs := []Command{
+		Conn{},
+		Bind{"cn=Manager", "secret", &AssertResponse{}},
+		AddDC(),
+		AddOU("Users"),
+		Parallel{
+			100,
+			[][]Command{
+				[]Command{
+					Conn{},
+					Bind{"cn=Manager", "secret", &AssertResponse{}},
+					Add{
+						"uid=user1", "ou=Users",
+						M{
+							"objectClass":  A{"inetOrgPerson"},
+							"sn":           A{"user1"},
+						},
+						&AssertEntry{},
+					},
+					ModifyAdd{
+						"uid=user1", "ou=Users",
+						M{
+							"givenName": A{"user1"},
+						},
+						&AssertEntry{},
+					},
+					Delete{
+						"uid=user1", "ou=Users",
+						&AssertNoEntry{},
+					},
+				},
+				[]Command{
+					Conn{},
+					Bind{"cn=Manager", "secret", &AssertResponse{}},
+					Add{
+						"uid=user2", "ou=Users",
+						M{
+							"objectClass":  A{"inetOrgPerson"},
+							"sn":           A{"user2"},
+						},
+						&AssertEntry{},
+					},
+					ModifyAdd{
+						"uid=user2", "ou=Users",
+						M{
+							"givenName": A{"user2"},
+						},
+						&AssertEntry{},
+					},
+					Delete{
+						"uid=user2", "ou=Users",
+						&AssertNoEntry{},
+					},
+				},
+			},
+		},
+	}
+
+	runTestCases(t, tcs)
+}
+
 func TestRootDSE(t *testing.T) {
 	type A []string
 	type M map[string][]string
@@ -482,7 +547,7 @@ func TestScopeSearch(t *testing.T) {
 					"cn=Manager",
 					"",
 					M{
-						"description": A{"LDAP administrator"},
+						"description":     A{"LDAP administrator"},
 						"hasSubordinates": A{"FALSE"},
 					},
 				},
@@ -499,7 +564,7 @@ func TestScopeSearch(t *testing.T) {
 					"uid=user1",
 					"ou=Users",
 					M{
-						"sn": A{"user1"},
+						"sn":              A{"user1"},
 						"hasSubordinates": A{"FALSE"},
 					},
 				},
@@ -516,7 +581,7 @@ func TestScopeSearch(t *testing.T) {
 					"uid=user1",
 					"ou=Users",
 					M{
-						"sn": A{"user1"},
+						"sn":              A{"user1"},
 						"hasSubordinates": A{"FALSE"},
 					},
 				},
@@ -528,8 +593,7 @@ func TestScopeSearch(t *testing.T) {
 			"uid=user1",
 			ldap.ScopeSingleLevel,
 			A{"*", "+"},
-			&AssertEntries{
-			},
+			&AssertEntries{},
 		},
 		// children for not container
 		Search{
@@ -537,8 +601,7 @@ func TestScopeSearch(t *testing.T) {
 			"uid=user1",
 			3,
 			A{"*", "+"},
-			&AssertEntries{
-			},
+			&AssertEntries{},
 		},
 	}
 

@@ -88,7 +88,7 @@ func (r *Repository) insertEntry(tx *sqlx.Tx, entry *AddEntry) (int64, int64, er
 
 	log.Printf("insert query: %s, params: %v", q, params)
 
-	stmt, err := r.db.PrepareNamed(q)
+	stmt, err := tx.PrepareNamed(q)
 	if err != nil {
 		return 0, 0, xerrors.Errorf("Failed to prepare query. query: %s, err: %w", err)
 	}
@@ -220,7 +220,7 @@ func (r *Repository) insertMember(tx *sqlx.Tx, subjectID int64, entry *AddEntry)
 	dnIDCache := map[string]int64{} // dn_orig => id cache map
 	dnIDCache[dc.DNOrig] = dc.ID
 
-	nodeNorms, err := collectNodeNormByParentID(dc.ID)
+	nodeNorms, err := collectNodeNormByParentID(tx, dc.ID)
 	if err != nil {
 		return err
 	}
@@ -343,14 +343,22 @@ type nordNorm struct {
 	DNNorm string `db:"dn_norm"`
 }
 
-func collectNodeNormByParentID(parentID int64) ([]*nordNorm, error) {
+func collectNodeNormByParentID(tx *sqlx.Tx, parentID int64) ([]*nordNorm, error) {
 	if parentID == ROOT_ID {
 		return nil, xerrors.Errorf("Invalid parentID: %d", parentID)
 	}
 
-	rows, err := collectNodeNormByParentIDStmt.Queryx(map[string]interface{}{
-		"parent_id": parentID,
-	})
+	var rows *sqlx.Rows
+	var err error
+	if tx != nil {
+		rows, err = tx.NamedStmt(collectNodeNormByParentIDStmt).Queryx(map[string]interface{}{
+			"parent_id": parentID,
+		})
+	} else {
+		rows, err = collectNodeNormByParentIDStmt.Queryx(map[string]interface{}{
+			"parent_id": parentID,
+		})
+	}
 	if err != nil {
 		return nil, xerrors.Errorf("Failed to fetch child ID by parentID: %s, err: %w", parentID, err)
 	}
