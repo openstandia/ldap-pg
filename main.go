@@ -28,6 +28,11 @@ var (
 		"",
 		"DB Name",
 	)
+	dbSchema = fs.String(
+		"s",
+		"",
+		"DB Schema",
+	)
 	dbUser = fs.String(
 		"u",
 		"",
@@ -179,6 +184,7 @@ func main() {
 		DBHostName:        *dbHostName,
 		DBPort:            *dbPort,
 		DBName:            *dbName,
+		DBSchema:          *dbSchema,
 		DBUser:            *dbUser,
 		DBPassword:        *dbPassword,
 		DBMaxOpenConns:    *dbMaxOpenConns,

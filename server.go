@@ -34,6 +34,7 @@ type ServerConfig struct {
 	DBHostName        string
 	DBPort            int
 	DBName            string
+	DBSchema          string
 	DBUser            string
 	DBPassword        string
 	DBMaxOpenConns    int

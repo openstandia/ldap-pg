@@ -63,8 +63,9 @@ type Repository struct {
 
 func NewRepository(server *Server) (*Repository, error) {
 	// Init DB Connection
-	db, err := sqlx.Connect("postgres", fmt.Sprintf("host=%s port=%d user=%s dbname=%s password=%s sslmode=disable",
-		server.config.DBHostName, server.config.DBPort, server.config.DBUser, server.config.DBName, server.config.DBPassword))
+	db, err := sqlx.Connect("postgres", fmt.Sprintf("host=%s port=%d user=%s dbname=%s password=%s sslmode=disable search_path=%s",
+		server.config.DBHostName, server.config.DBPort, server.config.DBUser, server.config.DBName,
+		server.config.DBPassword, server.config.DBSchema))
 	if err != nil {
 		log.Fatalf("alert: Connect error. host=%s, port=%d, user=%s, dbname=%s, error=%s",
 			server.config.DBHostName, server.config.DBPort, server.config.DBUser, server.config.DBName, err)
