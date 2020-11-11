@@ -24,17 +24,17 @@ func handleSearchRootDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	// Define all attributes
 	searchEntry := NewSearchEntry(nil, map[string][]string{
-		"objectClass":           []string{"simpleSecurityObject", "organizationalRole"},
-		"structuralObjectClass": []string{"organizationalRole"},
-		"cn":                    []string{s.GetRootDN().RDN()["cn"]},
-		"description":           []string{"LDAP administrator"},
+		"objectClass":           {"simpleSecurityObject", "organizationalRole"},
+		"structuralObjectClass": {"organizationalRole"},
+		"cn":                    {s.GetRootDN().RDN()["cn"]},
+		"description":           {"LDAP administrator"},
 		// OperationalAttributes
-		"entryUUID":         []string{uuid.String()},
-		"creatorsName":      []string{s.GetRootDN().DNOrigStr()},
-		"modifiersName":     []string{s.GetRootDN().DNOrigStr()},
-		"entryDN":           []string{s.GetRootDN().DNOrigStr()},
-		"subschemaSubentry": []string{"cn=Subschema"},
-		"hasSubordinates":   []string{"FALSE"},
+		"entryUUID":         {uuid.String()},
+		"creatorsName":      {s.GetRootDN().DNOrigStr()},
+		"modifiersName":     {s.GetRootDN().DNOrigStr()},
+		"entryDN":           {s.GetRootDN().DNOrigStr()},
+		"subschemaSubentry": {"cn=Subschema"},
+		"hasSubordinates":   {"FALSE"},
 	})
 
 	// TODO: implement filter

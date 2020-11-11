@@ -30,9 +30,9 @@ type FetchedDBEntry struct {
 }
 
 type FetchedMember struct {
-	RDNOrig      string `db:"r`
-	ParentID     int64  `db:"p`
-	AttrNameNorm string `db:"a`
+	RDNOrig      string `db:"r"`
+	ParentID     int64  `db:"p"`
+	AttrNameNorm string `db:"a"`
 }
 
 func (e *FetchedDBEntry) IsDC() bool {

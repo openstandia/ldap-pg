@@ -38,7 +38,7 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 		{
 			label: "cn=foo",
 			schemaMap: map[string]*Schema{
-				"cn": &Schema{
+				"cn": {
 					Name:        "cn",
 					Equality:    "",
 					SingleValue: true,
@@ -56,12 +56,12 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 		{
 			label: "(&(cn=foo)(uid=foo))",
 			schemaMap: map[string]*Schema{
-				"cn": &Schema{
+				"cn": {
 					Name:        "cn",
 					Equality:    "",
 					SingleValue: true,
 				},
-				"uid": &Schema{
+				"uid": {
 					Name:        "uid",
 					Equality:    "",
 					SingleValue: true,
@@ -83,7 +83,7 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 		{
 			label: "(||(cn=foo)(cn=bar))",
 			schemaMap: map[string]*Schema{
-				"cn": &Schema{
+				"cn": {
 					Name:        "cn",
 					Equality:    "",
 					SingleValue: true,
@@ -105,7 +105,7 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 		{
 			label: "(||(cn=foo)(cn=bar)(cn=hoge))",
 			schemaMap: map[string]*Schema{
-				"cn": &Schema{
+				"cn": {
 					Name:        "cn",
 					Equality:    "",
 					SingleValue: true,
@@ -129,17 +129,17 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 		{
 			label: "(||(cn=foo)(&&(uid=bar)(sn=hoge)))",
 			schemaMap: map[string]*Schema{
-				"cn": &Schema{
+				"cn": {
 					Name:        "cn",
 					Equality:    "",
 					SingleValue: true,
 				},
-				"uid": &Schema{
+				"uid": {
 					Name:        "uid",
 					Equality:    "",
 					SingleValue: true,
 				},
-				"sn": &Schema{
+				"sn": {
 					Name:        "sn",
 					Equality:    "",
 					SingleValue: true,
@@ -165,14 +165,14 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 		{
 			label: "(!(cn=foo))",
 			schemaMap: map[string]*Schema{
-				"cn": &Schema{
+				"cn": {
 					Name:        "cn",
 					Equality:    "",
 					SingleValue: true,
 				},
 			},
 			filter: message.FilterNot{
-				message.NewFilterEqualityMatch("cn", "foo"),
+				Filter: message.NewFilterEqualityMatch("cn", "foo"),
 			},
 			out: &Query{
 				Query: "NOT (e.attrs_norm->>'cn' = :0_cn)",

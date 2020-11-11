@@ -489,7 +489,7 @@ func (s *SchemaValue) Orig() []string {
 
 func (s *SchemaValue) AsTime() []time.Time {
 	t := make([]time.Time, len(s.value))
-	for i, _ := range s.value {
+	for i := range s.value {
 		// Already validated, ignore error
 		t[i], _ = time.Parse(TIMESTAMP_FORMAT, s.value[i])
 	}
