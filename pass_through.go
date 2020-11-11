@@ -4,8 +4,8 @@ import (
 	"log"
 	"strings"
 
+	"github.com/go-ldap/ldap/v3"
 	"golang.org/x/xerrors"
-	"gopkg.in/ldap.v3"
 )
 
 type PassThroughConfig map[string]PassThroughClient
