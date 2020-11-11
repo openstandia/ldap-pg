@@ -534,6 +534,52 @@ func collectAllNodeNorm() (map[string]int64, error) {
 	return cache, nil
 }
 
+func creatFindTreePathSQL(baseDN *DN) (string, []string, error) {
+	if baseDN.IsDC() {
+		return "", nil, xerrors.Errorf("Invalid dn, it's DC: %s", strings.Join(baseDN.suffix, ","))
+	}
+
+	/*
+		SELECT t2.rdn_orig || ',' || t1.rdn_orig, t2.path
+		FROM ldap_tree t1, ldap_tree t2
+		WHERE t1.rdn_norm = 'ou=groups' AND t2.rdn_norm = 'ou=g000001'
+		AND t1.parent_id is NULL AND t2.parent_id = t1.id;
+	*/
+	proj := []string{}
+	table := []string{}
+	where := []string{}
+	where2 := []string{}
+	params := []string{}
+	for index, rdnNorm := range baseDN.dnNorm {
+		proj = append(proj, "t"+strconv.Itoa(index))
+		table = append(table, "ldap_tree t"+strconv.Itoa(index))
+		where = append(where, "t"+strconv.Itoa(index)+".rdn_norm = :rdn_norm"+strconv.Itoa(index))
+		if index == 0 {
+			where2 = append(where2, "t"+strconv.Itoa(index)+".parent_id is NULL")
+		} else {
+			where2 = append(where2, "t"+strconv.Itoa(index)+".parent_id = t"+strconv.Itoa(index-1)+".id")
+		}
+		params = append(params, rdnNorm)
+	}
+
+	sql := fmt.Sprintf(`
+	SELECT
+	  %s, t%d.path
+	FROM
+	  %s
+	WHERE
+	  %s
+	  AND
+	  %s
+	`, strings.Join(proj, " || ',' || "),
+		len(proj)-1,
+		strings.Join(table, ", "),
+		strings.Join(where, " AND "),
+		strings.Join(where2, " AND "))
+
+	return sql, params, nil
+}
+
 func collectAllNodeOrig(tx *sqlx.Tx) (map[int64]string, error) {
 	dc, err := getDCDNOrig(tx)
 	if err != nil {
