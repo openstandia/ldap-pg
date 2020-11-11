@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"gopkg.in/ldap.v3"
+	"github.com/go-ldap/ldap/v3"
 )
 
 var server *Server
@@ -36,8 +36,8 @@ func TestParallel(t *testing.T) {
 					Add{
 						"uid=user1", "ou=Users",
 						M{
-							"objectClass":  A{"inetOrgPerson"},
-							"sn":           A{"user1"},
+							"objectClass": A{"inetOrgPerson"},
+							"sn":          A{"user1"},
 						},
 						&AssertEntry{},
 					},
@@ -59,8 +59,8 @@ func TestParallel(t *testing.T) {
 					Add{
 						"uid=user2", "ou=Users",
 						M{
-							"objectClass":  A{"inetOrgPerson"},
-							"sn":           A{"user2"},
+							"objectClass": A{"inetOrgPerson"},
+							"sn":          A{"user2"},
 						},
 						&AssertEntry{},
 					},

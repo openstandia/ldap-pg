@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
+	goldap "github.com/go-ldap/ldap/v3"
 	"github.com/google/uuid"
 	"github.com/openstandia/goldap/message"
 	ldap "github.com/openstandia/ldapserver"
-	goldap "gopkg.in/ldap.v3"
 )
 
 const TIMESTAMP_FORMAT string = "20060102150405Z"

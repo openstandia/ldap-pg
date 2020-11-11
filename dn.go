@@ -3,7 +3,7 @@ package main
 import (
 	"strings"
 
-	goldap "gopkg.in/ldap.v3"
+	goldap "github.com/go-ldap/ldap/v3"
 )
 
 type DN struct {

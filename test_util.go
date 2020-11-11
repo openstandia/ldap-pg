@@ -12,12 +12,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-ldap/ldap/v3"
 	"github.com/jsimonetti/pwscheme/ssha"
 	"github.com/jsimonetti/pwscheme/ssha256"
 	"github.com/jsimonetti/pwscheme/ssha512"
 	_ "github.com/lib/pq"
 	"golang.org/x/xerrors"
-	"gopkg.in/ldap.v3"
 )
 
 func IntegrationTestRunner(m *testing.M) int {
