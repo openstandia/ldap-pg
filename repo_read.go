@@ -390,6 +390,38 @@ func (r *Repository) PrepareFindByDN(tx *sqlx.Tx, dn *DN, option *FindOption) (*
 	return stmt, params, nil
 }
 
+func (r *Repository) PrepareFindPathByDN(dn *DN, opt *FindOption) (*sqlx.NamedStmt, map[string]interface{}, error) {
+	//  Key for stmt cache
+	key := fmt.Sprintf("PATH/DEPTH:%d", len(dn.dnNorm))
+
+	// make params
+	depth := len(dn.dnNorm)
+	last := depth - 1
+	params := make(map[string]interface{}, depth)
+	for i := last; i >= 0; i-- {
+		params[fmt.Sprintf("rdn_norm%d", i)] = dn.dnNorm[i]
+	}
+
+	if stmt, ok := treeStmtCache.Get(key); ok {
+		// Already cached
+		return stmt, params, nil
+	}
+
+	// Not cached yet, create query and params, then cache the stmt
+	q, err := creatFindTreePathSQL(dn, opt)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	stmt, err := r.db.PrepareNamed(q)
+	if err != nil {
+		return nil, nil, err
+	}
+	treeStmtCache.Put(key, stmt)
+
+	return stmt, params, nil
+}
+
 func (r *Repository) PrepareFindTreeByDN(dn *DN) (*sqlx.NamedStmt, map[string]interface{}, error) {
 	//  Key for stmt cache
 	key := fmt.Sprintf("TREE/DEPTH:%d", len(dn.dnNorm))
@@ -534,50 +566,51 @@ func collectAllNodeNorm() (map[string]int64, error) {
 	return cache, nil
 }
 
-func creatFindTreePathSQL(baseDN *DN) (string, []string, error) {
+func creatFindTreePathSQL(baseDN *DN, opt *FindOption) (string, error) {
 	if baseDN.IsDC() {
-		return "", nil, xerrors.Errorf("Invalid dn, it's DC: %s", strings.Join(baseDN.suffix, ","))
+		return "", xerrors.Errorf("Invalid dn, it's DC: %s", strings.Join(baseDN.suffix, ","))
 	}
 
 	/*
-		SELECT t2.rdn_orig || ',' || t1.rdn_orig, t2.path
-		FROM ldap_tree t1, ldap_tree t2
-		WHERE t1.rdn_norm = 'ou=groups' AND t2.rdn_norm = 'ou=g000001'
-		AND t1.parent_id is NULL AND t2.parent_id = t1.id;
+		SELECT t2.path
+		FROM ldap_tree t1, ldap_entry e1, ldap_tree t2, ldap_entry e2
+		WHERE e1.rdn_norm = 'ou=groups' AND e2.rdn_norm = 'cn=g000001'
+		AND t1.parent_id is NULL AND t1.id = e1.id
+		AND t2.parent_id = t1.id AND t2.id = e2.id
 	*/
-	proj := []string{}
 	table := []string{}
 	where := []string{}
 	where2 := []string{}
-	params := []string{}
-	for index, rdnNorm := range baseDN.dnNorm {
-		proj = append(proj, "t"+strconv.Itoa(index))
-		table = append(table, "ldap_tree t"+strconv.Itoa(index))
-		where = append(where, "t"+strconv.Itoa(index)+".rdn_norm = :rdn_norm"+strconv.Itoa(index))
+	for index := range baseDN.dnNorm {
+		table = append(table, fmt.Sprintf("ldap_tree t%d, ldap_entry e%d", index, index))
+		where = append(where, fmt.Sprintf("e%d.rdn_norm = :rdn_norm%d", index, index))
 		if index == 0 {
-			where2 = append(where2, "t"+strconv.Itoa(index)+".parent_id is NULL")
+			where2 = append(where2, fmt.Sprintf("t%d.parent_id is NULL AND t%d.id = e%d.id", index, index, index))
 		} else {
-			where2 = append(where2, "t"+strconv.Itoa(index)+".parent_id = t"+strconv.Itoa(index-1)+".id")
+			where2 = append(where2, fmt.Sprintf("t%d.parent_id = t%d.id AND t%d.id = e%d.id", index, index-1, index, index))
 		}
-		params = append(params, rdnNorm)
 	}
 
 	sql := fmt.Sprintf(`
 	SELECT
-	  %s, t%d.path
+	  t%d.path
 	FROM
 	  %s
 	WHERE
 	  %s
 	  AND
 	  %s
-	`, strings.Join(proj, " || ',' || "),
-		len(proj)-1,
+	`,
+		len(baseDN.dnNorm)-1,
 		strings.Join(table, ", "),
 		strings.Join(where, " AND "),
 		strings.Join(where2, " AND "))
 
-	return sql, params, nil
+	if opt.Lock {
+		sql += " for UPDATE"
+	}
+
+	return sql, nil
 }
 
 func collectAllNodeOrig(tx *sqlx.Tx) (map[int64]string, error) {
