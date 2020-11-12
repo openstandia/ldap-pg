@@ -159,13 +159,7 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 func responseEntry(s *Server, w ldap.ResponseWriter, r message.SearchRequest, searchEntry *SearchEntry) {
 	log.Printf("Response Entry: %+v", searchEntry)
 
-	var dn string
-	if searchEntry.DNOrigStr() == "" {
-		dn = s.SuffixOrigStr()
-	} else {
-		dn = searchEntry.DNOrigStr() + "," + s.SuffixOrigStr()
-	}
-	e := ldap.NewSearchResultEntry(dn)
+	e := ldap.NewSearchResultEntry(searchEntry.DNOrigStr())
 
 	sentAttrs := map[string]struct{}{}
 

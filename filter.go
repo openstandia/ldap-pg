@@ -145,8 +145,16 @@ func (s *Schema) LessOrEqualMatch(q *Query, val string) {
 }
 
 func (s *Schema) PresentMatch(q *Query) {
+	paramKey := q.nextParamKey(s.Name)
+
+	sv, err := NewSchemaValue(s.Name, []string{s.Name})
+	if err != nil {
+		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s", s.Name)
+		return
+	}
 	// attrs_norm ? 'cn';
-	q.Query += fmt.Sprintf("e.attrs_norm ? :%s", s.Name)
+	q.Query += "e.attrs_norm ? :" + paramKey
+	q.Params[paramKey] = sv.Norm()[0]
 }
 
 func (s *Schema) ApproxMatch(q *Query, val string) {

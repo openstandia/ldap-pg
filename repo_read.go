@@ -151,10 +151,15 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []st
 		return 0, 0, err
 	}
 
+	// Cache
+	q.IdToDNOrigCache[fetchedDN.ID] = fetchedDN.DNOrig
+
 	where, err := r.AppenScopeFilter(scope, q, fetchedDN)
 	if err != nil {
 		return 0, 0, err
 	}
+
+	log.Printf("debug: where: %s", where)
 
 	var memberCol string
 	var memberJoin string
@@ -238,21 +243,16 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []st
 			return 0, 0, err
 		}
 
+		// Set dn_orig using cache from fetching before phase
 		var dnOrig string
 		if dnOrig, ok = q.IdToDNOrigCache[dbEntry.ID]; !ok {
 			parentDNOrig, ok := q.IdToDNOrigCache[dbEntry.ParentID]
 			if !ok {
-				log.Printf("warn: Failed to retrieve parent by parent_id: %d. The parent might be removed or renamed.", dbEntry.ParentID)
-				// TODO return busy?
+				log.Printf("error: Invalid state, failed to retrieve parent by parent_id: %d", dbEntry.ParentID)
 				return 0, 0, xerrors.Errorf("Failed to retrieve parent by parent_id: %d", dbEntry.ParentID)
 			}
 
-			// Set dn_orig using cache from fetching ldap_tree table
-			if parentDNOrig != "" {
-				dnOrig = fmt.Sprintf("%s,%s", dbEntry.RDNOrig, parentDNOrig)
-			} else {
-				dnOrig = dbEntry.RDNOrig
-			}
+			dnOrig = dbEntry.RDNOrig + "," + parentDNOrig
 		}
 		dbEntry.DNOrig = dnOrig
 
@@ -397,8 +397,10 @@ func (r *Repository) PrepareFindPathByDN(dn *DN, opt *FindOption) (*sqlx.NamedSt
 	depth := len(dn.RDNs)
 	last := depth - 1
 	params := make(map[string]interface{}, depth)
+	ii := 0
 	for i := last; i >= 0; i-- {
-		params[fmt.Sprintf("rdn_norm%d", i)] = dn.RDNs[i].NormStr()
+		params["rdn_norm"+strconv.Itoa(ii)] = dn.RDNs[i].NormStr()
+		ii++
 	}
 
 	if stmt, ok := treeStmtCache.Get(key); ok {
@@ -571,13 +573,13 @@ func createFindTreePathSQL(baseDN *DN, opt *FindOption) (string, error) {
 	}
 
 	if baseDN.IsRoot() {
-		return `SELECT e0.id, '' as parent_path, (CASE WHEN ex.id IS NOT NULL THEN 1 ELSE 0 END) as has_sub FROM ldap_entry e0 LEFT JOIN ldap_tree ex ON e0.id = ex.id WHERE e0.rdn_norm = :rdn_norm0 AND e0.parent_id is NULL`, nil
+		return `SELECT e0.rdn_orig as dn_orig, e0.id, '' as parent_path, (CASE WHEN ex.id IS NOT NULL THEN 1 ELSE 0 END) as has_sub FROM ldap_entry e0 LEFT JOIN ldap_tree ex ON e0.id = ex.id WHERE e0.rdn_norm = :rdn_norm0 AND e0.parent_id is NULL`, nil
 	}
 
 	/*
 		SELECT
 			e4.rdn_orig || ',' || e3.rdn_orig || ',' || e2.rdn_orig || ',' || e1.rdn_orig,
-			t3.path || e4.id::text as path,
+			e4.id, t3.path as parent_path,
 			(CASE WHEN ex.id IS NOT NULL THEN 1 ELSE 0 END) as has_sub
 		FROM
 			ldap_tree t1, ldap_tree t2, ldap_tree t3,
@@ -590,14 +592,16 @@ func createFindTreePathSQL(baseDN *DN, opt *FindOption) (string, error) {
 			AND t2.id = e2.id
 			AND t3.id = e3.id
 
-		                ?column?                |  path   | has_sub
-		----------------------------------------+---------+---------
-		 uid=u000001,ou=Users,dc=Example,dc=com | 0.1.2.4 |       0
+		                ?column?                |  id  | parent_path | has_sub
+		----------------------------------------+------+-------------+---------
+		 uid=u000001,ou=Users,dc=Example,dc=com |   4  |0.1.2        |       0
 	*/
+	proj := []string{}
 	table := []string{}
 	where := []string{}
 	where2 := []string{}
 	for index := range baseDN.RDNs {
+		proj = append(proj, fmt.Sprintf("e%d.rdn_orig", len(baseDN.RDNs)-index-1))
 		if index < len(baseDN.RDNs)-1 {
 			table = append(table, fmt.Sprintf("ldap_tree t%d, ldap_entry e%d", index, index))
 		} else {
@@ -615,6 +619,7 @@ func createFindTreePathSQL(baseDN *DN, opt *FindOption) (string, error) {
 
 	sql := fmt.Sprintf(`
 	SELECT
+	  %s as dn_orig,
 	  e%d.id, t%d.path as parent_path,
 	  (CASE WHEN ex.id IS NOT NULL THEN 1 ELSE 0 END) as has_sub
 	FROM
@@ -625,6 +630,7 @@ func createFindTreePathSQL(baseDN *DN, opt *FindOption) (string, error) {
 	  AND
 	  %s
 	`,
+		strings.Join(proj, " || ',' || "),
 		len(baseDN.RDNs)-1,
 		len(baseDN.RDNs)-2,
 		strings.Join(table, ", "),
@@ -635,6 +641,8 @@ func createFindTreePathSQL(baseDN *DN, opt *FindOption) (string, error) {
 	if opt.Lock {
 		sql += " for UPDATE"
 	}
+
+	log.Printf("debug: createFindTreePathSQL: %s", sql)
 
 	return sql, nil
 }
@@ -853,6 +861,11 @@ func (r *Repository) AppenScopeFilter(scope int, q *Query, fetchedDN *FetchedDN)
 			return "", err
 		}
 
+		// Cache
+		for _, c := range containers {
+			q.IdToDNOrigCache[c.ID] = c.DNOrig
+		}
+
 		in, params := expandContainersIn(containers)
 		parentFilter = "(e.id = :baseDNID OR e.parent_id IN (" + in + "))"
 		q.Params["baseDNID"] = fetchedDN.ID
@@ -864,6 +877,11 @@ func (r *Repository) AppenScopeFilter(scope int, q *Query, fetchedDN *FetchedDN)
 		containers, err := r.FindContainerByDN(nil, fetchedDN, scope)
 		if err != nil {
 			return "", err
+		}
+
+		// Cache
+		for _, c := range containers {
+			q.IdToDNOrigCache[c.ID] = c.DNOrig
 		}
 
 		in, params := expandContainersIn(containers)

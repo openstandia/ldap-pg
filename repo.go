@@ -18,9 +18,7 @@ var (
 	insertUnderDCStmt *sqlx.NamedStmt
 
 	// repo_read
-	findContainerByPathStmt      *sqlx.NamedStmt
-	findAllContainerStmt         *sqlx.NamedStmt
-	findAllContainerScopeOneStmt *sqlx.NamedStmt
+	findContainerByPathStmt *sqlx.NamedStmt
 
 	collectNodeOrigByParentIDStmt *sqlx.NamedStmt
 	collectNodeNormByParentIDStmt *sqlx.NamedStmt
@@ -94,37 +92,13 @@ func (r *Repository) initStmt(db *sqlx.DB) error {
 	var err error
 
 	findContainerByPathStmt, err = db.PrepareNamed(`SELECT
-		t.id, string_agg(e.rdn_orig, ',' ORDER BY dn.ord DESC) AS dn
+		t.id, string_agg(e.rdn_orig, ',' ORDER BY dn.ord DESC) AS dn_orig
 		FROM
 			ldap_tree t
-			JOIN regexp_split_to_table(t.path::text, '[.]') WITH ORDINALITY dn(id, ord) ON true
-			JOIN ldap_entry e ON e.id = dn.id::int
+			JOIN regexp_split_to_table(t.path::::text, '[.]') WITH ORDINALITY dn(id, ord) ON true
+			JOIN ldap_entry e ON e.id = dn.id::::int
 		WHERE
 			t.path ~ :path
-		GROUP BY t.id`)
-	if err != nil {
-		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	}
-
-	// Caution: can't fecth root entry since no data in the DB
-	findAllContainerStmt, err = db.PrepareNamed(`SELECT
-		t.id, string_agg(e.rdn_orig, ',' ORDER BY dn.ord DESC) AS dn
-		FROM
-			ldap_tree t
-			JOIN regexp_split_to_table(t.path::text, '[.]') WITH ORDINALITY dn(id, ord) ON true
-			JOIN ldap_entry e ON e.id = dn.id::int
-		GROUP BY t.id`)
-	if err != nil {
-		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	}
-
-	findAllContainerScopeOneStmt, err = db.PrepareNamed(`SELECT
-		t.id, string_agg(e.rdn_orig, ',' ORDER BY dn.ord DESC) AS dn
-		FROM
-			ldap_tree t
-			JOIN regexp_split_to_table(t.path::text, '[.]') WITH ORDINALITY dn(id, ord) ON true
-			JOIN ldap_entry e ON e.id = dn.id::int
-		WHERE t.path ~ '*{1}' 
 		GROUP BY t.id`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)

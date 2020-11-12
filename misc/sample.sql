@@ -57,19 +57,20 @@ CREATE INDEX idx_ldap_entry_attrs_member ON ldap_entry USING gin ((attrs_norm->'
 CREATE INDEX idx_ldap_entry_attrs_memberOf ON ldap_entry USING gin ((attrs_norm->'memberOf') jsonb_path_ops);
 
 -- exists index
+CREATE INDEX idx_ldap_entry_attrs_objectclass_exists ON ldap_entry ((attrs_norm ? 'objectclass'));
 CREATE INDEX idx_ldap_entry_attrs_cn_exists ON ldap_entry ((attrs_norm ? 'cn'));
 CREATE INDEX idx_ldap_entry_attrs_uid_exists ON ldap_entry ((attrs_norm ? 'uid'));
 CREATE INDEX idx_ldap_entry_attrs_mail_exists ON ldap_entry ((attrs_norm ? 'mail'));
 
 insert into ldap_entry values
-   (0, NULL, 'dc=com', 'dc=com', gen_random_uuid(), NOW(), NOW(), '{"dc":["com"]}', '{"dc":["com"]}'),
-   (1, 0, 'dc=example', 'dc=Example', gen_random_uuid(), NOW(), NOW(), '{"dc":["example"]}', '{"dc":["Example"]}'),
-   (2, 1, 'ou=users', 'ou=Users', gen_random_uuid(), NOW(), NOW(), '{"ou":["Users"]}', '{"ou":["People"]}'),
-   (3, 1, 'ou=groups','ou=Groups', gen_random_uuid(), NOW(), NOW(), '{"ou":["Groups"]}', '{"ou":["Groups"]}'),
-   (4, 2, 'uid=u000001','uid=u000001', gen_random_uuid(), NOW(), NOW(), '{"uid":["u000001"],"sn":["user000001"]}', '{"uid":["u000001"],"sn":["user000001"]}'),
-   (5, 3, 'cn=g000001','cn=g000001', gen_random_uuid(), NOW(), NOW(), '{"cn":["g000001"]}', '{"cn":["g000001"]}'),
-   (6, 5, 'cn=g000002','cn=g000002', gen_random_uuid(), NOW(), NOW(), '{"cn":["g000002"]}', '{"cn":["g000002"]}'),
-   (7, NULL, 'dc=net','dc=net', gen_random_uuid(), NOW(), NOW(), '{"dc":["net"]}', '{"dc":["net"]}');
+   (0, NULL, 'dc=com', 'dc=com', gen_random_uuid(), NOW(), NOW(), '{"dc":["com"],"objectclass":["top","dcObject","organization"]}', '{"dc":["com"],"objectClass":["top","dcObject","organization"]}'),
+   (1, 0, 'dc=example', 'dc=Example', gen_random_uuid(), NOW(), NOW(), '{"dc":["example"],"objectclass":["top","dcObject","organization"]}', '{"dc":["Example"],"objectClass":["top","dcObject","organization"]}'),
+   (2, 1, 'ou=users', 'ou=Users', gen_random_uuid(), NOW(), NOW(), '{"ou":["Users"],"objectclass":["organizationalunit"]}', '{"ou":["People"],"objectClass":["organizationalUnit"]}'),
+   (3, 1, 'ou=groups','ou=Groups', gen_random_uuid(), NOW(), NOW(), '{"ou":["Groups"],"objectclass":["organizationalunit"]}', '{"ou":["Groups"],"objectClass":["organizationalUnit"]}'),
+   (4, 2, 'uid=u000001','uid=u000001', gen_random_uuid(), NOW(), NOW(), '{"uid":["u000001"],"sn":["user000001"],"objectclass":["inetorgperson"]}', '{"uid":["u000001"],"sn":["user000001"],"objectClass":["inetOrgPerson"]}'),
+   (5, 3, 'cn=g000001','cn=g000001', gen_random_uuid(), NOW(), NOW(), '{"cn":["g000001"],"objectclass":["groupofuniquenames"]}', '{"cn":["g000001"],"objectclass":["groupOfUniqueNames"]}'),
+   (6, 5, 'cn=g000002','cn=g000002', gen_random_uuid(), NOW(), NOW(), '{"cn":["g000002"],"objectclass":["groupofuniquenames"]}', '{"cn":["g000002"],"objectClass":["groupOfUniqueNames"]}'),
+   (7, NULL, 'dc=net','dc=net', gen_random_uuid(), NOW(), NOW(), '{"dc":["net"],"objectclass":["top","dcObject","organization"]}', '{"dc":["net"],"objectClass":["top","dcObject","organization"]}');
 
 SELECT setval('ldap_entry_id_seq', max(id)) FROM ldap_entry;
 
