@@ -6,6 +6,13 @@ type DN struct {
 	cachedRDN map[string]string
 }
 
+type FetchedDN struct {
+	ID         int64  `db:"id"`
+	ParentPath string `db:"parent_path"`
+	HasSub     bool   `db:"has_sub"`
+	DNOrig     string `db:"dn_orig"`
+}
+
 type RelativeDN struct {
 	Attributes []*AttributeTypeAndValue
 }
@@ -187,6 +194,10 @@ func (d *DN) ParentDN() *DN {
 		RDNs:   d.RDNs[1:],
 		suffix: d.suffix,
 	}
+}
+
+func (d *DN) IsRoot() bool {
+	return len(d.RDNs) == 1
 }
 
 func (d *DN) IsDC() bool {

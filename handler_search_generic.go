@@ -245,6 +245,18 @@ func responseSearchError(w ldap.ResponseWriter, err error) {
 	}
 }
 
+func expandContainersIn(containers []*FetchedDNOrig) (string, map[string]int64) {
+	s := make([]string, len(containers))
+	m := make(map[string]int64, len(containers))
+
+	for i, c := range containers {
+		k := "parent_id_" + strconv.Itoa(i)
+		s[i] = ":" + k
+		m[k] = c.ID
+	}
+	return strings.Join(s, ","), m
+}
+
 func expandIn(cid []int64) (string, map[string]int64) {
 	s := make([]string, len(cid))
 	m := make(map[string]int64, len(cid))

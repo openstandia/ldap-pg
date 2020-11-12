@@ -68,7 +68,8 @@ insert into ldap_entry values
    (3, 1, 'ou=groups','ou=Groups', gen_random_uuid(), NOW(), NOW(), '{"ou":["Groups"]}', '{"ou":["Groups"]}'),
    (4, 2, 'uid=u000001','uid=u000001', gen_random_uuid(), NOW(), NOW(), '{"uid":["u000001"],"sn":["user000001"]}', '{"uid":["u000001"],"sn":["user000001"]}'),
    (5, 3, 'cn=g000001','cn=g000001', gen_random_uuid(), NOW(), NOW(), '{"cn":["g000001"]}', '{"cn":["g000001"]}'),
-   (6, 5, 'cn=g000002','cn=g000002', gen_random_uuid(), NOW(), NOW(), '{"cn":["g000002"]}', '{"cn":["g000002"]}');
+   (6, 5, 'cn=g000002','cn=g000002', gen_random_uuid(), NOW(), NOW(), '{"cn":["g000002"]}', '{"cn":["g000002"]}'),
+   (7, NULL, 'dc=net','dc=net', gen_random_uuid(), NOW(), NOW(), '{"dc":["net"]}', '{"dc":["net"]}');
 
 SELECT setval('ldap_entry_id_seq', max(id)) FROM ldap_entry;
 

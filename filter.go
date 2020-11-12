@@ -71,7 +71,7 @@ func (s *Schema) EqualityMatch(q *Query, val string) {
 		paramKeyParentID := paramKey + "_parent_id"
 
 		// Stroe into pendig params since we need to resolve the parent DN as id later
-		q.pendingParams[reqDN.ParentDN().DNNormStr()] = paramKeyParentID
+		q.PendingParams[reqDN.ParentDN().DNNormStr()] = paramKeyParentID
 
 		q.Query += fmt.Sprintf(`EXISTS
 			(
@@ -93,7 +93,7 @@ func (s *Schema) EqualityMatch(q *Query, val string) {
 		paramKeyParentID := paramKey + "_parent_id"
 
 		// Stroe into pendig params since we need to resolve the parent DN as id later
-		q.pendingParams[reqDN.ParentDN().DNNormStr()] = paramKeyParentID
+		q.PendingParams[reqDN.ParentDN().DNNormStr()] = paramKeyParentID
 
 		q.Query += fmt.Sprintf(`EXISTS
 			(
@@ -170,10 +170,12 @@ func (s *Schema) ApproxMatch(q *Query, val string) {
 }
 
 type Query struct {
-	hasOr         bool
-	Query         string
-	Params        map[string]interface{}
-	pendingParams map[string]string // dn_norm => paramsKey
+	hasOr           bool
+	Query           string
+	Params          map[string]interface{}
+	PendingParams   map[string]string // dn_norm => paramsKey
+	IdToDNOrigCache map[int64]string  // id => dn_orig
+	DNNormToIdCache map[string]int64  // dn_norm => id
 }
 
 func (q *Query) nextParamKey(name string) string {
@@ -182,8 +184,11 @@ func (q *Query) nextParamKey(name string) string {
 
 func ToQuery(schemaMap SchemaMap, packet message.Filter) (*Query, error) {
 	q := &Query{
-		Query:  "",
-		Params: map[string]interface{}{},
+		Query:           "",
+		Params:          map[string]interface{}{},
+		PendingParams:   map[string]string{},
+		IdToDNOrigCache: map[int64]string{},
+		DNNormToIdCache: map[string]int64{},
 	}
 
 	err := translateFilter(schemaMap, packet, q)

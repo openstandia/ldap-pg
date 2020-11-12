@@ -145,24 +145,13 @@ type FetchedDNOrig struct {
 func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []string,
 	reqMemberOf, isHasSubordinatesRequested bool, handler func(entry *SearchEntry) error) (int32, int32, error) {
 
-	// TODO: use scope
-	dnOrigs, err := r.FindContainerByDN(nil, baseDN, scope)
+	fetchedDN, err := r.FindDNByDN(nil, baseDN)
 	if err != nil {
-		log.Printf("warn: Failed to collect all container orig. err: %+v", err)
+		log.Printf("debug: Failed to find DN by DN. err: %+v", err)
 		return 0, 0, err
 	}
 
-	dnOrigCache := make(map[int64]string, len(dnOrigs))
-	for _, dnOrig := range dnOrigs {
-		dnOrigCache[dnOrig.ID] = dnOrig.DNOrig
-	}
-
-	baseDNID, cid, err := r.collectParentIDs(baseDN, scope, dnOrigCache)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	where, err := appenScopeFilter(scope, q, baseDNID, cid)
+	where, err := r.AppenScopeFilter(scope, q, fetchedDN)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -250,8 +239,8 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []st
 		}
 
 		var dnOrig string
-		if dnOrig, ok = dnOrigCache[dbEntry.ID]; !ok {
-			parentDNOrig, ok := dnOrigCache[dbEntry.ParentID]
+		if dnOrig, ok = q.IdToDNOrigCache[dbEntry.ID]; !ok {
+			parentDNOrig, ok := q.IdToDNOrigCache[dbEntry.ParentID]
 			if !ok {
 				log.Printf("warn: Failed to retrieve parent by parent_id: %d. The parent might be removed or renamed.", dbEntry.ParentID)
 				// TODO return busy?
@@ -267,7 +256,7 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []st
 		}
 		dbEntry.DNOrig = dnOrig
 
-		readEntry, err := mapper.FetchedDBEntryToSearchEntry(&dbEntry, dnOrigCache)
+		readEntry, err := mapper.FetchedDBEntryToSearchEntry(&dbEntry, q.IdToDNOrigCache)
 		if err != nil {
 			log.Printf("error: Mapper error: %#v", err)
 			return 0, 0, err
@@ -580,38 +569,66 @@ func createFindTreePathSQL(baseDN *DN, opt *FindOption) (string, error) {
 	if len(baseDN.RDNs) == 0 {
 		return "", xerrors.Errorf("Invalid DN, it's anonymous")
 	}
+
+	if baseDN.IsRoot() {
+		return `SELECT e0.id, '' as parent_path, (CASE WHEN ex.id IS NOT NULL THEN 1 ELSE 0 END) as has_sub FROM ldap_entry e0 LEFT JOIN ldap_tree ex ON e0.id = ex.id WHERE e0.rdn_norm = :rdn_norm0 AND e0.parent_id is NULL`, nil
+	}
+
 	/*
-		SELECT t2.path
-		FROM ldap_tree t1, ldap_entry e1, ldap_tree t2, ldap_entry e2
-		WHERE e1.rdn_norm = 'dc=example' AND e2.rdn_norm = 'ou=groups'
-		AND t1.parent_id is NULL AND t1.id = e1.id
-		AND t2.parent_id = t1.id AND t2.id = e2.id
+		SELECT
+			e4.rdn_orig || ',' || e3.rdn_orig || ',' || e2.rdn_orig || ',' || e1.rdn_orig,
+			t3.path || e4.id::text as path,
+			(CASE WHEN ex.id IS NOT NULL THEN 1 ELSE 0 END) as has_sub
+		FROM
+			ldap_tree t1, ldap_tree t2, ldap_tree t3,
+			ldap_entry e1, ldap_entry e2, ldap_entry e3, ldap_entry e4
+			LEFT JOIN ldap_tree ex ON e4.id = ex.id
+		WHERE
+			e1.rdn_norm = 'dc=com' AND e2.rdn_norm = 'dc=example' AND e3.rdn_norm = 'ou=users' AND e4.rdn_norm = 'uid=u000001'
+			AND t1.parent_id is NULL AND t2.parent_id = t1.id AND t3.parent_id = t2.id AND e4.parent_id = t3.id
+			AND t1.id = e1.id
+			AND t2.id = e2.id
+			AND t3.id = e3.id
+
+		                ?column?                |  path   | has_sub
+		----------------------------------------+---------+---------
+		 uid=u000001,ou=Users,dc=Example,dc=com | 0.1.2.4 |       0
 	*/
 	table := []string{}
 	where := []string{}
 	where2 := []string{}
 	for index := range baseDN.RDNs {
-		table = append(table, fmt.Sprintf("ldap_tree t%d, ldap_entry e%d", index, index))
+		if index < len(baseDN.RDNs)-1 {
+			table = append(table, fmt.Sprintf("ldap_tree t%d, ldap_entry e%d", index, index))
+		} else {
+			table = append(table, fmt.Sprintf("ldap_entry e%d", index))
+		}
 		where = append(where, fmt.Sprintf("e%d.rdn_norm = :rdn_norm%d", index, index))
 		if index == 0 {
 			where2 = append(where2, fmt.Sprintf("t%d.parent_id is NULL AND t%d.id = e%d.id", index, index, index))
-		} else {
+		} else if index < len(baseDN.RDNs)-1 {
 			where2 = append(where2, fmt.Sprintf("t%d.parent_id = t%d.id AND t%d.id = e%d.id", index, index-1, index, index))
+		} else {
+			where2 = append(where2, fmt.Sprintf("e%d.parent_id = t%d.id", index, index-1))
 		}
 	}
 
 	sql := fmt.Sprintf(`
 	SELECT
-	  t%d.path
+	  e%d.id, t%d.path as parent_path,
+	  (CASE WHEN ex.id IS NOT NULL THEN 1 ELSE 0 END) as has_sub
 	FROM
 	  %s
+	  LEFT JOIN ldap_tree ex ON e%d.id = ex.id
 	WHERE
 	  %s
 	  AND
 	  %s
 	`,
 		len(baseDN.RDNs)-1,
+		len(baseDN.RDNs)-2,
 		strings.Join(table, ", "),
+		len(baseDN.RDNs)-1,
 		strings.Join(where, " AND "),
 		strings.Join(where2, " AND "))
 
@@ -654,65 +671,74 @@ func creatFindContainerSQLByPath(path string, opt *FindOption) (string, error) {
 	return sql, nil
 }
 
-func (r *Repository) FindContainerByDN(tx *sqlx.Tx, dn *DN, scope int) ([]*FetchedDNOrig, error) {
-	var rows *sqlx.Rows
-	var err error
+func namedStmt(tx *sqlx.Tx, stmt *sqlx.NamedStmt) *sqlx.NamedStmt {
+	if tx != nil {
+		return tx.NamedStmt(stmt)
+	}
+	return stmt
+}
 
-	// Scope handling, one and sub need to include base.
+func txLabel(tx *sqlx.Tx) string {
+	if tx == nil {
+		return "non-tx"
+	}
+	return "tx"
+}
+
+func (r *Repository) FindDNByDN(tx *sqlx.Tx, dn *DN) (*FetchedDN, error) {
+	stmt, params, err := r.PrepareFindPathByDN(dn, &FindOption{Lock: false})
+	if err != nil {
+		return nil, xerrors.Errorf("Failed to prepare FindDNByDN: %v, err: %w", dn, err)
+	}
+
+	var dest FetchedDN
+	err = namedStmt(tx, stmt).Get(&dest, params)
+	if err != nil {
+		if isNoResult(err) {
+			return nil, NewNoSuchObject()
+		}
+		return nil, xerrors.Errorf("Failed to fetch FindDNByDN in %s: %v, err: %w", txLabel(tx), dn, err)
+	}
+
+	return &dest, nil
+}
+
+func (r *Repository) FindContainerByDN(tx *sqlx.Tx, dn *FetchedDN, scope int) ([]*FetchedDNOrig, error) {
+	// Scope handling, sub need to include base.
 	// 0: base
 	// 1: one
 	// 2: sub
 	// 3: children
 
-	if dn.IsDC() {
-		if scope == 0 {
-			return []*FetchedDNOrig{
-				{
-					ID:     ROOT_ID,
-					DNOrig: "",
-				},
-			}, nil
-		}
-		if tx != nil {
-			rows, err = tx.NamedStmt(findAllContainerStmt).Queryx(map[string]interface{}{})
-		} else {
-			rows, err = findAllContainerStmt.Queryx(map[string]interface{}{})
-		}
-	} else {
-		var stmt *sqlx.NamedStmt
-		var params map[string]interface{}
+	if scope == 0 || scope == 1 {
+		return nil, xerrors.Errorf("Invalid scope, it should be 2(sub) or 3(children): %d", scope)
+	}
 
-		stmt, params, err = r.PrepareFindPathByDN(dn, &FindOption{Lock: false})
-		if err != nil {
-			return nil, xerrors.Errorf("Failed to prepare findPathByDN: %v, err: %w", dn, err)
-		}
+	var rows *sqlx.Rows
+	var err error
 
-		var path string
-		if tx != nil {
-			err = tx.NamedStmt(stmt).Get(&path, params)
-			if err != nil {
-				return nil, xerrors.Errorf("Failed to fetch findPathByDN: %v, err: %w", dn, err)
-			}
-
-			rows, err = tx.NamedStmt(findContainerByPathStmt).Queryx(map[string]interface{}{
-				"path": path,
-			})
-		} else {
-			rows, err = findContainerByPathStmt.Queryx(map[string]interface{}{
-				"path": path,
-			})
-		}
+	if scope == 2 { // sub
+		rows, err = namedStmt(tx, findContainerByPathStmt).Queryx(map[string]interface{}{
+			"path": dn.ParentPath + ".*{1,}",
+		})
+	} else if scope == 3 { // children
+		rows, err = namedStmt(tx, findContainerByPathStmt).Queryx(map[string]interface{}{
+			"path": dn.ParentPath + ".*{2,}",
+		})
 	}
 
 	if err != nil {
-		return nil, xerrors.Errorf("Failed to containers by DN: %v, err: %w", dn, err)
+		return nil, xerrors.Errorf("Failed to find containers by DN: %v, err: %w", dn, err)
 	}
 	defer rows.Close()
 
 	list := []*FetchedDNOrig{}
 	for rows.Next() {
 		child := FetchedDNOrig{}
-		rows.StructScan(&child)
+		err = rows.StructScan(&child)
+		if err != nil {
+			return nil, xerrors.Errorf("Failed to find containers by DN due to fail struct scan, DN: %v, err: %w", dn, err)
+		}
 		list = append(list, &child)
 	}
 
@@ -835,7 +861,8 @@ func (r *Repository) FindCredByDN(dn *DN) ([]string, error) {
 	return cred, nil
 }
 
-func appenScopeFilter(scope int, q *Query, baseDNID int64, childrenDNIDs []int64) (string, error) {
+func (r *Repository) AppenScopeFilter(scope int, q *Query, fetchedDN *FetchedDN) (string, error) {
+
 	// Make query based on the requested scope
 
 	// Scope handling, one and sub need to include base.
@@ -844,26 +871,34 @@ func appenScopeFilter(scope int, q *Query, baseDNID int64, childrenDNIDs []int64
 	// 2: sub
 	// 3: children
 	var parentFilter string
-	if scope == 0 {
+	if scope == 0 { // base
 		parentFilter = "e.id = :baseDNID"
-		q.Params["baseDNID"] = baseDNID
+		q.Params["baseDNID"] = fetchedDN.ID
 
-	} else if scope == 1 {
+	} else if scope == 1 { // one
 		parentFilter = "e.parent_id = :baseDNID"
-		q.Params["baseDNID"] = baseDNID
+		q.Params["baseDNID"] = fetchedDN.ID
 
-	} else if scope == 2 {
-		childrenDNIDs = append(childrenDNIDs, baseDNID)
-		in, params := expandIn(childrenDNIDs)
+	} else if scope == 2 { // sub
+		containers, err := r.FindContainerByDN(nil, fetchedDN, scope)
+		if err != nil {
+			return "", err
+		}
+
+		in, params := expandContainersIn(containers)
 		parentFilter = "(e.id = :baseDNID OR e.parent_id IN (" + in + "))"
-		q.Params["baseDNID"] = baseDNID
+		q.Params["baseDNID"] = fetchedDN.ID
 		for k, v := range params {
 			q.Params[k] = v
 		}
 
-	} else if scope == 3 {
-		childrenDNIDs = append(childrenDNIDs, baseDNID)
-		in, params := expandIn(childrenDNIDs)
+	} else if scope == 3 { // children
+		containers, err := r.FindContainerByDN(nil, fetchedDN, scope)
+		if err != nil {
+			return "", err
+		}
+
+		in, params := expandContainersIn(containers)
 		parentFilter = "e.parent_id IN (" + in + ")"
 		for k, v := range params {
 			q.Params[k] = v
