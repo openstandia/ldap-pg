@@ -67,10 +67,11 @@ func (s *Schema) EqualityMatch(q *Query, val string) {
 			return
 		}
 
-		parentID := q.parentIDCache[reqDN.ParentDN().DNNormStr()]
-
 		paramKeyName := paramKey + "_name"
 		paramKeyParentID := paramKey + "_parent_id"
+
+		// Stroe into pendig params since we need to resolve the parent DN as id later
+		q.pendingParams[reqDN.ParentDN().DNNormStr()] = paramKeyParentID
 
 		q.Query += fmt.Sprintf(`EXISTS
 			(
@@ -79,7 +80,7 @@ func (s *Schema) EqualityMatch(q *Query, val string) {
 				WHERE lm.attr_name_norm = :%s AND lm.member_id = e.id AND le.parent_id = :%s AND le.rdn_norm = :%s
 			)`, paramKeyName, paramKeyParentID, paramKey)
 		q.Params[paramKeyName] = s.Name
-		q.Params[paramKeyParentID] = parentID
+		q.Params[paramKeyParentID] = -1 // unresolved yet
 		q.Params[paramKey] = reqDN.RDNNormStr()
 		return
 	} else if s.IsUseMemberOfTable {
@@ -89,9 +90,10 @@ func (s *Schema) EqualityMatch(q *Query, val string) {
 			return
 		}
 
-		parentID := q.parentIDCache[reqDN.ParentDN().DNNormStr()]
-
 		paramKeyParentID := paramKey + "_parent_id"
+
+		// Stroe into pendig params since we need to resolve the parent DN as id later
+		q.pendingParams[reqDN.ParentDN().DNNormStr()] = paramKeyParentID
 
 		q.Query += fmt.Sprintf(`EXISTS
 			(
@@ -99,7 +101,7 @@ func (s *Schema) EqualityMatch(q *Query, val string) {
 					LEFT JOIN ldap_entry le ON le.id = lm.member_id
 				WHERE lm.member_of_id = e.id AND le.parent_id = :%s AND le.rdn_norm = :%s
 			)`, paramKeyParentID, paramKey)
-		q.Params[paramKeyParentID] = parentID
+		q.Params[paramKeyParentID] = -1 // unresolved yet
 		q.Params[paramKey] = reqDN.RDNNormStr()
 		return
 	} else {
@@ -171,20 +173,17 @@ type Query struct {
 	hasOr         bool
 	Query         string
 	Params        map[string]interface{}
-	parentIDCache map[string]int64 // dn_norm => id
-	dnOrigCache   map[int64]string // id => dn_norm
+	pendingParams map[string]string // dn_norm => paramsKey
 }
 
 func (q *Query) nextParamKey(name string) string {
 	return fmt.Sprintf("%d_%s", len(q.Params), name)
 }
 
-func ToQuery(schemaMap SchemaMap, packet message.Filter, dnOrigCache map[int64]string, parentIDCache map[string]int64) (*Query, error) {
+func ToQuery(schemaMap SchemaMap, packet message.Filter) (*Query, error) {
 	q := &Query{
-		Query:         "",
-		Params:        map[string]interface{}{},
-		dnOrigCache:   dnOrigCache,
-		parentIDCache: parentIDCache,
+		Query:  "",
+		Params: map[string]interface{}{},
 	}
 
 	err := translateFilter(schemaMap, packet, q)

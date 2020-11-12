@@ -144,8 +144,18 @@ type FetchedDNOrig struct {
 
 func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []string,
 	reqMemberOf, isHasSubordinatesRequested bool, handler func(entry *SearchEntry) error) (int32, int32, error) {
-	// TODO
-	dnOrigCache := q.dnOrigCache
+
+	// TODO: use scope
+	dnOrigs, err := r.FindContainerByDN(nil, baseDN, scope)
+	if err != nil {
+		log.Printf("warn: Failed to collect all container orig. err: %+v", err)
+		return 0, 0, err
+	}
+
+	dnOrigCache := make(map[int64]string, len(dnOrigs))
+	for _, dnOrig := range dnOrigs {
+		dnOrigCache[dnOrig.ID] = dnOrig.DNOrig
+	}
 
 	baseDNID, cid, err := r.collectParentIDs(baseDN, scope, dnOrigCache)
 	if err != nil {
@@ -358,16 +368,16 @@ func (r *Repository) FindByDN(tx *sqlx.Tx, dn *DN, option *FindOption) (*Fetched
 func (r *Repository) PrepareFindByDN(tx *sqlx.Tx, dn *DN, option *FindOption) (*sqlx.NamedStmt, map[string]interface{}, error) {
 	//  Key for stmt cache
 	key := fmt.Sprintf("LOCK:%v/FETCH_ATTRS:%v/FETCH_CRED:%v/DEPTH:%d",
-		option.Lock, option.FetchAttrs, option.FetchCred, len(dn.dnNorm))
+		option.Lock, option.FetchAttrs, option.FetchCred, len(dn.RDNs))
 
 	if stmt, ok := findByDNStmtCache.Get(key); ok {
 		// Already cached, make params only
-		depthj := len(dn.dnNorm)
+		depthj := len(dn.RDNs)
 		last := depthj - 1
 		params := make(map[string]interface{}, depthj)
 
 		for i := last; i >= 0; i-- {
-			params[fmt.Sprintf("rdn_norm_%d", i)] = dn.dnNorm[i]
+			params[fmt.Sprintf("rdn_norm_%d", i)] = dn.RDNs[i].NormStr()
 		}
 		return stmt, params, nil
 	}
@@ -392,14 +402,14 @@ func (r *Repository) PrepareFindByDN(tx *sqlx.Tx, dn *DN, option *FindOption) (*
 
 func (r *Repository) PrepareFindPathByDN(dn *DN, opt *FindOption) (*sqlx.NamedStmt, map[string]interface{}, error) {
 	//  Key for stmt cache
-	key := fmt.Sprintf("PATH/DEPTH:%d", len(dn.dnNorm))
+	key := fmt.Sprintf("PATH/DEPTH:%d", len(dn.RDNs))
 
 	// make params
-	depth := len(dn.dnNorm)
+	depth := len(dn.RDNs)
 	last := depth - 1
 	params := make(map[string]interface{}, depth)
 	for i := last; i >= 0; i-- {
-		params[fmt.Sprintf("rdn_norm%d", i)] = dn.dnNorm[i]
+		params[fmt.Sprintf("rdn_norm%d", i)] = dn.RDNs[i].NormStr()
 	}
 
 	if stmt, ok := treeStmtCache.Get(key); ok {
@@ -408,7 +418,7 @@ func (r *Repository) PrepareFindPathByDN(dn *DN, opt *FindOption) (*sqlx.NamedSt
 	}
 
 	// Not cached yet, create query and params, then cache the stmt
-	q, err := creatFindTreePathSQL(dn, opt)
+	q, err := createFindTreePathSQL(dn, opt)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -424,16 +434,16 @@ func (r *Repository) PrepareFindPathByDN(dn *DN, opt *FindOption) (*sqlx.NamedSt
 
 func (r *Repository) PrepareFindTreeByDN(dn *DN) (*sqlx.NamedStmt, map[string]interface{}, error) {
 	//  Key for stmt cache
-	key := fmt.Sprintf("TREE/DEPTH:%d", len(dn.dnNorm))
+	key := fmt.Sprintf("TREE/DEPTH:%d", len(dn.RDNs))
 
 	if stmt, ok := findByDNStmtCache.Get(key); ok {
 		// Already cached, make params only
-		depthj := len(dn.dnNorm)
+		depthj := len(dn.RDNs)
 		last := depthj - 1
 		params := make(map[string]interface{}, depthj)
 
 		for i := last; i >= 0; i-- {
-			params[fmt.Sprintf("rdn_norm_%d", i)] = dn.dnNorm[i]
+			params[fmt.Sprintf("rdn_norm_%d", i)] = dn.RDNs[i].NormStr()
 		}
 		return stmt, params, nil
 	}
@@ -508,7 +518,7 @@ func (r *Repository) CreateFindByDNQuery(dn *DN, option *FindOption) (string, ma
 		return q, map[string]interface{}{}
 	}
 
-	size := len(dn.dnNorm)
+	size := len(dn.RDNs)
 	last := size - 1
 	params := make(map[string]interface{}, size)
 
@@ -527,7 +537,7 @@ func (r *Repository) CreateFindByDNQuery(dn *DN, option *FindOption) (string, ma
 		}
 		where[last-i] = fmt.Sprintf("e%d.rdn_norm = :rdn_norm_%d", i, i)
 
-		params[fmt.Sprintf("rdn_norm_%d", i)] = dn.dnNorm[i]
+		params[fmt.Sprintf("rdn_norm_%d", i)] = dn.RDNs[i].NormStr()
 	}
 
 	q := fmt.Sprintf(`SELECT e0.id, %s AS dn_orig %s
@@ -566,22 +576,21 @@ func collectAllNodeNorm() (map[string]int64, error) {
 	return cache, nil
 }
 
-func creatFindTreePathSQL(baseDN *DN, opt *FindOption) (string, error) {
-	if baseDN.IsDC() {
-		return "", xerrors.Errorf("Invalid dn, it's DC: %s", strings.Join(baseDN.suffix, ","))
+func createFindTreePathSQL(baseDN *DN, opt *FindOption) (string, error) {
+	if len(baseDN.RDNs) == 0 {
+		return "", xerrors.Errorf("Invalid DN, it's anonymous")
 	}
-
 	/*
 		SELECT t2.path
 		FROM ldap_tree t1, ldap_entry e1, ldap_tree t2, ldap_entry e2
-		WHERE e1.rdn_norm = 'ou=groups' AND e2.rdn_norm = 'cn=g000001'
+		WHERE e1.rdn_norm = 'dc=example' AND e2.rdn_norm = 'ou=groups'
 		AND t1.parent_id is NULL AND t1.id = e1.id
 		AND t2.parent_id = t1.id AND t2.id = e2.id
 	*/
 	table := []string{}
 	where := []string{}
 	where2 := []string{}
-	for index := range baseDN.dnNorm {
+	for index := range baseDN.RDNs {
 		table = append(table, fmt.Sprintf("ldap_tree t%d, ldap_entry e%d", index, index))
 		where = append(where, fmt.Sprintf("e%d.rdn_norm = :rdn_norm%d", index, index))
 		if index == 0 {
@@ -601,7 +610,7 @@ func creatFindTreePathSQL(baseDN *DN, opt *FindOption) (string, error) {
 	  AND
 	  %s
 	`,
-		len(baseDN.dnNorm)-1,
+		len(baseDN.RDNs)-1,
 		strings.Join(table, ", "),
 		strings.Join(where, " AND "),
 		strings.Join(where2, " AND "))
@@ -611,6 +620,109 @@ func creatFindTreePathSQL(baseDN *DN, opt *FindOption) (string, error) {
 	}
 
 	return sql, nil
+}
+
+func creatFindContainerSQLByPath(path string, opt *FindOption) (string, error) {
+	if path == "" {
+		return "", xerrors.Errorf("Invalid path, it's empty")
+	}
+
+	/*
+		SELECT t.id, string_agg(e.rdn_orig, ',' ORDER BY dn.ord DESC) AS dn
+		FROM ldap_tree t
+		JOIN regexp_split_to_table(t.path::text, '[.]') WITH ORDINALITY dn(id, ord) ON true
+		JOIN ldap_entry e ON e.id = dn.id::int
+		GROUP BY t.id;
+	*/
+
+	sql := fmt.Sprintf(`
+	SELECT
+	  t.id, string_agg(e.rdn_orig, ',' ORDER BY dn.ord DESC) AS dn
+	FROM
+	  ldap_tree t
+	  JOIN regexp_split_to_table(t.path::text, '[.]') WITH ORDINALITY dn(id, ord) ON true
+	  JOIN ldap_entry e ON e.id = dn.id::int
+	WHERE
+	  t.path = :path
+	GROUP BY t.id;
+	`)
+
+	if opt.Lock {
+		sql += " for UPDATE"
+	}
+
+	return sql, nil
+}
+
+func (r *Repository) FindContainerByDN(tx *sqlx.Tx, dn *DN, scope int) ([]*FetchedDNOrig, error) {
+	var rows *sqlx.Rows
+	var err error
+
+	// Scope handling, one and sub need to include base.
+	// 0: base
+	// 1: one
+	// 2: sub
+	// 3: children
+
+	if dn.IsDC() {
+		if scope == 0 {
+			return []*FetchedDNOrig{
+				{
+					ID:     ROOT_ID,
+					DNOrig: "",
+				},
+			}, nil
+		}
+		if tx != nil {
+			rows, err = tx.NamedStmt(findAllContainerStmt).Queryx(map[string]interface{}{})
+		} else {
+			rows, err = findAllContainerStmt.Queryx(map[string]interface{}{})
+		}
+	} else {
+		var stmt *sqlx.NamedStmt
+		var params map[string]interface{}
+
+		stmt, params, err = r.PrepareFindPathByDN(dn, &FindOption{Lock: false})
+		if err != nil {
+			return nil, xerrors.Errorf("Failed to prepare findPathByDN: %v, err: %w", dn, err)
+		}
+
+		var path string
+		if tx != nil {
+			err = tx.NamedStmt(stmt).Get(&path, params)
+			if err != nil {
+				return nil, xerrors.Errorf("Failed to fetch findPathByDN: %v, err: %w", dn, err)
+			}
+
+			rows, err = tx.NamedStmt(findContainerByPathStmt).Queryx(map[string]interface{}{
+				"path": path,
+			})
+		} else {
+			rows, err = findContainerByPathStmt.Queryx(map[string]interface{}{
+				"path": path,
+			})
+		}
+	}
+
+	if err != nil {
+		return nil, xerrors.Errorf("Failed to containers by DN: %v, err: %w", dn, err)
+	}
+	defer rows.Close()
+
+	list := []*FetchedDNOrig{}
+	for rows.Next() {
+		child := FetchedDNOrig{}
+		rows.StructScan(&child)
+		list = append(list, &child)
+	}
+
+	err = rows.Err()
+	if err != nil {
+		log.Printf("error: Search children error: %#v", err)
+		return nil, err
+	}
+
+	return list, nil
 }
 
 func collectAllNodeOrig(tx *sqlx.Tx) (map[int64]string, error) {
@@ -686,7 +798,7 @@ func (r *Repository) FindByDNWithLock(tx *sqlx.Tx, dn *DN) (*ModifyEntry, error)
 func (r *Repository) FindCredByDN(dn *DN) ([]string, error) {
 	q, params := r.CreateFindByDNQuery(dn, &FindOption{Lock: false, FetchCred: true})
 
-	key := "DEPTH:" + strconv.Itoa(len(dn.dnNorm))
+	key := "DEPTH:" + strconv.Itoa(len(dn.RDNs))
 
 	dest := struct {
 		ID     int64          `db:"id"`

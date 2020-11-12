@@ -62,18 +62,22 @@ CREATE INDEX idx_ldap_entry_attrs_uid_exists ON ldap_entry ((attrs_norm ? 'uid')
 CREATE INDEX idx_ldap_entry_attrs_mail_exists ON ldap_entry ((attrs_norm ? 'mail'));
 
 insert into ldap_entry values
-   (0, NULL, 'ou=users', 'ou=Users', gen_random_uuid(), NOW(), NOW(), '{"ou":["Users"]}', '{"ou":["People"]}'),
-   (1, NULL, 'ou=groups','ou=Users', gen_random_uuid(), NOW(), NOW(), '{"ou":["Groups"]}', '{"ou":["Groups"]}'),
-   (2, 0, 'uid=u000001','uid=u000001', gen_random_uuid(), NOW(), NOW(), '{"uid":["u000001"],"sn":["user000001"]}', '{"uid":["u000001"],"sn":["user000001"]}'),
-   (3, 1, 'cn=g000001','cn=g000001', gen_random_uuid(), NOW(), NOW(), '{"cn":["g000001"]}', '{"cn":["g000001"]}'),
-   (4, 3, 'cn=g000002','cn=g000002', gen_random_uuid(), NOW(), NOW(), '{"cn":["g000002"]}', '{"cn":["g000002"]}');
+   (0, NULL, 'dc=com', 'dc=com', gen_random_uuid(), NOW(), NOW(), '{"dc":["com"]}', '{"dc":["com"]}'),
+   (1, 0, 'dc=example', 'dc=Example', gen_random_uuid(), NOW(), NOW(), '{"dc":["example"]}', '{"dc":["Example"]}'),
+   (2, 1, 'ou=users', 'ou=Users', gen_random_uuid(), NOW(), NOW(), '{"ou":["Users"]}', '{"ou":["People"]}'),
+   (3, 1, 'ou=groups','ou=Groups', gen_random_uuid(), NOW(), NOW(), '{"ou":["Groups"]}', '{"ou":["Groups"]}'),
+   (4, 2, 'uid=u000001','uid=u000001', gen_random_uuid(), NOW(), NOW(), '{"uid":["u000001"],"sn":["user000001"]}', '{"uid":["u000001"],"sn":["user000001"]}'),
+   (5, 3, 'cn=g000001','cn=g000001', gen_random_uuid(), NOW(), NOW(), '{"cn":["g000001"]}', '{"cn":["g000001"]}'),
+   (6, 5, 'cn=g000002','cn=g000002', gen_random_uuid(), NOW(), NOW(), '{"cn":["g000002"]}', '{"cn":["g000002"]}');
 
 SELECT setval('ldap_entry_id_seq', max(id)) FROM ldap_entry;
 
 insert into ldap_tree values
-   (0, NULL, 'ou=users', 'ou=Users', '0'),
-   (1, NULL, 'ou=groups','ou=Groups', '1'),
-   (3, 1, 'ou=g000001','ou=g000001', '1.3'),
-   (4, 3, 'ou=g000002','ou=g000002', '1.3.4');
+   (0, NULL, 'dc=com', 'dc=com', '0'),
+   (1, 0, 'dc=example', 'dc=Example', '0.1'),
+   (2, 1, 'ou=users', 'ou=Users', '0.1.2'),
+   (3, 1, 'ou=groups','ou=Groups', '0.1.3'),
+   (5, 3, 'cn=g000001','cn=g000001', '0.1.3.5'),
+   (6, 5, 'cn=g000002','cn=g000002', '0.1.3.5.6');
 
 SELECT setval('ldap_tree_id_seq', max(id)) FROM ldap_tree;

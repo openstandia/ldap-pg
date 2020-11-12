@@ -20,7 +20,7 @@ type ToQueryTestData struct {
 
 func TestToQuery(t *testing.T) {
 	for i, test := range getToQueryTestData() {
-		q, err := ToQuery(test.schemaMap, test.filter, nil, nil)
+		q, err := ToQuery(test.schemaMap, test.filter)
 		if err == nil {
 			if test.out == nil {
 				t.Errorf("#%d: %s\nEXPECTED ERROR MESSAGE:\n%s\nGOT A STRUCT INSTEAD:\n%#+v", i, test.label, test.err, q)

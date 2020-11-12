@@ -90,7 +90,7 @@ func (r *Repository) deleteByDN(tx *sqlx.Tx, dn *DN) (int64, error) {
 		return r.deleteDC(tx)
 	}
 
-	size := len(dn.dnNorm)
+	size := len(dn.RDNs)
 	last := size - 1
 	params := make(map[string]interface{}, size)
 
@@ -110,7 +110,7 @@ func (r *Repository) deleteByDN(tx *sqlx.Tx, dn *DN) (int64, error) {
 		}
 		where[last-i] = fmt.Sprintf("e%d.rdn_norm = :rdn_norm_%d", i, i)
 
-		params[fmt.Sprintf("rdn_norm_%d", i)] = dn.dnNorm[i]
+		params[fmt.Sprintf("rdn_norm_%d", i)] = dn.RDNs[i].NormStr()
 	}
 
 	q := fmt.Sprintf(`DELETE FROM ldap_entry e WHERE e.id IN 
