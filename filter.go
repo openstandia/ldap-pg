@@ -9,6 +9,17 @@ import (
 	"github.com/pkg/errors"
 )
 
+func escapeRegex(s string) string {
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, `*`, `\*`)
+	s = strings.ReplaceAll(s, `.`, `\.`)
+	return s
+}
+
+func escape(s string) string {
+	return strings.ReplaceAll(s, `"`, `\"`)
+}
+
 func (s *Schema) StartsWithMatch(q *Query, val string, i int) {
 	paramKey := q.nextParamKey(s.Name)
 
@@ -21,7 +32,7 @@ func (s *Schema) StartsWithMatch(q *Query, val string, i int) {
 	q.Query += fmt.Sprintf("e.attrs_norm->'%s' @@ :%s", s.Name, paramKey)
 
 	// attrs_norm->'cn' @@ '$ starts with "foo"';
-	q.Params[paramKey] = `$ starts with "` + sv.Norm()[0] + `"`
+	q.Params[paramKey] = `$ starts with "` + escape(sv.Norm()[0]) + `"`
 }
 
 func (s *Schema) AnyMatch(q *Query, val string, i int) {
@@ -36,7 +47,7 @@ func (s *Schema) AnyMatch(q *Query, val string, i int) {
 	q.Query += fmt.Sprintf("e.attrs_norm->'%s' @@ :%s", s.Name, paramKey)
 
 	// attrs_norm->'cn' @@ '$ like_regex ".*foo.*"';
-	q.Params[paramKey] = `$ like_regex ".*` + sv.Norm()[0] + `.*"`
+	q.Params[paramKey] = `$ like_regex ".*` + escapeRegex(sv.Norm()[0]) + `.*"`
 }
 
 func (s *Schema) EndsMatch(q *Query, val string, i int) {
@@ -51,7 +62,7 @@ func (s *Schema) EndsMatch(q *Query, val string, i int) {
 	q.Query += fmt.Sprintf("e.attrs_norm->'%s' @@ :%s", s.Name, paramKey)
 
 	// attrs_norm->'cn' @@ '$ like_regex ".*foo$"';
-	q.Params[paramKey] = `$ like_regex ".*` + sv.Norm()[0] + `$"`
+	q.Params[paramKey] = `$ like_regex ".*` + escapeRegex(sv.Norm()[0]) + `$"`
 }
 
 func (s *Schema) EqualityMatch(q *Query, val string) {
@@ -113,7 +124,7 @@ func (s *Schema) EqualityMatch(q *Query, val string) {
 		// attrs_norm->'cn' @@ '$ == "foo"'
 		q.Query += fmt.Sprintf("e.attrs_norm->'%s' @@ :%s", s.Name, paramKey)
 	}
-	q.Params[paramKey] = `$ == "` + sv.Norm()[0] + `"`
+	q.Params[paramKey] = `$ == "` + escape(sv.Norm()[0]) + `"`
 }
 
 func (s *Schema) GreaterOrEqualMatch(q *Query, val string) {
@@ -168,7 +179,7 @@ func (s *Schema) ApproxMatch(q *Query, val string) {
 
 	// TODO
 	q.Query += fmt.Sprintf("e.attrs_norm->'%s' @@ :%s", s.Name, paramKey)
-	q.Params[paramKey] = `$ like_reges ".*` + sv.Norm()[0] + `.*"`
+	q.Params[paramKey] = `$ like_reges ".*` + escapeRegex(sv.Norm()[0]) + `.*"`
 }
 
 type Query struct {

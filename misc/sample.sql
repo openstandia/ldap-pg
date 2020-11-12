@@ -46,6 +46,9 @@ CREATE UNIQUE INDEX idx_ldap_entry_uuid ON ldap_entry (uuid);
 CREATE INDEX idx_ldap_entry_created ON ldap_entry (created);
 CREATE INDEX idx_ldap_entry_updated ON ldap_entry (updated);
 
+-- all json index
+-- CREATE INDEX idx_ldap_entry_attrs ON ldap_entry USING gin (attrs_norm jsonb_path_ops);
+
 -- single/mutiple value
 CREATE INDEX idx_ldap_entry_attrs_ou ON ldap_entry USING gin ((attrs_norm->'ou') jsonb_path_ops);
 CREATE INDEX idx_ldap_entry_attrs_dc ON ldap_entry USING gin ((attrs_norm->'dc') jsonb_path_ops);
@@ -61,6 +64,7 @@ CREATE INDEX idx_ldap_entry_attrs_objectclass_exists ON ldap_entry ((attrs_norm 
 CREATE INDEX idx_ldap_entry_attrs_cn_exists ON ldap_entry ((attrs_norm ? 'cn'));
 CREATE INDEX idx_ldap_entry_attrs_uid_exists ON ldap_entry ((attrs_norm ? 'uid'));
 CREATE INDEX idx_ldap_entry_attrs_mail_exists ON ldap_entry ((attrs_norm ? 'mail'));
+
 
 insert into ldap_entry values
    (0, NULL, 'dc=com', 'dc=com', gen_random_uuid(), NOW(), NOW(), '{"dc":["com"],"objectclass":["top","dcObject","organization"]}', '{"dc":["com"],"objectClass":["top","dcObject","organization"]}'),
