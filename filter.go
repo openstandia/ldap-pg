@@ -9,7 +9,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-func (s *Schema) SubstringMatch(q *Query, val string, i int) {
+func (s *Schema) StartsWithMatch(q *Query, val string, i int) {
 	paramKey := q.nextParamKey(s.Name)
 
 	sv, err := NewSchemaValue(s.Name, []string{val})
@@ -18,26 +18,40 @@ func (s *Schema) SubstringMatch(q *Query, val string, i int) {
 		return
 	}
 
-	if s.IndexType == "fts" {
-		q.Query += fmt.Sprintf("e.attrs_norm->>'%s' ILIKE :%s", s.Name, paramKey)
-	} else {
-		if s.IsCaseIgnoreSubstr() {
-			if s.SingleValue {
-				q.Query += fmt.Sprintf("e.attrs_norm->>'%s' LIKE :%s", s.Name, paramKey)
-			} else {
-				//exists( select 1 from jsonb_array_elements_text(attrs_norm->'uid') as a where  a like 'user111%')
-				q.Query += fmt.Sprintf("EXISTS ( SELECT 1 FROM jsonb_array_elements_text(e.attrs_norm->'%s') AS attr WHERE attr LIKE :%s )", s.Name, paramKey)
-			}
-		} else {
-			if s.SingleValue {
-				q.Query += fmt.Sprintf("e.attrs_norm->>'%s' LIKE :%s", s.Name, paramKey)
-			} else {
-				//exists( select 1 from jsonb_array_elements_text(attrs_norm->'uid') as a where  a like 'user111%')
-				q.Query += fmt.Sprintf("EXISTS ( SELECT 1 FROM jsonb_array_elements_text(e.attrs_norm->'%s') AS attr WHERE attr LIKE :%s )", s.Name, paramKey)
-			}
-		}
+	q.Query += fmt.Sprintf("e.attrs_norm->'%s' @@ :%s", s.Name, paramKey)
+
+	// attrs_norm->'cn' @@ '$ starts with "foo"';
+	q.Params[paramKey] = `$ starts with "` + sv.Norm()[0] + `"`
+}
+
+func (s *Schema) AnyMatch(q *Query, val string, i int) {
+	paramKey := q.nextParamKey(s.Name)
+
+	sv, err := NewSchemaValue(s.Name, []string{val})
+	if err != nil {
+		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
+		return
 	}
-	q.Params[paramKey] = sv.Norm()[0]
+
+	q.Query += fmt.Sprintf("e.attrs_norm->'%s' @@ :%s", s.Name, paramKey)
+
+	// attrs_norm->'cn' @@ '$ like_regex ".*foo.*"';
+	q.Params[paramKey] = `$ like_regex ".*` + sv.Norm()[0] + `.*"`
+}
+
+func (s *Schema) EndsMatch(q *Query, val string, i int) {
+	paramKey := q.nextParamKey(s.Name)
+
+	sv, err := NewSchemaValue(s.Name, []string{val})
+	if err != nil {
+		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
+		return
+	}
+
+	q.Query += fmt.Sprintf("e.attrs_norm->'%s' @@ :%s", s.Name, paramKey)
+
+	// attrs_norm->'cn' @@ '$ like_regex ".*foo$"';
+	q.Params[paramKey] = `$ like_regex ".*` + sv.Norm()[0] + `$"`
 }
 
 func (s *Schema) EqualityMatch(q *Query, val string) {
@@ -51,16 +65,7 @@ func (s *Schema) EqualityMatch(q *Query, val string) {
 	}
 	log.Printf("s: %+v", s)
 
-	if s.IndexType == "fts" {
-		// TODO Escape %
-		q.Query += fmt.Sprintf("e.attrs_norm->>'%s' ILIKE :%s", s.Name, paramKey)
-	} else if s.IsIndependentColumn() {
-		if s.IsCaseIgnore() {
-			q.Query += fmt.Sprintf("e.%s = :%s", s.ColumnName, paramKey)
-		} else {
-			q.Query += fmt.Sprintf("e.%s = :%s", s.ColumnName, paramKey)
-		}
-	} else if s.IsUseMemberTable {
+	if s.IsUseMemberTable {
 		reqDN, err := s.server.NormalizeDN(val)
 		if err != nil {
 			log.Printf("warn: Ignore filter due to invalid DN syntax of member. attrName: %s, value: %s, err: %+v", s.Name, val, err)
@@ -105,21 +110,10 @@ func (s *Schema) EqualityMatch(q *Query, val string) {
 		q.Params[paramKey] = reqDN.RDNNormStr()
 		return
 	} else {
-		if s.IsCaseIgnore() {
-			if s.SingleValue {
-				q.Query += fmt.Sprintf("e.attrs_norm->>'%s' = :%s", s.Name, paramKey)
-			} else {
-				q.Query += fmt.Sprintf("e.attrs_norm->'%s' @> jsonb_build_array(:%s ::::text)", s.Name, paramKey)
-			}
-		} else {
-			if s.SingleValue {
-				q.Query += fmt.Sprintf("e.attrs_norm->>'%s' = :%s", s.Name, paramKey)
-			} else {
-				q.Query += fmt.Sprintf("e.attrs_norm->'%s' @> jsonb_build_array(:%s ::::text)", s.Name, paramKey)
-			}
-		}
+		// attrs_norm->'cn' @@ '$ == "foo"'
+		q.Query += fmt.Sprintf("e.attrs_norm->'%s' @@ :%s", s.Name, paramKey)
 	}
-	q.Params[paramKey] = sv.Norm()[0]
+	q.Params[paramKey] = `$ == "` + sv.Norm()[0] + `"`
 }
 
 func (s *Schema) GreaterOrEqualMatch(q *Query, val string) {
@@ -131,8 +125,9 @@ func (s *Schema) GreaterOrEqualMatch(q *Query, val string) {
 		return
 	}
 
-	q.Query += fmt.Sprintf("(e.attrs_norm->>'%s')::::numeric >= :%s", s.Name, paramKey)
-	q.Params[paramKey] = sv.Norm()[0]
+	// attrs_norm->'cn' @@ '$ >= 3'
+	q.Query += fmt.Sprintf("e.attrs_norm->'%s' @@ :%s", s.Name, paramKey)
+	q.Params[paramKey] = `$ >= ` + sv.Norm()[0]
 }
 
 func (s *Schema) LessOrEqualMatch(q *Query, val string) {
@@ -144,16 +139,14 @@ func (s *Schema) LessOrEqualMatch(q *Query, val string) {
 		return
 	}
 
-	q.Query += fmt.Sprintf("(e.attrs_norm->>'%s')::::numeric <= :%s", s.Name, paramKey)
-	q.Params[paramKey] = sv.Norm()[0]
+	// attrs_norm->'cn' @@ '$ <= 3'
+	q.Query += fmt.Sprintf("e.attrs_norm->'%s' @@ :%s", s.Name, paramKey)
+	q.Params[paramKey] = `$ <= ` + sv.Norm()[0]
 }
 
 func (s *Schema) PresentMatch(q *Query) {
-	if s.IndexType == "jsonb_ops" {
-		q.Query += fmt.Sprintf("e.attrs_norm ? '%s'", s.Name)
-	} else {
-		q.Query += fmt.Sprintf("(e.attrs_norm->>'%s') IS NOT NULL", s.Name)
-	}
+	// attrs_norm ? 'cn';
+	q.Query += fmt.Sprintf("e.attrs_norm ? :%s", s.Name)
 }
 
 func (s *Schema) ApproxMatch(q *Query, val string) {
@@ -165,12 +158,12 @@ func (s *Schema) ApproxMatch(q *Query, val string) {
 		return
 	}
 
-	q.Query += fmt.Sprintf("e.attrs_norm->>'%s' ILIKE :%s", s.Name, paramKey)
-	q.Params[paramKey] = sv.Norm()[0]
+	// TODO
+	q.Query += fmt.Sprintf("e.attrs_norm->'%s' @@ :%s", s.Name, paramKey)
+	q.Params[paramKey] = `$ like_reges ".*` + sv.Norm()[0] + `.*"`
 }
 
 type Query struct {
-	hasOr           bool
 	Query           string
 	Params          map[string]interface{}
 	PendingParams   map[string]string // dn_norm => paramsKey
@@ -254,20 +247,20 @@ func translateFilter(schemaMap SchemaMap, packet message.Filter, q *Query) (err 
 
 			switch fsv := fs.(type) {
 			case message.SubstringInitial:
-				// TODO Escape %
-				s.SubstringMatch(q, string(fsv)+"%", i)
+				// TODO Need escape?
+				s.StartsWithMatch(q, string(fsv), i)
 			case message.SubstringAny:
 				if i > 0 {
 					q.Query += " AND "
 				}
-				// TODO Escape %
-				s.SubstringMatch(q, "%"+string(fsv)+"%", i)
+				// TODO Need escape?
+				s.AnyMatch(q, string(fsv), i)
 			case message.SubstringFinal:
 				if i > 0 {
 					q.Query += " AND "
 				}
-				// TODO Escape %
-				s.SubstringMatch(q, "%"+string(fsv), i)
+				// TODO Need escape?
+				s.EndsMatch(q, string(fsv), i)
 			}
 		}
 	case message.FilterEqualityMatch:

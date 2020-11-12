@@ -639,38 +639,6 @@ func createFindTreePathSQL(baseDN *DN, opt *FindOption) (string, error) {
 	return sql, nil
 }
 
-func creatFindContainerSQLByPath(path string, opt *FindOption) (string, error) {
-	if path == "" {
-		return "", xerrors.Errorf("Invalid path, it's empty")
-	}
-
-	/*
-		SELECT t.id, string_agg(e.rdn_orig, ',' ORDER BY dn.ord DESC) AS dn
-		FROM ldap_tree t
-		JOIN regexp_split_to_table(t.path::text, '[.]') WITH ORDINALITY dn(id, ord) ON true
-		JOIN ldap_entry e ON e.id = dn.id::int
-		GROUP BY t.id;
-	*/
-
-	sql := fmt.Sprintf(`
-	SELECT
-	  t.id, string_agg(e.rdn_orig, ',' ORDER BY dn.ord DESC) AS dn
-	FROM
-	  ldap_tree t
-	  JOIN regexp_split_to_table(t.path::text, '[.]') WITH ORDINALITY dn(id, ord) ON true
-	  JOIN ldap_entry e ON e.id = dn.id::int
-	WHERE
-	  t.path = :path
-	GROUP BY t.id;
-	`)
-
-	if opt.Lock {
-		sql += " for UPDATE"
-	}
-
-	return sql, nil
-}
-
 func namedStmt(tx *sqlx.Tx, stmt *sqlx.NamedStmt) *sqlx.NamedStmt {
 	if tx != nil {
 		return tx.NamedStmt(stmt)
@@ -911,77 +879,4 @@ func (r *Repository) AppenScopeFilter(scope int, q *Query, fetchedDN *FetchedDN)
 	}
 
 	return fmt.Sprintf("%s %s", parentFilter, query), nil
-}
-
-func (r *Repository) collectParentIDs(baseDN *DN, scope int, dnOrigCache map[int64]string) (int64, []int64, error) {
-	// Collect parent ID(s) based on baseDN
-	var baseDNID int64 = -1
-
-	// No result case
-	if !baseDN.IsContainer() && (scope == 1 || scope == 3) {
-		// Need to return success response
-		return 0, nil, NewSuccess()
-	}
-
-	// 0: base
-	// 1: one
-	// 2: sub
-	// 3: children
-	if scope == 0 || scope == 1 || !baseDN.IsContainer() {
-		if baseDN.IsDC() {
-			entry, err := getDCDNOrig(nil)
-			if err != nil {
-				return 0, nil, err
-			}
-			baseDNID = entry.ID
-			dnOrigCache[entry.ID] = entry.DNOrig
-			return baseDNID, []int64{}, nil
-		}
-
-		// baseDN points to entry or container.
-		entry, err := r.FindByDN(nil, baseDN, &FindOption{Lock: false})
-		if err != nil {
-			if isNoResult(err) {
-				return 0, nil, NewSuccess()
-			}
-			return 0, nil, err
-		}
-		baseDNID = entry.ID
-		dnOrigCache[entry.ID] = entry.DNOrig
-
-		return baseDNID, []int64{}, nil
-	}
-
-	stmt, params, err := r.PrepareFindTreeByDN(baseDN)
-	if err != nil {
-		return 0, nil, err
-	}
-
-	rows, err := stmt.Queryx(params)
-	if err != nil {
-		return 0, nil, err
-	}
-	defer rows.Close()
-
-	cid := []int64{}
-
-	var id int64
-	var dnOrig string
-	for rows.Next() {
-		err := rows.Scan(&id, &dnOrig)
-		if err != nil {
-			return 0, nil, xerrors.Errorf("Failed to scan id, dnOrig. err: %w", err)
-		}
-		cid = append(cid, id)
-		dnOrigCache[id] = dnOrig
-	}
-
-	if len(cid) == 0 {
-		// Need to return success response
-		return 0, nil, NewSuccess()
-	}
-	if len(cid) == 1 {
-		return cid[0], []int64{}, nil
-	}
-	return cid[0], cid[1:], nil
 }

@@ -46,10 +46,14 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 			},
 			filter: message.NewFilterEqualityMatch("cn", "foo"),
 			out: &Query{
-				Query: "e.attrs_norm->>'cn' = :0_cn",
+				// attrs_norm->'cn' @@ '$ == "foo"';
+				Query: "e.attrs_norm->'cn' @@ :0_cn",
 				Params: map[string]interface{}{
-					"0_cn": "foo",
+					"0_cn": `$ == "foo"`,
 				},
+				PendingParams:   map[string]string{},
+				IdToDNOrigCache: map[int64]string{},
+				DNNormToIdCache: map[string]int64{},
 			},
 		},
 
@@ -72,11 +76,14 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 				message.NewFilterEqualityMatch("uid", "bar"),
 			},
 			out: &Query{
-				Query: "(e.attrs_norm->>'cn' = :0_cn AND e.attrs_norm->>'uid' = :1_uid)",
+				Query: "(e.attrs_norm->'cn' @@ :0_cn AND e.attrs_norm->'uid' @@ :1_uid)",
 				Params: map[string]interface{}{
-					"0_cn":  "foo",
-					"1_uid": "bar",
+					"0_cn":  `$ == "foo"`,
+					"1_uid": `$ == "bar"`,
 				},
+				PendingParams:   map[string]string{},
+				IdToDNOrigCache: map[int64]string{},
+				DNNormToIdCache: map[string]int64{},
 			},
 		},
 
@@ -94,11 +101,14 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 				message.NewFilterEqualityMatch("cn", "bar"),
 			},
 			out: &Query{
-				Query: "(e.attrs_norm->>'cn' = :0_cn OR e.attrs_norm->>'cn' = :1_cn)",
+				Query: "(e.attrs_norm->'cn' @@ :0_cn OR e.attrs_norm->'cn' @@ :1_cn)",
 				Params: map[string]interface{}{
-					"0_cn": "foo",
-					"1_cn": "bar",
+					"0_cn": `$ == "foo"`,
+					"1_cn": `$ == "bar"`,
 				},
+				PendingParams:   map[string]string{},
+				IdToDNOrigCache: map[int64]string{},
+				DNNormToIdCache: map[string]int64{},
 			},
 		},
 
@@ -117,12 +127,15 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 				message.NewFilterEqualityMatch("cn", "hoge"),
 			},
 			out: &Query{
-				Query: "(e.attrs_norm->>'cn' = :0_cn OR e.attrs_norm->>'cn' = :1_cn OR e.attrs_norm->>'cn' = :2_cn)",
+				Query: "(e.attrs_norm->'cn' @@ :0_cn OR e.attrs_norm->'cn' @@ :1_cn OR e.attrs_norm->'cn' @@ :2_cn)",
 				Params: map[string]interface{}{
-					"0_cn": "foo",
-					"1_cn": "bar",
-					"2_cn": "hoge",
+					"0_cn": `$ == "foo"`,
+					"1_cn": `$ == "bar"`,
+					"2_cn": `$ == "hoge"`,
 				},
+				PendingParams:   map[string]string{},
+				IdToDNOrigCache: map[int64]string{},
+				DNNormToIdCache: map[string]int64{},
 			},
 		},
 
@@ -153,12 +166,15 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 				},
 			},
 			out: &Query{
-				Query: "(e.attrs_norm->>'cn' = :0_cn OR (e.attrs_norm->>'uid' = :1_uid AND e.attrs_norm->>'sn' = :2_sn))",
+				Query: "(e.attrs_norm->'cn' @@ :0_cn OR (e.attrs_norm->'uid' @@ :1_uid AND e.attrs_norm->'sn' @@ :2_sn))",
 				Params: map[string]interface{}{
-					"0_cn":  "foo",
-					"1_uid": "bar",
-					"2_sn":  "hoge",
+					"0_cn":  `$ == "foo"`,
+					"1_uid": `$ == "bar"`,
+					"2_sn":  `$ == "hoge"`,
 				},
+				PendingParams:   map[string]string{},
+				IdToDNOrigCache: map[int64]string{},
+				DNNormToIdCache: map[string]int64{},
 			},
 		},
 
@@ -175,10 +191,13 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 				Filter: message.NewFilterEqualityMatch("cn", "foo"),
 			},
 			out: &Query{
-				Query: "NOT (e.attrs_norm->>'cn' = :0_cn)",
+				Query: "NOT (e.attrs_norm->'cn' @@ :0_cn)",
 				Params: map[string]interface{}{
-					"0_cn": "foo",
+					"0_cn": `$ == "foo"`,
 				},
+				PendingParams:   map[string]string{},
+				IdToDNOrigCache: map[int64]string{},
+				DNNormToIdCache: map[string]int64{},
 			},
 		},
 	}
