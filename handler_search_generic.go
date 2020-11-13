@@ -75,7 +75,7 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	}
 
 	// Phase 3: filter converting
-	q, err := ToQuery(schemaMap, r.Filter())
+	q, err := ToQuery(s, schemaMap, r.Filter())
 	if err != nil {
 		log.Printf("info: query error: %#v", err)
 

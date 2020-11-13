@@ -133,6 +133,11 @@ var (
 		false,
 		"Enable migration mode which means LDAP server accepts add/modify operational attributes (Default: false)",
 	)
+	queryTranslator = fs.String(
+		"query-translator",
+		"fulljson",
+		"Select query translator (Default: fulljson)",
+	)
 )
 
 type arrayFlags []string
@@ -198,5 +203,6 @@ func main() {
 		PProfServer:       *pprofServer,
 		GoMaxProcs:        *gomaxprocs,
 		MigrationEnabled:  *migrationEnabled,
+		QueryTranslator:   *queryTranslator,
 	}).Start()
 }

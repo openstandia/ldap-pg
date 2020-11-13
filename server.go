@@ -48,6 +48,7 @@ type ServerConfig struct {
 	PProfServer       string
 	GoMaxProcs        int
 	MigrationEnabled  bool
+	QueryTranslator   string
 }
 
 type Server struct {
