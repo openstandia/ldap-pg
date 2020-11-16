@@ -1,5 +1,7 @@
 package main
 
+import "strconv"
+
 type DN struct {
 	RDNs      []*RelativeDN
 	suffix    []string
@@ -11,6 +13,10 @@ type FetchedDN struct {
 	ParentPath string `db:"parent_path"`
 	HasSub     bool   `db:"has_sub"`
 	DNOrig     string `db:"dn_orig"`
+}
+
+func (f *FetchedDN) Path() string {
+	return f.ParentPath + "." + strconv.FormatInt(f.ID, 10)
 }
 
 type RelativeDN struct {
