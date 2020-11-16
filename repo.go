@@ -18,7 +18,8 @@ var (
 	insertUnderDCStmt *sqlx.NamedStmt
 
 	// repo_read
-	findContainerByPathStmt *sqlx.NamedStmt
+	findContainerByPathStmt        *sqlx.NamedStmt
+	findIDByParentIDAndRDNNormStmt *sqlx.NamedStmt
 
 	collectNodeOrigByParentIDStmt *sqlx.NamedStmt
 	collectNodeNormByParentIDStmt *sqlx.NamedStmt
@@ -100,6 +101,17 @@ func (r *Repository) initStmt(db *sqlx.DB) error {
 		WHERE
 			t.path ~ :path
 		GROUP BY t.id`)
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
+
+	findIDByParentIDAndRDNNormStmt, err = db.PrepareNamed(`SELECT
+		e.id
+		FROM
+			ldap_entry e
+		WHERE
+			e.parent_id = :parent_id AND e.rdn_norm = :rdn_norm
+	`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}

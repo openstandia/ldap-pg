@@ -133,7 +133,7 @@ func (m *Mapper) ModifyEntryToAddEntry(entry *ModifyEntry) (*AddEntry, error) {
 	return add, nil
 }
 
-func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry, dnOrigCache map[int64]string) (*SearchEntry, error) {
+func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry, IdToDNOrigCache map[int64]string) (*SearchEntry, error) {
 	if dbEntry.DNOrig == "" {
 		log.Printf("error: Invalid state. FetchedDBEntiry mush have DNOrig always...")
 		return nil, NewUnavailable()
@@ -149,18 +149,21 @@ func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry, dnOrigCach
 	orig["modifyTimestamp"] = []string{dbEntry.Updated.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 
 	// member
-	members, err := dbEntry.Members(dnOrigCache, m.server.SuffixOrigStr())
+	members, err := dbEntry.Members(IdToDNOrigCache, m.server.SuffixOrigStr())
 	if err != nil {
 		log.Printf("warn: Invalid state. FetchedDBEntiry cannot resolve member DN. err: %+v", err)
 		// TODO busy?
 		return nil, NewUnavailable()
 	}
-	for k, v := range members {
-		orig[k] = v
+	if len(members) > 0 {
+		orig["member"] = members
 	}
+	// for k, v := range members {
+	// 	orig[k] = v
+	// }
 
 	// memberOf
-	memberOfs, err := dbEntry.MemberOfs(dnOrigCache, m.server.SuffixOrigStr())
+	memberOfs, err := dbEntry.MemberOfs(IdToDNOrigCache, m.server.SuffixOrigStr())
 	if err != nil {
 		log.Printf("warn: Invalid state. FetchedDBEntiry cannot resolve memberOf DN. err: %+v", err)
 		// TODO busy?
@@ -186,9 +189,12 @@ func (m *Mapper) FetchedDBEntryToModifyEntry(dbEntry *FetchedDBEntry, dnOrigCach
 	orig := dbEntry.GetAttrsOrig()
 
 	members, err := dbEntry.Members(dnOrigCache, "") // For modification, don't need suffix
-	for k, v := range members {
-		orig[k] = v
+	if len(members) > 0 {
+		orig["member"] = members
 	}
+	// for k, v := range members {
+	// 	orig[k] = v
+	// }
 
 	entry, err := NewModifyEntry(dn, orig)
 	if err != nil {

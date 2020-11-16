@@ -92,7 +92,7 @@ func isAllAttributesRequested(r message.SearchRequest) bool {
 
 func isMemberOfRequested(r message.SearchRequest) bool {
 	for _, attr := range r.Attributes() {
-		if strings.ToLower(string(attr)) == "memberof" {
+		if strings.EqualFold(string(attr), "memberof") {
 			return true
 		}
 	}
@@ -101,7 +101,7 @@ func isMemberOfRequested(r message.SearchRequest) bool {
 
 func isHasSubOrdinatesRequested(r message.SearchRequest) bool {
 	for _, attr := range r.Attributes() {
-		if strings.ToLower(string(attr)) == "hassubordinates" || string(attr) == "+" {
+		if strings.EqualFold(string(attr), "hassubordinates") || string(attr) == "+" {
 			return true
 		}
 	}
@@ -118,13 +118,13 @@ func getRequestedMemberAttrs(r message.SearchRequest) []string {
 			// TODO move to schema
 			return []string{"member", "uniqueMember"}
 		}
-		a := strings.ToLower(string(attr))
+		a := string(attr)
 
 		// TODO move to schema
-		if a == "member" {
+		if strings.EqualFold(a, "member") {
 			list = append(list, "member")
 		}
-		if a == "uniquemember" {
+		if strings.EqualFold(a, "uniquemember") {
 			list = append(list, "uniqueMember")
 		}
 	}
@@ -139,11 +139,10 @@ func isMemberRequested(r message.SearchRequest) bool {
 		if string(attr) == "*" {
 			return true
 		}
-		a := strings.ToLower(string(attr))
+		a := string(attr)
 
 		// TODO move to schema
-		if a == "member" ||
-			a == "uniqueMember" {
+		if strings.EqualFold(a, "member") || strings.EqualFold(a, "uniquemember") {
 			return true
 		}
 	}

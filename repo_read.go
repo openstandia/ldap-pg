@@ -22,6 +22,7 @@ type FetchedDBEntry struct {
 	RDNOrig         string         `db:"rdn_orig"`
 	AttrsOrig       types.JSONText `db:"attrs_orig"`
 	Member          types.JSONText `db:"member"`          // No real column in the table
+	UniqueMember    types.JSONText `db:"uniquemember"`    // No real column in the table
 	MemberOf        types.JSONText `db:"member_of"`       // No real column in the table
 	HasSubordinates string         `db:"hassubordinates"` // No real column in the table
 	DNOrig          string         `db:"dn_orig"`         // No real clumn in t he table
@@ -39,44 +40,34 @@ func (e *FetchedDBEntry) IsDC() bool {
 	return e.ParentID == ROOT_ID
 }
 
-func (e *FetchedDBEntry) Members(dnOrigCache map[int64]string, suffix string) (map[string][]string, error) {
-	if len(e.Member) > 0 {
-		jsonMap := make(map[string][]string)
-		jsonArray := []map[string]string{}
-		err := e.Member.Unmarshal(&jsonArray)
-		if err != nil {
-			return nil, err
-		}
-		for _, m := range jsonArray {
-			v, ok := jsonMap[m["a"]]
-			if !ok {
-				v = []string{}
-			}
-			pid, err := strconv.ParseInt(m["p"], 10, 64)
-			if err != nil {
-				return nil, xerrors.Errorf("Invalid parent_id: %s", m["p"])
-			}
-			parentDNOrig, ok := dnOrigCache[pid]
-			if !ok {
-				return nil, xerrors.Errorf("No cached: %s", m["p"])
-			}
-
-			s := parentDNOrig
-			if suffix != "" {
-				if parentDNOrig == "" {
-					s = suffix
-				} else {
-					s += "," + suffix
-				}
-			}
-
-			v = append(v, m["r"]+","+s)
-
-			jsonMap[m["a"]] = v
-		}
-		return jsonMap, nil
+func (e *FetchedDBEntry) Members(IdToDNOrigCache map[int64]string, suffix string) ([]string, error) {
+	if len(e.Member) == 0 {
+		return nil, nil
 	}
-	return nil, nil
+
+	jsonArray := [][]string{}
+	err := e.Member.Unmarshal(&jsonArray)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]string, len(jsonArray))
+
+	for i, m := range jsonArray {
+		parentId, err := strconv.ParseInt(m[0], 10, 64)
+		if err != nil {
+			return nil, xerrors.Errorf("Failed to parse parent_id: %s, err: %w", parentId, err)
+		}
+		rdnOrig := m[1]
+
+		parentDNOrig, ok := IdToDNOrigCache[parentId]
+		if !ok {
+			// TODO find parent DN orig from database...
+			parentDNOrig = "<unknown>"
+		}
+
+		results[i] = rdnOrig + `,` + parentDNOrig
+	}
+	return results, nil
 }
 
 func (e *FetchedDBEntry) MemberOfs(dnOrigCache map[int64]string, suffix string) ([]string, error) {
@@ -161,40 +152,6 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []st
 
 	log.Printf("debug: where: %s", where)
 
-	var memberCol string
-	var memberJoin string
-	if len(reqMemberAttrs) > 0 {
-		// TODO bind parameter
-		in := make([]string, len(reqMemberAttrs))
-		for i, v := range reqMemberAttrs {
-			in[i] = "'" + v + "'"
-		}
-
-		memberCol = ", to_jsonb(ma.member_array) as member"
-		memberJoin = fmt.Sprintf(`, LATERAL (
-			SELECT ARRAY (
-				SELECT jsonb_build_object('r', ee.rdn_orig, 'p', ee.parent_id::::TEXT, 'a', lm.attr_name_norm) 
-					FROM ldap_member lm
-						JOIN ldap_entry ee ON ee.id = lm.member_of_id
-					WHERE lm.member_id = e.id AND lm.attr_name_norm IN (%s)
-			) AS member_array
-		) ma`, strings.Join(in, ", "))
-	}
-
-	var memberOfCol string
-	var memberOfJoin string
-	if reqMemberOf {
-		memberOfCol = ", to_jsonb(moa.member_of_array) as member_of"
-		memberOfJoin = `, LATERAL (
-			SELECT ARRAY (
-				SELECT jsonb_build_object('r', ee.rdn_orig, 'p', ee.parent_id::::TEXT) 
-					FROM ldap_member lm
-						JOIN ldap_entry ee ON ee.id = lm.member_id
-					WHERE lm.member_of_id = e.id
-			) AS member_of_array
-		) moa`
-	}
-
 	var hasSubordinatesCol string
 	if isHasSubordinatesRequested {
 		hasSubordinatesCol = `,
@@ -204,13 +161,117 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []st
 			) THEN 'TRUE' ELSE 'FALSE' END as hassubordinates`
 	}
 
+	var memberCol string
+	var memberJoin string
+	var groupBy string
+	if len(reqMemberAttrs) > 0 {
+		cb := make([]byte, 128)
+		jb := make([]byte, 128)
+		for i, attr := range reqMemberAttrs {
+			index := strconv.Itoa(i)
+
+			cb = append(cb, `
+			, JSON_AGG(
+				JSONB_BUILD_ARRAY(me`+index+`.parent_id::::text, me`+index+`.rdn_orig) ORDER BY mdn`+index+`.ord ASC
+			) FILTER (WHERE me`+index+`.parent_id IS NOT NULL) AS `+attr+`
+			`...)
+			jb = append(jb, `
+				LEFT JOIN JSONB_ARRAY_ELEMENTS(e.attrs_norm->'`+attr+`') WITH ORDINALITY mdn`+index+`(id, ord) ON TRUE
+				LEFT JOIN ldap_entry me`+index+` ON mdn`+index+`.id::::bigint = me`+index+`.id  
+			`...)
+		}
+		memberCol = strings.ReplaceAll(string(cb), "\x00", "")
+		memberJoin = strings.ReplaceAll(string(jb), "\x00", "")
+		groupBy = `GROUP BY e.id`
+	}
+
 	// LEFT JOIN LATERAL(
 	// 		SELECT t.rdn_norm, t.rdn_orig FROM ldap_tree t WHERE t.id = e.parent_id
 	// 	) p ON true
-	searchQuery := fmt.Sprintf(`SELECT e.id, e.parent_id, e.uuid, e.created, e.updated, e.rdn_orig, '' AS dn_orig, e.attrs_orig %s %s %s, count(e.id) over() AS count
-		FROM ldap_entry e %s %s
+	searchQuery := fmt.Sprintf(`
+		SELECT
+			e.id, e.parent_id, e.uuid, e.created, e.updated, e.rdn_orig, '' AS dn_orig,
+			e.attrs_orig %s, count(e.id) over() AS count
+			%s
+		FROM ldap_entry e 
+		%s
 		WHERE %s
-		LIMIT :pageSize OFFSET :offset`, memberCol, memberOfCol, hasSubordinatesCol, memberJoin, memberOfJoin, where)
+		%s
+		LIMIT :pageSize OFFSET :offset
+	`, hasSubordinatesCol, memberCol, memberJoin, where, groupBy)
+
+	// Resolve pending params
+	if len(q.PendingParams) > 0 {
+		// Create contaner DN cache
+		for k, v := range q.IdToDNOrigCache {
+			dn, err := NormalizeDN(r.server.suffixOrig, v)
+			if err != nil {
+				log.Printf("error: Failed to normalize DN fetched from DB, err: %s", err)
+				return 0, 0, NewUnavailable()
+			}
+			q.DNNormToIdCache[dn.DNNormStr()] = k
+		}
+		for pendingDN, paramKey := range q.PendingParams {
+			// Find it from cache
+			dnNorm := pendingDN.DNNormStr()
+			if id, ok := q.DNNormToIdCache[dnNorm]; ok {
+				q.Params["filter"] = strings.Replace(q.Params["filter"].(string), ":"+paramKey, strconv.FormatInt(id, 10), 1)
+				continue
+			}
+			// Find the parent container from cache
+			parentDNNorm := pendingDN.ParentDN().DNNormStr()
+			if parentId, ok := q.DNNormToIdCache[parentDNNorm]; ok {
+				// Find by the parent_id and rdn_norm
+				rdnNorm := pendingDN.RDNs[0].NormStr()
+				id, err := r.FindIDByParentIDAndRDNNorm(nil, parentId, rdnNorm)
+				if err != nil {
+					log.Printf("debug: Can't find the DN by parent_id: %d and rdn_norm: %s, err: %s", parentId, rdnNorm, err)
+					continue
+				}
+
+				q.Params["filter"] = strings.Replace(q.Params["filter"].(string), ":"+paramKey, strconv.FormatInt(id, 10), 1)
+
+				// Update cache
+				q.DNNormToIdCache[dnNorm] = id
+
+				continue
+			}
+			// No cache, need to full search...
+
+			dn, err := r.FindDNByDN(nil, pendingDN)
+			if err != nil {
+				log.Printf("debug: Can't find the DN by DN: %s, err: %s", pendingDN.DNNormStr(), err)
+				continue
+			}
+
+			q.Params["filter"] = strings.Replace(q.Params["filter"].(string), ":"+paramKey, strconv.FormatInt(dn.ID, 10), 1)
+
+			// Update cache
+			q.DNNormToIdCache[dnNorm] = dn.ID
+			// Update cache with the parent DN
+			if _, ok := q.DNNormToIdCache[parentDNNorm]; !ok {
+				if dn.ParentPath != "" {
+					parentIds := strings.Split(dn.ParentPath, ".")
+
+					parentDN := pendingDN
+					for i := len(parentIds) - 1; i >= 0; i-- {
+						parentDN = parentDN.ParentDN()
+
+						ii, err := strconv.ParseInt(parentIds[i], 10, 64)
+						if err != nil {
+							log.Printf("error: Failed to detect parent_id from path: %s, err: %s", dn.ParentPath, err)
+							return 0, 0, NewUnavailable()
+						}
+
+						if _, ok := q.DNNormToIdCache[parentDN.DNNormStr()]; ok {
+							break
+						}
+						q.DNNormToIdCache[parentDN.DNNormStr()] = ii
+					}
+				}
+			}
+		}
+	}
 
 	log.Printf("Fetch Query: %s Params: %v", searchQuery, q.Params)
 
@@ -725,6 +786,22 @@ func (r *Repository) FindContainerByDN(tx *sqlx.Tx, dn *FetchedDN, scope int) ([
 	}
 
 	return list, nil
+}
+
+func (r *Repository) FindIDByParentIDAndRDNNorm(tx *sqlx.Tx, parentId int64, rdn_norm string) (int64, error) {
+	var dest int64
+	err := namedStmt(tx, findIDByParentIDAndRDNNormStmt).Get(&dest, map[string]interface{}{
+		"parent_id": parentId,
+		"rdn_norm":  rdn_norm,
+	})
+	if err != nil {
+		if isNoResult(err) {
+			return 0, NewNoSuchObject()
+		}
+		return 0, xerrors.Errorf("Failed to find ID by parent_id: %d and rdn_norm: %s, err: %w", parentId, rdn_norm, err)
+	}
+
+	return dest, nil
 }
 
 func collectAllNodeOrig(tx *sqlx.Tx) (map[int64]string, error) {

@@ -11,22 +11,25 @@ import (
 
 // TODO Need more escape?
 func escapeRegex(s string) string {
-	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = escape(s)
 	s = strings.ReplaceAll(s, `*`, `\*`)
-	s = strings.ReplaceAll(s, `.`, `\.`)
 	return s
 }
 
 func escape(s string) string {
-	return strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, `(`, `\(`)
+	s = strings.ReplaceAll(s, `)`, `\)`)
+	s = strings.ReplaceAll(s, `.`, `\.`)
+	return s
 }
 
 type Query struct {
 	Query           string
 	Params          map[string]interface{}
-	PendingParams   map[string]string // dn_norm => paramsKey
-	IdToDNOrigCache map[int64]string  // id => dn_orig
-	DNNormToIdCache map[string]int64  // dn_norm => id
+	PendingParams   map[*DN]string   // dn => paramsKey
+	IdToDNOrigCache map[int64]string // id => dn_orig
+	DNNormToIdCache map[string]int64 // dn_norm => id
 }
 
 func (q *Query) nextParamKey(name string) string {
@@ -37,7 +40,7 @@ func ToQuery(s *Server, schemaMap SchemaMap, packet message.Filter) (*Query, err
 	q := &Query{
 		Query:           "",
 		Params:          map[string]interface{}{},
-		PendingParams:   map[string]string{},
+		PendingParams:   map[*DN]string{},
 		IdToDNOrigCache: map[int64]string{},
 		DNNormToIdCache: map[string]int64{},
 	}
