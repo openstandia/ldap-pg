@@ -32,7 +32,7 @@ func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	oldEntry, err := s.Repo().FindEntryByDN(tx, dn, true)
 	if err != nil {
-		tx.Rollback()
+		rollback(tx)
 		if err == sql.ErrNoRows {
 			responseModifyError(w, NewNoSuchObject())
 			return

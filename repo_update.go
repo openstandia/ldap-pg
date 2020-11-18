@@ -15,7 +15,7 @@ func (r *Repository) Update(tx *sqlx.Tx, oldEntry, newEntry *ModifyEntry) error 
 		return xerrors.Errorf("Invalid dbEntryId for update DBEntry.")
 	}
 
-	dbEntry, err := mapper.ModifyEntryToDBEntry(newEntry)
+	dbEntry, err := mapper.ModifyEntryToDBEntry(tx, newEntry)
 	if err != nil {
 		return err
 	}
@@ -28,24 +28,6 @@ func (r *Repository) Update(tx *sqlx.Tx, oldEntry, newEntry *ModifyEntry) error 
 	})
 	if err != nil {
 		return xerrors.Errorf("Failed to update entry. entry: %v, err: %w", newEntry, err)
-	}
-
-	if oldEntry != nil {
-		// TODO move to schema
-		memberAttrs := []string{"member", "uniqueMember"}
-		for _, ma := range memberAttrs {
-			diff := calcDiffAttr(oldEntry, newEntry, ma)
-
-			err := r.addMembers(tx, dbEntry.ID, ma, diff.add)
-			if err != nil {
-				return err
-			}
-
-			err = r.deleteMembers(tx, dbEntry.ID, ma, diff.del)
-			if err != nil {
-				return err
-			}
-		}
 	}
 
 	return nil
@@ -174,7 +156,7 @@ func (r *Repository) updateDN(tx *sqlx.Tx, oldDN, newDN *DN, deleteOld bool) err
 	}
 
 	newEntry := oldEntry.ModifyRDN(newDN)
-	dbEntry, err := mapper.ModifyEntryToDBEntry(newEntry)
+	dbEntry, err := mapper.ModifyEntryToDBEntry(tx, newEntry)
 	if err != nil {
 		return err
 	}
@@ -182,7 +164,6 @@ func (r *Repository) updateDN(tx *sqlx.Tx, oldDN, newDN *DN, deleteOld bool) err
 	_, err = tx.NamedStmt(updateDNByIdStmt).Exec(map[string]interface{}{
 		"id":           oldEntry.dbEntryId,
 		"parent_id":    parentID,
-		"updated":      dbEntry.Updated,
 		"new_rdn_norm": newDN.RDNNormStr(),
 		"new_rdn_orig": newDN.RDNOrigStr(),
 		"attrs_norm":   dbEntry.AttrsNorm,

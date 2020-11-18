@@ -93,7 +93,7 @@ func isAllAttributesRequested(r message.SearchRequest) bool {
 
 func isMemberOfRequested(r message.SearchRequest) bool {
 	for _, attr := range r.Attributes() {
-		if strings.EqualFold(string(attr), "memberof") {
+		if strings.EqualFold(string(attr), "memberof") || string(attr) == "+" {
 			return true
 		}
 	}

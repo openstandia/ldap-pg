@@ -10,6 +10,9 @@ type ModifyEntry struct {
 	attributes map[string]*SchemaValue
 	dbEntryId  int64
 	dbParentID int64
+	add        []*SchemaValue
+	replace    []*SchemaValue
+	del        []*SchemaValue
 }
 
 func NewModifyEntry(dn *DN, valuesOrig map[string][]string) (*ModifyEntry, error) {
@@ -91,7 +94,14 @@ func (j *ModifyEntry) Add(attrName string, attrValue []string) error {
 	if sv.IsNoUserModification() {
 		return NewNoUserModificationAllowedConstraintViolation(sv.Name())
 	}
-	return j.addsv(sv)
+	if err := j.addsv(sv); err != nil {
+		return err
+	}
+
+	// Record changelog
+	j.add = append(j.add, sv)
+
+	return nil
 }
 
 func (j *ModifyEntry) addsv(value *SchemaValue) error {
@@ -115,7 +125,14 @@ func (j *ModifyEntry) Replace(attrName string, attrValue []string) error {
 	if sv.IsNoUserModification() {
 		return NewNoUserModificationAllowedConstraintViolation(sv.Name())
 	}
-	return j.replacesv(sv)
+	if err := j.replacesv(sv); err != nil {
+		return err
+	}
+
+	// Record changelog
+	j.replace = append(j.replace, sv)
+
+	return nil
 }
 
 func (j *ModifyEntry) replacesv(value *SchemaValue) error {
@@ -138,7 +155,14 @@ func (j *ModifyEntry) Delete(attrName string, attrValue []string) error {
 	if sv.IsNoUserModification() {
 		return NewNoUserModificationAllowedConstraintViolation(sv.Name())
 	}
-	return j.deletesv(sv)
+	if err := j.deletesv(sv); err != nil {
+		return err
+	}
+
+	// Record changelog
+	j.del = append(j.del, sv)
+
+	return nil
 }
 
 func (j *ModifyEntry) deletesv(value *SchemaValue) error {

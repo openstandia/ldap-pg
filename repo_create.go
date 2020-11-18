@@ -69,7 +69,7 @@ func (r *Repository) insertEntry(tx *sqlx.Tx, entry *AddEntry) (int64, int64, er
 	params["attrs_norm"] = dbEntry.AttrsNorm
 	params["attrs_orig"] = dbEntry.AttrsOrig
 
-	findParentDNByDN, err := createFindTreePathByDNSQL(entry.ParentDN(), &FindOption{Lock: false})
+	findParentDNByDN, err := createFindTreePathByDNSQL(entry.ParentDN())
 	if err != nil {
 		return 0, 0, xerrors.Errorf("Failed to create findTreePathByDN sql, err: %w", err)
 	}

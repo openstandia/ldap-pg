@@ -119,7 +119,7 @@ type FetchedDNOrig struct {
 func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []string,
 	reqMemberOf, isHasSubordinatesRequested bool, handler func(entry *SearchEntry) error) (int32, int32, error) {
 
-	fetchedDN, err := r.FindDNByDN(nil, baseDN, false)
+	fetchedDN, err := r.FindPathByDN(nil, baseDN)
 	if err != nil {
 		log.Printf("debug: Failed to find DN by DN. err: %+v", err)
 		return 0, 0, err
@@ -248,7 +248,7 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []st
 			}
 			// No cache, need to full search...
 
-			dn, err := r.FindDNByDN(nil, pendingDN, false)
+			dn, err := r.FindPathByDN(nil, pendingDN)
 			if err != nil {
 				log.Printf("debug: Can't find the DN by DN: %s, err: %s", pendingDN.DNNormStr(), err)
 				continue
@@ -480,10 +480,10 @@ func (r *Repository) PrepareFindDNByDN(dn *DN, opt *FindOption) (*sqlx.NamedStmt
 
 	return stmt, params, nil
 }
-func (r *Repository) PrepareFindPathByDN(dn *DN, opt *FindOption) (*sqlx.NamedStmt, map[string]interface{}, error) {
+func (r *Repository) PrepareFindPathByDN(dn *DN) (*sqlx.NamedStmt, map[string]interface{}, error) {
 	//  Key for stmt cache
-	key := fmt.Sprintf("PrepareFindPathByDN/LOCK:%v/FETCH_ATTRS:%v/FETCH_CRED:%v/DEPTH:%d",
-		opt.Lock, opt.FetchAttrs, opt.FetchCred, len(dn.RDNs))
+	key := fmt.Sprintf("PrepareFindPathByDN/DEPTH:%d",
+		len(dn.RDNs))
 
 	// make params
 	params := createFindTreePathByDNParams(dn)
@@ -494,7 +494,7 @@ func (r *Repository) PrepareFindPathByDN(dn *DN, opt *FindOption) (*sqlx.NamedSt
 	}
 
 	// Not cached yet, create query and params, then cache the stmt
-	q, err := createFindTreePathByDNSQL(dn, opt)
+	q, err := createFindTreePathByDNSQL(dn)
 	// q, err := createFindBasePathByDNSQL(dn, opt)
 	if err != nil {
 		return nil, nil, err
@@ -677,12 +677,18 @@ func createFindBasePathByDNSQL(baseDN *DN, opt *FindOption) (string, error) {
 		return "", xerrors.Errorf("Invalid DN, it's anonymous")
 	}
 
+	var fetchAttrsCols string
+	if opt.FetchAttrs {
+		fetchAttrsCols = `e0.attrs_orig,`
+	}
+
 	if baseDN.IsRoot() {
 		return `
 			SELECT
 				e0.rdn_orig as dn_orig,
 				e0.id,
 				e0.parent_id,
+				` + fetchAttrsCols + `
 				e0.id::ltree as path
 			FROM
 				ldap_entry e0 
@@ -748,6 +754,10 @@ func createFindBasePathByDNSQL(baseDN *DN, opt *FindOption) (string, error) {
 			where2 = append(where2, fmt.Sprintf("e%d.parent_id = e%d.id", index, index-1))
 		}
 	}
+	if opt.FetchAttrs {
+		fetchAttrsCols = `e` + lastIndexStr + `.attrs_orig,`
+	}
+
 	var lock string
 	if opt.Lock {
 		lock = " for UPDATE"
@@ -758,6 +768,7 @@ func createFindBasePathByDNSQL(baseDN *DN, opt *FindOption) (string, error) {
 	  ` + strings.Join(proj, " || ',' || ") + ` as dn_orig,
 	  e` + lastIndexStr + `.id, 
 	  e` + lastIndexStr + `.parent_id, 
+	  ` + fetchAttrsCols + `
 	  ` + strings.Join(proj2, " || '.' || ") + ` as path
 	FROM
 	  ` + strings.Join(table, ", ") + `
@@ -774,7 +785,8 @@ func createFindBasePathByDNSQL(baseDN *DN, opt *FindOption) (string, error) {
 }
 
 // createFindTreePathByDNSQL returns a SQL which selects id, parent_id, dn_orig, path and has_sub.
-func createFindTreePathByDNSQL(baseDN *DN, opt *FindOption) (string, error) {
+// This sql can't offer lock version since it uses outer join.
+func createFindTreePathByDNSQL(baseDN *DN) (string, error) {
 	if len(baseDN.RDNs) == 0 {
 		return "", xerrors.Errorf("Invalid DN, it's anonymous")
 	}
@@ -856,10 +868,6 @@ func createFindTreePathByDNSQL(baseDN *DN, opt *FindOption) (string, error) {
 			where2 = append(where2, fmt.Sprintf("e%d.parent_id = e%d.id", index, index-1))
 		}
 	}
-	var lock string
-	if opt.Lock {
-		lock = " for UPDATE"
-	}
 
 	sql := `
 	SELECT
@@ -875,7 +883,6 @@ func createFindTreePathByDNSQL(baseDN *DN, opt *FindOption) (string, error) {
 	  ` + strings.Join(where, " AND ") + ` 
 	  AND
 	  ` + strings.Join(where2, " AND ") + ` 
-	` + lock + `
 	`
 
 	log.Printf("debug: createFindTreePathSQL: %s", sql)
@@ -897,9 +904,9 @@ func txLabel(tx *sqlx.Tx) string {
 	return "tx"
 }
 
-// FindDNByDN returns FetchedDN object from database by DN search.
-func (r *Repository) FindDNByDN(tx *sqlx.Tx, dn *DN, lock bool) (*FetchedDN, error) {
-	stmt, params, err := r.PrepareFindPathByDN(dn, &FindOption{Lock: lock})
+// FindPathByDN returns FetchedDN object from database by DN search.
+func (r *Repository) FindPathByDN(tx *sqlx.Tx, dn *DN) (*FetchedDN, error) {
+	stmt, params, err := r.PrepareFindPathByDN(dn)
 	if err != nil {
 		return nil, xerrors.Errorf("Failed to prepare FindDNByDN: %v, err: %w", dn, err)
 	}
@@ -916,7 +923,7 @@ func (r *Repository) FindDNByDN(tx *sqlx.Tx, dn *DN, lock bool) (*FetchedDN, err
 	return &dest, nil
 }
 
-func (r *Repository) FindDNOnlyByDN(tx *sqlx.Tx, dn *DN, lock bool) (*FetchedDN, error) {
+func (r *Repository) FindDNByDNWithLock(tx *sqlx.Tx, dn *DN, lock bool) (*FetchedDN, error) {
 	stmt, params, err := r.PrepareFindDNByDN(dn, &FindOption{Lock: lock})
 	if err != nil {
 		return nil, xerrors.Errorf("Failed to prepare FindDNOnlyByDN: %v, err: %w", dn, err)
@@ -936,12 +943,12 @@ func (r *Repository) FindDNOnlyByDN(tx *sqlx.Tx, dn *DN, lock bool) (*FetchedDN,
 
 // FindEntryByDN returns FetchedDBEntry object from database by DN search.
 func (r *Repository) FindEntryByDN(tx *sqlx.Tx, dn *DN, lock bool) (*ModifyEntry, error) {
-	stmt, params, err := r.PrepareFindPathByDN(dn, &FindOption{Lock: lock, FetchAttrs: true})
+	stmt, params, err := r.PrepareFindDNByDN(dn, &FindOption{Lock: lock, FetchAttrs: true})
 	if err != nil {
 		return nil, xerrors.Errorf("Failed to prepare FindEntryByDN: %v, err: %w", dn, err)
 	}
 
-	var dest FetchedDBEntry
+	var dest FetchedEntry
 	err = namedStmt(tx, stmt).Get(&dest, params)
 	if err != nil {
 		if isNoResult(err) {
@@ -950,7 +957,7 @@ func (r *Repository) FindEntryByDN(tx *sqlx.Tx, dn *DN, lock bool) (*ModifyEntry
 		return nil, xerrors.Errorf("Failed to fetch FindEntryByDN in %s: %v, err: %w", txLabel(tx), dn, err)
 	}
 
-	return mapper.FetchedDBEntryToModifyEntry(&dest)
+	return mapper.FetchedEntryToModifyEntry(&dest)
 }
 
 func (r *Repository) FindContainerByDN(tx *sqlx.Tx, dn *FetchedDN, scope int) ([]*FetchedDNOrig, error) {

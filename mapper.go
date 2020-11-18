@@ -124,7 +124,7 @@ func (m *Mapper) dnArrayToIDArray(tx *sqlx.Tx, norm map[string]interface{}, attr
 			}
 
 			// TODO Optimize converting DN to id
-			fetchedDN, err := m.server.repo.FindDNOnlyByDN(tx, dn, true)
+			fetchedDN, err := m.server.repo.FindDNByDNWithLock(tx, dn, true)
 			if err != nil {
 				if lerr, ok := err.(*LDAPError); ok {
 					if lerr.IsNoSuchObjectError() {
@@ -145,10 +145,19 @@ func (m *Mapper) dnArrayToIDArray(tx *sqlx.Tx, norm map[string]interface{}, attr
 	return nil
 }
 
-func (m *Mapper) ModifyEntryToDBEntry(entry *ModifyEntry) (*DBEntry, error) {
+func (m *Mapper) ModifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry) (*DBEntry, error) {
 	norm, orig := entry.GetAttrs()
 
+	// Remove attributes to reduce attrs_orig column size
 	removeComputedAttrs(orig)
+
+	// Convert the value of member and uniqueMamber attributes, DN => int64
+	if err := m.dnArrayToIDArray(tx, norm, "member"); err != nil {
+		return nil, err
+	}
+	if err := m.dnArrayToIDArray(tx, norm, "uniqueMember"); err != nil {
+		return nil, err
+	}
 
 	updated := time.Now()
 	norm["modifyTimestamp"] = []int64{updated.Unix()}
@@ -221,6 +230,23 @@ func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry, IdToDNOrig
 	readEntry := NewSearchEntry(dn, orig)
 
 	return readEntry, nil
+}
+
+func (m *Mapper) FetchedEntryToModifyEntry(dbEntry *FetchedEntry) (*ModifyEntry, error) {
+	dn, err := m.normalizeDN(dbEntry.DNOrig)
+	if err != nil {
+		return nil, err
+	}
+	orig := dbEntry.GetAttrsOrig()
+
+	entry, err := NewModifyEntry(dn, orig)
+	if err != nil {
+		return nil, err
+	}
+	entry.dbEntryId = dbEntry.ID
+	entry.dbParentID = dbEntry.ParentID
+
+	return entry, nil
 }
 
 func (m *Mapper) FetchedDBEntryToModifyEntry(dbEntry *FetchedDBEntry) (*ModifyEntry, error) {

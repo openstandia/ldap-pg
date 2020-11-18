@@ -4,20 +4,14 @@ import (
 	"log"
 	"strconv"
 	"strings"
+
+	"github.com/jmoiron/sqlx/types"
 )
 
 type DN struct {
 	RDNs      []*RelativeDN
 	suffix    []string
 	cachedRDN map[string]string
-}
-
-type FetchedDNEntry struct {
-	ID       int64  `db:"id"`
-	ParentID int64  `db:"parent_id"`
-	Path     string `db:"path"`
-	DNOrig   string `db:"dn_orig"`
-	dnNorm   string // not fetched from DB, it's computed
 }
 
 type FetchedDN struct {
@@ -29,6 +23,21 @@ type FetchedDN struct {
 	dnNorm   string // not fetched from DB, it's computed
 }
 
+type FetchedEntry struct {
+	FetchedDN
+	AttrsOrig types.JSONText `db:"attrs_orig"`
+}
+
+func (e *FetchedEntry) GetAttrsOrig() map[string][]string {
+	if len(e.AttrsOrig) > 0 {
+		jsonMap := make(map[string][]string)
+		e.AttrsOrig.Unmarshal(&jsonMap)
+
+		return jsonMap
+	}
+	return nil
+}
+
 func (f *FetchedDN) IsRoot() bool {
 	return strings.Contains(f.Path, ".")
 }
@@ -37,7 +46,7 @@ func (f *FetchedDN) DNNorm() string {
 	if f.dnNorm == "" {
 		dn, err := NormalizeDN(nil, f.DNOrig)
 		if err != nil {
-			log.Printf("error: Invalid DN: %s, err: %w", f.DNOrig, err)
+			log.Printf("error: Invalid DN: %s, err: %v", f.DNOrig, err)
 			return ""
 		}
 		// Cached
@@ -55,12 +64,12 @@ func (f *FetchedDN) ParentDN() *FetchedDN {
 	parentPath := strings.Join(path[:len(path)-2], ".")
 	parentID, err := strconv.ParseInt(path[len(path)-1], 10, 64)
 	if err != nil {
-		log.Printf("error: Invalid path: %s, err: %w", f.Path, err)
+		log.Printf("error: Invalid path: %s, err: %v", f.Path, err)
 		return nil
 	}
 	dn, err := NormalizeDN(nil, f.DNOrig)
 	if err != nil {
-		log.Printf("error: Invalid DN: %s, err: %w", f.DNOrig, err)
+		log.Printf("error: Invalid DN: %s, err: %v", f.DNOrig, err)
 		return nil
 	}
 	parentDN := dn.ParentDN()
