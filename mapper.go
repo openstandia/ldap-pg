@@ -194,13 +194,13 @@ func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry, IdToDNOrig
 	if err != nil {
 		return nil, err
 	}
-	orig := dbEntry.GetAttrsOrig()
+	orig := dbEntry.AttrsOrig()
 	// orig["entryUUID"] = []string{dbEntry.EntryUUID}
 	// orig["createTimestamp"] = []string{dbEntry.Created.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 	// orig["modifyTimestamp"] = []string{dbEntry.Updated.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 
 	// member
-	members, err := dbEntry.Members(IdToDNOrigCache, m.server.SuffixOrigStr())
+	members, err := dbEntry.Member(IdToDNOrigCache)
 	if err != nil {
 		log.Printf("warn: Invalid state. FetchedDBEntiry cannot resolve member DN. err: %+v", err)
 		// TODO busy?
@@ -214,7 +214,7 @@ func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry, IdToDNOrig
 	// }
 
 	// memberOf
-	memberOfs, err := dbEntry.MemberOfs(IdToDNOrigCache, m.server.SuffixOrigStr())
+	memberOfs, err := dbEntry.MemberOf(IdToDNOrigCache)
 	if err != nil {
 		log.Printf("warn: Invalid state. FetchedDBEntiry cannot resolve memberOf DN. err: %+v", err)
 		// TODO busy?
@@ -254,7 +254,7 @@ func (m *Mapper) FetchedDBEntryToModifyEntry(dbEntry *FetchedDBEntry) (*ModifyEn
 	if err != nil {
 		return nil, err
 	}
-	orig := dbEntry.GetAttrsOrig()
+	orig := dbEntry.AttrsOrig()
 
 	entry, err := NewModifyEntry(dn, orig)
 	if err != nil {

@@ -16,23 +16,23 @@ type FetchedDBEntry struct {
 	ID              int64          `db:"id"`
 	ParentID        int64          `db:"parent_id"`
 	RDNOrig         string         `db:"rdn_orig"`
-	AttrsOrig       types.JSONText `db:"attrs_orig"`
-	Member          types.JSONText `db:"member"`          // No real column in the table
-	UniqueMember    types.JSONText `db:"uniquemember"`    // No real column in the table
-	MemberOf        types.JSONText `db:"member_of"`       // No real column in the table
+	RawAttrsOrig    types.JSONText `db:"attrs_orig"`
+	RawMember       types.JSONText `db:"member"`          // No real column in the table
+	RawUniqueMember types.JSONText `db:"uniquemember"`    // No real column in the table
+	RawMemberOf     types.JSONText `db:"member_of"`       // No real column in the table
 	HasSubordinates string         `db:"hassubordinates"` // No real column in the table
 	DNOrig          string         `db:"dn_orig"`         // No real clumn in t he table
 	Count           int32          `db:"count"`           // No real column in the table
 	ParentDNOrig    string         // No real column in the table
 }
 
-func (e *FetchedDBEntry) Members(IdToDNOrigCache map[int64]string, suffix string) ([]string, error) {
-	if len(e.Member) == 0 {
+func (e *FetchedDBEntry) Member(IdToDNOrigCache map[int64]string) ([]string, error) {
+	if len(e.RawMember) == 0 {
 		return nil, nil
 	}
 
 	jsonArray := [][]string{}
-	err := e.Member.Unmarshal(&jsonArray)
+	err := e.RawMember.Unmarshal(&jsonArray)
 	if err != nil {
 		return nil, err
 	}
@@ -56,13 +56,13 @@ func (e *FetchedDBEntry) Members(IdToDNOrigCache map[int64]string, suffix string
 	return results, nil
 }
 
-func (e *FetchedDBEntry) MemberOfs(IdToDNOrigCache map[int64]string, suffix string) ([]string, error) {
-	if len(e.MemberOf) == 0 {
+func (e *FetchedDBEntry) MemberOf(IdToDNOrigCache map[int64]string) ([]string, error) {
+	if len(e.RawMemberOf) == 0 {
 		return nil, nil
 	}
 
 	jsonArray := [][]string{}
-	err := e.MemberOf.Unmarshal(&jsonArray)
+	err := e.RawMemberOf.Unmarshal(&jsonArray)
 	if err != nil {
 		return nil, err
 	}
@@ -87,14 +87,14 @@ func (e *FetchedDBEntry) MemberOfs(IdToDNOrigCache map[int64]string, suffix stri
 	return results, nil
 }
 
-func (e *FetchedDBEntry) GetAttrsOrig() map[string][]string {
-	if len(e.AttrsOrig) > 0 {
+func (e *FetchedDBEntry) AttrsOrig() map[string][]string {
+	if len(e.RawAttrsOrig) > 0 {
 		jsonMap := make(map[string][]string)
-		e.AttrsOrig.Unmarshal(&jsonMap)
+		e.RawAttrsOrig.Unmarshal(&jsonMap)
 
-		if len(e.MemberOf) > 0 {
+		if len(e.RawMemberOf) > 0 {
 			jsonArray := []string{}
-			e.MemberOf.Unmarshal(&jsonArray)
+			e.RawMemberOf.Unmarshal(&jsonArray)
 			jsonMap["memberOf"] = jsonArray
 		}
 
@@ -106,8 +106,8 @@ func (e *FetchedDBEntry) GetAttrsOrig() map[string][]string {
 func (e *FetchedDBEntry) Clear() {
 	e.ID = 0
 	e.DNOrig = ""
-	e.AttrsOrig = nil
-	e.MemberOf = nil
+	e.RawAttrsOrig = nil
+	e.RawMemberOf = nil
 	e.Count = 0
 }
 
