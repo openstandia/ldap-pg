@@ -30,7 +30,7 @@ func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	tx := s.Repo().db.MustBegin()
 
-	oldEntry, err := s.Repo().FindByDNWithLock(tx, dn)
+	oldEntry, err := s.Repo().FindEntryByDN(tx, dn, true)
 	if err != nil {
 		tx.Rollback()
 		if err == sql.ErrNoRows {

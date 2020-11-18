@@ -13,17 +13,16 @@ func handleAdd(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	dn, err := s.NormalizeDN(string(r.Entry()))
 	if err != nil {
 		log.Printf("warn: Invalid DN: %s err: %s", r.Entry(), err)
-
 		responseAddError(w, err)
 		return
 	}
-
-	log.Printf("debug: Adding Internal DN: %v", dn)
 
 	if !requiredAuthz(m, "add", dn) {
 		responseAddError(w, NewInsufficientAccess())
 		return
 	}
+
+	log.Printf("debug: Start adding DN: %v", dn)
 
 	addEntry, err := mapper.LDAPMessageToAddEntry(dn, r.Attributes())
 	if err != nil {
@@ -39,12 +38,12 @@ func handleAdd(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	log.Printf("Added. Id: %d", id)
+	log.Printf("debug: Added. Id: %d, DN: %v", id, dn)
 
 	res := ldap.NewAddResponse(ldap.LDAPResultSuccess)
 	w.Write(res)
 
-	log.Printf("info: End Adding entry: %s", r.Entry())
+	log.Printf("debug: End Adding entry: %s", r.Entry())
 }
 
 func responseAddError(w ldap.ResponseWriter, err error) {

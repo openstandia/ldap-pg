@@ -1,6 +1,10 @@
 package main
 
-import "strconv"
+import (
+	"log"
+	"strconv"
+	"strings"
+)
 
 type DN struct {
 	RDNs      []*RelativeDN
@@ -9,14 +13,57 @@ type DN struct {
 }
 
 type FetchedDN struct {
-	ID         int64  `db:"id"`
-	ParentPath string `db:"parent_path"`
-	HasSub     bool   `db:"has_sub"`
-	DNOrig     string `db:"dn_orig"`
+	ID       int64  `db:"id"`
+	ParentID int64  `db:"parent_id"`
+	Path     string `db:"path"`
+	DNOrig   string `db:"dn_orig"`
+	HasSub   bool   `db:"has_sub"`
+	dnNorm   string // not fetched from DB, it's computed
 }
 
-func (f *FetchedDN) Path() string {
-	return f.ParentPath + "." + strconv.FormatInt(f.ID, 10)
+func (f *FetchedDN) IsRoot() bool {
+	return strings.Contains(f.Path, ".")
+}
+
+func (f *FetchedDN) DNNorm() string {
+	if f.dnNorm == "" {
+		dn, err := NormalizeDN(nil, f.DNOrig)
+		if err != nil {
+			log.Printf("error: Invalid DN: %s, err: %w", f.DNOrig, err)
+			return ""
+		}
+		// Cached
+		f.dnNorm = dn.DNNormStr()
+	}
+	return f.dnNorm
+}
+
+func (f *FetchedDN) ParentDN() *FetchedDN {
+	if f.IsRoot() {
+		return nil
+	}
+
+	path := strings.Split(f.Path, ".")
+	parentPath := strings.Join(path[:len(path)-2], ".")
+	parentID, err := strconv.ParseInt(path[len(path)-1], 10, 64)
+	if err != nil {
+		log.Printf("error: Invalid path: %s, err: %w", f.Path, err)
+		return nil
+	}
+	dn, err := NormalizeDN(nil, f.DNOrig)
+	if err != nil {
+		log.Printf("error: Invalid DN: %s, err: %w", f.DNOrig, err)
+		return nil
+	}
+	parentDN := dn.ParentDN()
+
+	return &FetchedDN{
+		ID:     parentID,
+		Path:   parentPath,
+		DNOrig: parentDN.DNOrigStr(),
+		dnNorm: parentDN.DNNormStr(),
+		HasSub: true,
+	}
 }
 
 type RelativeDN struct {
@@ -24,29 +71,31 @@ type RelativeDN struct {
 }
 
 func (r *RelativeDN) OrigStr() string {
-	b := make([]byte, 0, 128)
+	var b strings.Builder
+	b.Grow(128)
 	for i, attr := range r.Attributes {
 		if i > 0 {
-			b = append(b, "+"...)
+			b.WriteString("+")
 		}
-		b = append(b, attr.TypeOrig...)
-		b = append(b, "="...)
-		b = append(b, attr.ValueOrig...)
+		b.WriteString(attr.TypeOrig)
+		b.WriteString("=")
+		b.WriteString(attr.ValueOrig)
 	}
-	return string(b)
+	return b.String()
 }
 
 func (r *RelativeDN) NormStr() string {
-	b := make([]byte, 0, 128)
+	var b strings.Builder
+	b.Grow(128)
 	for i, attr := range r.Attributes {
 		if i > 0 {
-			b = append(b, "+"...)
+			b.WriteString("+")
 		}
-		b = append(b, attr.TypeNorm...)
-		b = append(b, "="...)
-		b = append(b, attr.ValueNorm...)
+		b.WriteString(attr.TypeNorm)
+		b.WriteString("=")
+		b.WriteString(attr.ValueNorm)
 	}
-	return string(b)
+	return b.String()
 }
 
 type AttributeTypeAndValue struct {
@@ -75,57 +124,55 @@ func NormalizeDN(suffix []string, dn string) (*DN, error) {
 }
 
 func (d *DN) DNNormStr() string {
-	b := make([]byte, 0, 256)
+	var b strings.Builder
+	b.Grow(256)
 	for i, rdn := range d.RDNs {
 		if i > 0 {
-			b = append(b, ","...)
+			b.WriteString(",")
 		}
-		b = append(b, rdn.NormStr()...)
+		b.WriteString(rdn.NormStr())
 	}
-	return string(b)
+	return b.String()
 }
 
 func (d *DN) DNOrigStr() string {
-	b := make([]byte, 0, 128)
+	var b strings.Builder
+	b.Grow(256)
 	for i, rdn := range d.RDNs {
 		if i > 0 {
-			b = append(b, ","...)
+			b.WriteString(",")
 		}
-		b = append(b, rdn.OrigStr()...)
+		b.WriteString(rdn.OrigStr())
 	}
-	return string(b)
+	return b.String()
 }
 
 func (d *DN) RDNNormStr() string {
-	if d.IsDC() {
-		return ""
-	}
-	b := make([]byte, 0, 128)
+	var b strings.Builder
+	b.Grow(128)
 	for i, attr := range d.RDNs[0].Attributes {
 		if i > 0 {
-			b = append(b, "+"...)
+			b.WriteString("+")
 		}
-		b = append(b, attr.TypeNorm...)
-		b = append(b, "="...)
-		b = append(b, attr.ValueNorm...)
+		b.WriteString(attr.TypeNorm)
+		b.WriteString("=")
+		b.WriteString(attr.ValueNorm)
 	}
-	return string(b)
+	return b.String()
 }
 
 func (d *DN) RDNOrigStr() string {
-	if d.IsDC() {
-		return ""
-	}
-	b := make([]byte, 0, 128)
+	var b strings.Builder
+	b.Grow(128)
 	for i, attr := range d.RDNs[0].Attributes {
 		if i > 0 {
-			b = append(b, "+"...)
+			b.WriteString("+")
 		}
-		b = append(b, attr.TypeOrig...)
-		b = append(b, "="...)
-		b = append(b, attr.ValueOrig...)
+		b.WriteString(attr.TypeOrig)
+		b.WriteString("=")
+		b.WriteString(attr.ValueOrig)
 	}
-	return string(b)
+	return b.String()
 }
 
 func (d *DN) Equal(o *DN) bool {
@@ -192,7 +239,7 @@ func (d *DN) Move(newParentDN *DN) (*DN, error) {
 }
 
 func (d *DN) ParentDN() *DN {
-	if d.IsDC() {
+	if d.IsRoot() {
 		return nil
 	}
 

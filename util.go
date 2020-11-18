@@ -46,14 +46,14 @@ func getAuthSession(m *ldap.Message) map[string]*DN {
 func requiredAuthz(m *ldap.Message, operation string, targetDN *DN) bool {
 	session := getAuthSession(m)
 	if dn, ok := session["dn"]; ok {
-		log.Printf("info: Authorized: %s", dn.DNNormStr())
+		log.Printf("info: Authorized. authorizedDN: %s, targetDN: %s", dn.DNNormStr(), targetDN.DNNormStr())
 
 		// TODO authz
 
 		return true
 	}
 
-	log.Printf("warn: Not Authorized")
+	log.Printf("warn: Not Authorized for anonymous. targetDN: %s", targetDN.DNNormStr())
 
 	return false
 }

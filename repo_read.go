@@ -6,7 +6,6 @@ import (
 	"log"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/jmoiron/sqlx/types"
@@ -16,9 +15,6 @@ import (
 type FetchedDBEntry struct {
 	ID              int64          `db:"id"`
 	ParentID        int64          `db:"parent_id"`
-	EntryUUID       string         `db:"uuid"`
-	Created         time.Time      `db:"created"`
-	Updated         time.Time      `db:"updated"`
 	RDNOrig         string         `db:"rdn_orig"`
 	AttrsOrig       types.JSONText `db:"attrs_orig"`
 	Member          types.JSONText `db:"member"`          // No real column in the table
@@ -27,7 +23,7 @@ type FetchedDBEntry struct {
 	HasSubordinates string         `db:"hassubordinates"` // No real column in the table
 	DNOrig          string         `db:"dn_orig"`         // No real clumn in t he table
 	Count           int32          `db:"count"`           // No real column in the table
-	ParentDNOrig    string         // No real column in t he table
+	ParentDNOrig    string         // No real column in the table
 }
 
 func (e *FetchedDBEntry) Members(IdToDNOrigCache map[int64]string, suffix string) ([]string, error) {
@@ -123,7 +119,7 @@ type FetchedDNOrig struct {
 func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []string,
 	reqMemberOf, isHasSubordinatesRequested bool, handler func(entry *SearchEntry) error) (int32, int32, error) {
 
-	fetchedDN, err := r.FindDNByDN(nil, baseDN)
+	fetchedDN, err := r.FindDNByDN(nil, baseDN, false)
 	if err != nil {
 		log.Printf("debug: Failed to find DN by DN. err: %+v", err)
 		return 0, 0, err
@@ -202,7 +198,7 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []st
 	// 	) p ON true
 	searchQuery := fmt.Sprintf(`
 		SELECT
-			e.id, e.parent_id, e.uuid, e.created, e.updated, e.rdn_orig, '' AS dn_orig,
+			e.id, e.parent_id, e.rdn_orig, '' AS dn_orig,
 			e.attrs_orig %s, count(e.id) over() AS count
 			%s
 			%s
@@ -252,7 +248,7 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []st
 			}
 			// No cache, need to full search...
 
-			dn, err := r.FindDNByDN(nil, pendingDN)
+			dn, err := r.FindDNByDN(nil, pendingDN, false)
 			if err != nil {
 				log.Printf("debug: Can't find the DN by DN: %s, err: %s", pendingDN.DNNormStr(), err)
 				continue
@@ -264,24 +260,15 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []st
 			q.DNNormToIdCache[dnNorm] = dn.ID
 			// Update cache with the parent DN
 			if _, ok := q.DNNormToIdCache[parentDNNorm]; !ok {
-				if dn.ParentPath != "" {
-					parentIds := strings.Split(dn.ParentPath, ".")
-
-					parentDN := pendingDN
-					for i := len(parentIds) - 1; i >= 0; i-- {
-						parentDN = parentDN.ParentDN()
-
-						ii, err := strconv.ParseInt(parentIds[i], 10, 64)
-						if err != nil {
-							log.Printf("error: Failed to detect parent_id from path: %s, err: %s", dn.ParentPath, err)
-							return 0, 0, NewUnavailable()
-						}
-
-						if _, ok := q.DNNormToIdCache[parentDN.DNNormStr()]; ok {
-							break
-						}
-						q.DNNormToIdCache[parentDN.DNNormStr()] = ii
+				parentDN := dn.ParentDN()
+				for parentDN != nil {
+					if _, ok := q.DNNormToIdCache[parentDN.DNNorm()]; ok {
+						break
 					}
+					q.DNNormToIdCache[parentDN.DNNorm()] = parentDN.ID
+
+					// Next parent
+					parentDN = parentDN.ParentDN()
 				}
 			}
 		}
@@ -466,17 +453,11 @@ func (r *Repository) PrepareFindByDN(tx *sqlx.Tx, dn *DN, option *FindOption) (*
 
 func (r *Repository) PrepareFindPathByDN(dn *DN, opt *FindOption) (*sqlx.NamedStmt, map[string]interface{}, error) {
 	//  Key for stmt cache
-	key := fmt.Sprintf("PATH/DEPTH:%d", len(dn.RDNs))
+	key := fmt.Sprintf("LOCK:%v/FETCH_ATTRS:%v/FETCH_CRED:%v/DEPTH:%d",
+		opt.Lock, opt.FetchAttrs, opt.FetchCred, len(dn.RDNs))
 
 	// make params
-	depth := len(dn.RDNs)
-	last := depth - 1
-	params := make(map[string]interface{}, depth)
-	ii := 0
-	for i := last; i >= 0; i-- {
-		params["rdn_norm"+strconv.Itoa(ii)] = dn.RDNs[i].NormStr()
-		ii++
-	}
+	params := createFindTreePathByDNParams(dn)
 
 	if stmt, ok := treeStmtCache.Get(key); ok {
 		// Already cached
@@ -484,10 +465,13 @@ func (r *Repository) PrepareFindPathByDN(dn *DN, opt *FindOption) (*sqlx.NamedSt
 	}
 
 	// Not cached yet, create query and params, then cache the stmt
-	q, err := createFindTreePathSQL(dn, opt)
+	q, err := createFindTreePathByDNSQL(dn, opt)
+	// q, err := createFindBasePathByDNSQL(dn, opt)
 	if err != nil {
 		return nil, nil, err
 	}
+
+	log.Printf("debug: createFindTreePathByDNSQL: %s\nparams: %v", q, params)
 
 	stmt, err := r.db.PrepareNamed(q)
 	if err != nil {
@@ -642,81 +626,224 @@ func collectAllNodeNorm() (map[string]int64, error) {
 	return cache, nil
 }
 
-func createFindTreePathSQL(baseDN *DN, opt *FindOption) (string, error) {
+func createFindTreePathByDNParams(baseDN *DN) map[string]interface{} {
+	if baseDN == nil {
+		return map[string]interface{}{}
+	}
+
+	depth := len(baseDN.RDNs)
+	last := depth - 1
+	params := make(map[string]interface{}, depth)
+	ii := 0
+	for i := last; i >= 0; i-- {
+		params["rdn_norm"+strconv.Itoa(ii)] = baseDN.RDNs[i].NormStr()
+		ii++
+	}
+	return params
+}
+
+// createFindBasePathByDNSQL returns a SQL which selects id, parent_path, dn_orig and has_sub.
+func createFindBasePathByDNSQL(baseDN *DN, opt *FindOption) (string, error) {
 	if len(baseDN.RDNs) == 0 {
 		return "", xerrors.Errorf("Invalid DN, it's anonymous")
 	}
 
 	if baseDN.IsRoot() {
-		return `SELECT e0.rdn_orig as dn_orig, e0.id, '' as parent_path, (CASE WHEN ex.id IS NOT NULL THEN 1 ELSE 0 END) as has_sub FROM ldap_entry e0 LEFT JOIN ldap_tree ex ON e0.id = ex.id WHERE e0.rdn_norm = :rdn_norm0 AND e0.parent_id is NULL`, nil
+		var fetchAttrs string
+		if opt.FetchAttrs {
+			fetchAttrs = `e0.attrs_norm, e0.attrs_orig,`
+		}
+		return fmt.Sprintf(`
+			SELECT
+				e0.rdn_orig as dn_orig,
+				e0.id,
+				e0.parent_path,
+				%s
+				CASE WHEN EXISTS (
+					SELECT 1 FROM ldap_entry ce WHERE ce.parent_path = (e0.parent_path || e0.id::::text)
+				) THEN 1 ELSE 0 END as has_sub
+			FROM
+				ldap_entry e0
+			WHERE
+				e0.rdn_norm = :rdn_norm0 AND e0.parent_path = 'R'
+		`, fetchAttrs), nil
 	}
 
 	/*
 		SELECT
-			e4.rdn_orig || ',' || e3.rdn_orig || ',' || e2.rdn_orig || ',' || e1.rdn_orig,
-			e4.id,
-			t3.path as parent_path,
-			(CASE WHEN ex.id IS NOT NULL THEN 1 ELSE 0 END) as has_sub
+			e3.rdn_orig || ',' || e2.rdn_orig || ',' || e1.rdn_orig || ',' || e0.rdn_orig,
+			e3.id,
+			e3.parent_path as parent_path,
+			CASE WHEN EXISTS (
+				SELECT 1 FROM ldap_entry ce WHERE ce.parent_path = (e3.parent_path || e3.id::text)
+			) THEN 1 ELSE 0 END as has_sub
 		FROM
-			ldap_tree t1, ldap_tree t2, ldap_tree t3,
-			ldap_entry e1, ldap_entry e2, ldap_entry e3, ldap_entry e4
-			LEFT JOIN ldap_tree ex ON e4.id = ex.id
+			ldap_entry e0, ldap_entry e1, ldap_entry e2, ldap_entry e3
 		WHERE
-			e1.rdn_norm = 'dc=com' AND e2.rdn_norm = 'dc=example' AND e3.rdn_norm = 'ou=users' AND e4.rdn_norm = 'uid=u000001'
-			AND t1.parent_id is NULL AND t2.parent_id = t1.id AND t3.parent_id = t2.id AND e4.parent_id = t3.id
-			AND t1.id = e1.id
-			AND t2.id = e2.id
-			AND t3.id = e3.id
+			e0.rdn_norm = 'dc=com' AND e1.rdn_norm = 'dc=example' AND e2.rdn_norm = 'ou=users' AND e3.rdn_norm = 'uid=u000001'
+			AND e0.parent_path = 'R'
+			AND subpath(e1.parent_path, 0, 1) = e0.parent_path
+			AND subpath(e2.parent_path, 0, 2) = e1.parent_path
+			AND subpath(e3.parent_path, 0, 3) = e2.parent_path
 
 		                ?column?                |  id  | parent_path | has_sub
 		----------------------------------------+------+-------------+---------
-		 uid=u000001,ou=Users,dc=Example,dc=com |   4  |0.1.2        |       0
+		 uid=u000001,ou=Users,dc=Example,dc=com |   4  |R.0.1.2      |       0
 	*/
+
+	lastIndex := len(baseDN.RDNs) - 1
+	lastIndexStr := strconv.Itoa(lastIndex)
+
+	var fetchAttrs string
+	if opt.FetchAttrs {
+		fetchAttrs = `e` + strconv.Itoa(lastIndex) + `.attrs_orig, e` + lastIndexStr + `.attrs_orig,`
+	}
+
 	proj := []string{}
 	table := []string{}
 	where := []string{}
 	where2 := []string{}
 	for index := range baseDN.RDNs {
-		proj = append(proj, fmt.Sprintf("e%d.rdn_orig", len(baseDN.RDNs)-index-1))
-		if index < len(baseDN.RDNs)-1 {
-			table = append(table, fmt.Sprintf("ldap_tree t%d, ldap_entry e%d", index, index))
-		} else {
-			table = append(table, fmt.Sprintf("ldap_entry e%d", index))
-		}
+		proj = append(proj, fmt.Sprintf("e%d.rdn_orig", lastIndex-index))
+		table = append(table, fmt.Sprintf("ldap_entry e%d", index))
 		where = append(where, fmt.Sprintf("e%d.rdn_norm = :rdn_norm%d", index, index))
 		if index == 0 {
-			where2 = append(where2, fmt.Sprintf("t%d.parent_id is NULL AND t%d.id = e%d.id", index, index, index))
-		} else if index < len(baseDN.RDNs)-1 {
-			where2 = append(where2, fmt.Sprintf("t%d.parent_id = t%d.id AND t%d.id = e%d.id", index, index-1, index, index))
+			where2 = append(where2, fmt.Sprintf("e%d.parent_path = 'R'", index))
 		} else {
-			where2 = append(where2, fmt.Sprintf("e%d.parent_id = t%d.id", index, index-1))
+			where2 = append(where2, fmt.Sprintf("subpath(e%d.parent_path, 0, %d) = e%d.parent_path", index, index, index-1))
 		}
 	}
 
-	sql := fmt.Sprintf(`
+	sql := `
 	SELECT
-	  %s as dn_orig,
-	  e%d.id, t%d.path as parent_path,
-	  (CASE WHEN ex.id IS NOT NULL THEN 1 ELSE 0 END) as has_sub
+	  ` + strings.Join(proj, " || ',' || ") + ` as dn_orig,
+	  e` + lastIndexStr + `.id,
+	  e` + lastIndexStr + `.parent_path as parent_path,
+	  ` + fetchAttrs + `
+	  CASE WHEN EXISTS (
+		SELECT 1 FROM ldap_entry ce WHERE ce.parent_path = (e` + lastIndexStr + `.parent_path || e` + lastIndexStr + `.id::::text)
+	  ) THEN 1 ELSE 0 END as has_sub
 	FROM
-	  %s
-	  LEFT JOIN ldap_tree ex ON e%d.id = ex.id
+	  ` + strings.Join(table, ", ") + `
 	WHERE
-	  %s
+	` + strings.Join(where, " AND ") + `
 	  AND
-	  %s
-	`,
-		strings.Join(proj, " || ',' || "),
-		len(baseDN.RDNs)-1,
-		len(baseDN.RDNs)-2,
-		strings.Join(table, ", "),
-		len(baseDN.RDNs)-1,
-		strings.Join(where, " AND "),
-		strings.Join(where2, " AND "))
+	  ` + strings.Join(where2, " AND ") + `
+	`
 
 	if opt.Lock {
 		sql += " for UPDATE"
 	}
+
+	log.Printf("debug: createFindBasePathByDNSQL: %s", sql)
+
+	return sql, nil
+}
+
+// createFindTreePathByDNSQL returns a SQL which selects id, parent_id, dn_orig, path and has_sub.
+func createFindTreePathByDNSQL(baseDN *DN, opt *FindOption) (string, error) {
+	if len(baseDN.RDNs) == 0 {
+		return "", xerrors.Errorf("Invalid DN, it's anonymous")
+	}
+
+	if baseDN.IsRoot() {
+		return `
+			SELECT
+				e0.rdn_orig as dn_orig,
+				e0.id,
+				e0.parent_id,
+				e0.id::ltree as path,
+				(CASE WHEN t0.id IS NOT NULL THEN 1 ELSE 0 END) as has_sub
+			FROM
+				ldap_entry e0 
+				LEFT JOIN ldap_tree t0 ON t0.id = e0.id
+			WHERE
+				e0.rdn_norm = :rdn_norm0 AND e0.parent_id is NULL
+		`, nil
+	}
+
+	/*
+		SELECT
+			e2.rdn_orig || ',' || e1.rdn_orig || ',' || e0.rdn_orig,
+			e2.id,
+			e2.parent_id,
+			(e0.id || '.' || e1.id || '.' || e2.id) as path,
+			(CASE WHEN t0.id IS NOT NULL THEN 1 ELSE 0 END) as has_sub
+		FROM
+			ldap_entry e0, ldap_entry e1, ldap_entry e2
+			LEFT JOIN ldap_tree t0 ON t0.id = e2.id
+		WHERE
+			e0.rdn_norm = 'dc=com' AND e1.rdn_norm = 'dc=example' AND e2.rdn_norm = 'ou=users'
+			AND e0.parent_id is NULL AND e1.parent_id = e0.id AND e2.parent_id = e1.id
+			;
+				?column?          | id | parent_id | path  | has_sub
+		----------------------------+----+-----------+-------+---------
+		ou=Users,dc=Example,dc=com |  2 |         1 | 0.1.2 |       1
+
+
+		SELECT
+			e3.rdn_orig || ',' || e2.rdn_orig || ',' || e1.rdn_orig || ',' || e0.rdn_orig,
+			e3.id,
+			e3.parent_id,
+			(e0.id || '.' || e1.id || '.' || e2.id || '.' || e3.id) as path,
+			(CASE WHEN t0.id IS NOT NULL THEN 1 ELSE 0 END) as has_sub
+		FROM
+			ldap_entry e0, ldap_entry e1, ldap_entry e2, ldap_entry e3
+			LEFT JOIN ldap_tree t0 ON t0.id = e3.id
+		WHERE
+			e0.rdn_norm = 'dc=com' AND e1.rdn_norm = 'dc=example' AND e2.rdn_norm = 'ou=users' AND e3.rdn_norm = 'uid=u000001'
+			AND e0.parent_id is NULL AND e1.parent_id = e0.id AND e2.parent_id = e1.id AND e3.parent_id = e2.id
+
+						?column?                | id | parent_id |  path   | has_sub
+		----------------------------------------+----+-----------+---------+---------
+		uid=u000001,ou=Users,dc=Example,dc=com |  4 |         2 | 0.1.2.4 |       0
+
+	*/
+	lastIndex := len(baseDN.RDNs) - 1
+	lastIndexStr := strconv.Itoa(lastIndex)
+
+	// var fetchAttrs string
+	// if opt.FetchAttrs {
+	// 	fetchAttrs = `e` + strconv.Itoa(lastIndex) + `.attrs_orig, e` + lastIndexStr + `.attrs_orig,`
+	// }
+
+	proj := []string{}
+	proj2 := []string{}
+	table := []string{}
+	where := []string{}
+	where2 := []string{}
+	for index := range baseDN.RDNs {
+		proj = append(proj, fmt.Sprintf("e%d.rdn_orig", lastIndex-index))
+		proj2 = append(proj2, fmt.Sprintf("e%d.id", index))
+		table = append(table, fmt.Sprintf("ldap_entry e%d", index))
+		where = append(where, fmt.Sprintf("e%d.rdn_norm = :rdn_norm%d", index, index))
+		if index == 0 {
+			where2 = append(where2, fmt.Sprintf("e%d.parent_id is NULL", index))
+		} else {
+			where2 = append(where2, fmt.Sprintf("e%d.parent_id = e%d.id", index, index-1))
+		}
+	}
+	var lock string
+	if opt.Lock {
+		lock = " for UPDATE"
+	}
+
+	sql := `
+	SELECT
+	  ` + strings.Join(proj, " || ',' || ") + ` as dn_orig,
+	  e` + lastIndexStr + `.id, 
+	  e` + lastIndexStr + `.parent_id, 
+	  ` + strings.Join(proj2, " || '.' || ") + ` as path,
+	  (CASE WHEN t0.id IS NOT NULL THEN 1 ELSE 0 END) as has_sub
+	FROM
+	  ` + strings.Join(table, ", ") + `
+	  LEFT JOIN ldap_tree t0 ON t0.id = e` + lastIndexStr + `.id
+	WHERE
+	  ` + strings.Join(where, " AND ") + ` 
+	  AND
+	  ` + strings.Join(where2, " AND ") + ` 
+	` + lock + `
+	`
 
 	log.Printf("debug: createFindTreePathSQL: %s", sql)
 
@@ -737,8 +864,9 @@ func txLabel(tx *sqlx.Tx) string {
 	return "tx"
 }
 
-func (r *Repository) FindDNByDN(tx *sqlx.Tx, dn *DN) (*FetchedDN, error) {
-	stmt, params, err := r.PrepareFindPathByDN(dn, &FindOption{Lock: false})
+// FindDNByDN returns FetchedDN object from database by DN search.
+func (r *Repository) FindDNByDN(tx *sqlx.Tx, dn *DN, lock bool) (*FetchedDN, error) {
+	stmt, params, err := r.PrepareFindPathByDN(dn, &FindOption{Lock: lock})
 	if err != nil {
 		return nil, xerrors.Errorf("Failed to prepare FindDNByDN: %v, err: %w", dn, err)
 	}
@@ -753,6 +881,25 @@ func (r *Repository) FindDNByDN(tx *sqlx.Tx, dn *DN) (*FetchedDN, error) {
 	}
 
 	return &dest, nil
+}
+
+// FindEntryByDN returns FetchedDBEntry object from database by DN search.
+func (r *Repository) FindEntryByDN(tx *sqlx.Tx, dn *DN, lock bool) (*ModifyEntry, error) {
+	stmt, params, err := r.PrepareFindPathByDN(dn, &FindOption{Lock: lock, FetchAttrs: true})
+	if err != nil {
+		return nil, xerrors.Errorf("Failed to prepare FindEntryByDN: %v, err: %w", dn, err)
+	}
+
+	var dest FetchedDBEntry
+	err = namedStmt(tx, stmt).Get(&dest, params)
+	if err != nil {
+		if isNoResult(err) {
+			return nil, NewNoSuchObject()
+		}
+		return nil, xerrors.Errorf("Failed to fetch FindEntryByDN in %s: %v, err: %w", txLabel(tx), dn, err)
+	}
+
+	return mapper.FetchedDBEntryToModifyEntry(&dest)
 }
 
 func (r *Repository) FindContainerByDN(tx *sqlx.Tx, dn *FetchedDN, scope int) ([]*FetchedDNOrig, error) {
@@ -778,11 +925,11 @@ func (r *Repository) FindContainerByDN(tx *sqlx.Tx, dn *FetchedDN, scope int) ([
 
 	if scope == 2 { // sub
 		rows, err = namedStmt(tx, findContainerByPathStmt).Queryx(map[string]interface{}{
-			"path": dn.Path() + ".*{0,}",
+			"path": dn.Path + ".*{0,}",
 		})
 	} else if scope == 3 { // children
 		rows, err = namedStmt(tx, findContainerByPathStmt).Queryx(map[string]interface{}{
-			"path": dn.Path() + ".*{1,}",
+			"path": dn.Path + ".*{1,}",
 		})
 	}
 
@@ -883,17 +1030,11 @@ func collectNodeOrigByParentID(tx *sqlx.Tx, parentID int64) ([]*FetchedDNOrig, e
 }
 
 func (r *Repository) FindByDNWithLock(tx *sqlx.Tx, dn *DN) (*ModifyEntry, error) {
-	// TODO optimize collecting all container DN orig
-	dnOrigCache, err := collectAllNodeOrig(tx)
-	if err != nil {
-		return nil, err
-	}
-
 	entry, err := r.FindByDN(tx, dn, &FindOption{Lock: true, FetchAttrs: true})
 	if err != nil {
 		return nil, err
 	}
-	return mapper.FetchedDBEntryToModifyEntry(entry, dnOrigCache)
+	return mapper.FetchedDBEntryToModifyEntry(entry)
 }
 
 func (r *Repository) FindCredByDN(dn *DN) ([]string, error) {

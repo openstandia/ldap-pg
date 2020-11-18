@@ -503,9 +503,6 @@ func (s *SchemaValue) Norm() []string {
 
 func (s *SchemaValue) GetForJSON() interface{} {
 	s.Normalize()
-	if s.schema.SingleValue {
-		return s.cachedNorm[0]
-	}
 	return s.cachedNorm
 }
 

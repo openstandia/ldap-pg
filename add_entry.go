@@ -41,6 +41,10 @@ func (j *AddEntry) SetDN(dn *DN) {
 	}
 }
 
+func (j *AddEntry) IsRoot() bool {
+	return j.dn.IsRoot()
+}
+
 func (j *AddEntry) IsContainer() bool {
 	return j.dn.IsContainer()
 }
@@ -64,16 +68,10 @@ func (j *AddEntry) Member() []*MemberEntry {
 }
 
 func (j *AddEntry) RDNNorm() string {
-	if j.dn.IsDC() {
-		return ""
-	}
 	return j.dn.RDNNormStr()
 }
 
 func (j *AddEntry) RDNOrig() string {
-	if j.dn.IsDC() {
-		return ""
-	}
 	return j.dn.RDNOrigStr()
 }
 
