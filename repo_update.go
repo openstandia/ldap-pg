@@ -1,9 +1,7 @@
 package main
 
 import (
-	"fmt"
 	"log"
-	"strconv"
 	"strings"
 
 	"github.com/jmoiron/sqlx"
@@ -33,100 +31,6 @@ func (r *Repository) Update(tx *sqlx.Tx, oldEntry, newEntry *ModifyEntry) error 
 	return nil
 }
 
-func (r *Repository) addMembers(tx *sqlx.Tx, id int64, attrNameNorm string, dnNorms []string) error {
-	if len(dnNorms) == 0 {
-		return nil
-	}
-
-	nodeNormCache, err := collectAllNodeNorm()
-	if err != nil {
-		return err
-	}
-
-	where := make([]string, len(dnNorms))
-	params := make(map[string]interface{}, len(dnNorms)*2+2)
-	params["member_id"] = id
-	params["attr_name_norm"] = attrNameNorm
-
-	for i, dnNorm := range dnNorms {
-		dn, err := r.server.NormalizeDN(dnNorm)
-		if err != nil {
-			return NewInvalidDNSyntax()
-		}
-
-		parentID, ok := nodeNormCache[dn.ParentDN().DNNormStr()]
-		if !ok {
-			return NewInvalidDNSyntax()
-		}
-
-		key1 := "parent_id_" + strconv.Itoa(i)
-		key2 := "rdn_norm_" + strconv.Itoa(i)
-
-		where[i] = fmt.Sprintf("(parent_id = :%s AND rdn_norm = :%s)", key1, key2)
-		params[key1] = parentID
-		params[key2] = dn.RDNNormStr()
-	}
-
-	q := fmt.Sprintf(`INSERT INTO ldap_member (member_id, attr_name_norm, member_of_id)
-		SELECT :member_id ::::BIGINT, :attr_name_norm, id FROM ldap_entry WHERE %s`, strings.Join(where, " OR "))
-
-	log.Printf("addMemberQuery: %s, params: %v", q, params)
-
-	_, err = tx.NamedExec(q, params)
-	if err != nil {
-		return xerrors.Errorf("Failed to add member. id: %d, attr: %s, dnNorms: %v, err: %w", id, attrNameNorm, dnNorms, err)
-	}
-	return nil
-}
-
-func (r *Repository) deleteMembers(tx *sqlx.Tx, id int64, attrNameNorm string, dnNorms []string) error {
-	if len(dnNorms) == 0 {
-		return nil
-	}
-
-	nodeNormCache, err := collectAllNodeNorm()
-	if err != nil {
-		return err
-	}
-
-	where := make([]string, len(dnNorms))
-	params := make(map[string]interface{}, len(dnNorms)*2+2)
-	params["member_id"] = id
-	params["attr_name_norm"] = attrNameNorm
-
-	for i, dnNorm := range dnNorms {
-		dn, err := r.server.NormalizeDN(dnNorm)
-		if err != nil {
-			return NewInvalidDNSyntax()
-		}
-
-		parentID, ok := nodeNormCache[dn.ParentDN().DNNormStr()]
-		if !ok {
-			return NewInvalidDNSyntax()
-		}
-
-		key1 := "parent_id_" + strconv.Itoa(i)
-		key2 := "rdn_norm_" + strconv.Itoa(i)
-
-		where[i] = fmt.Sprintf("(parent_id = :%s AND rdn_norm = :%s)", key1, key2)
-		params[key1] = parentID
-		params[key2] = dn.RDNNormStr()
-	}
-
-	q := fmt.Sprintf(`DELETE FROM ldap_member WHERE member_id = :member_id AND attr_name_norm = :attr_name_norm AND member_of_id IN (
-		SELECT id FROM ldap_entry
-			WHERE %s
-	)`, strings.Join(where, " OR "))
-
-	log.Printf("deleteMemberQuery: %s, params: %v", q, params)
-
-	_, err = tx.NamedExec(q, params)
-	if err != nil {
-		return xerrors.Errorf("Failed to delete member. id: %d, attr: %s, dnNorms: %v, err: %w", id, attrNameNorm, dnNorms, err)
-	}
-	return nil
-}
-
 func (r *Repository) UpdateDN(oldDN, newDN *DN, deleteOld bool) error {
 	tx := r.db.MustBegin()
 	err := r.updateDN(tx, oldDN, newDN, deleteOld)
@@ -141,14 +45,14 @@ func (r *Repository) UpdateDN(oldDN, newDN *DN, deleteOld bool) error {
 }
 
 func (r *Repository) updateDN(tx *sqlx.Tx, oldDN, newDN *DN, deleteOld bool) error {
-	oldEntry, err := r.FindByDNWithLock(tx, oldDN)
+	oldEntry, err := r.FindEntryByDN(tx, oldDN, true)
 	if err != nil {
 		return NewNoSuchObject()
 	}
 
 	parentID := oldEntry.dbParentID
 	if !oldDN.ParentDN().Equal(newDN.ParentDN()) {
-		p, err := r.FindByDNWithLock(tx, newDN.ParentDN())
+		p, err := r.FindEntryByDN(tx, newDN.ParentDN(), true)
 		if err != nil {
 			return NewNoSuchObject()
 		}

@@ -28,18 +28,17 @@ var (
 	filterStmtMap                 StmtCache
 	treeStmtCache                 StmtCache
 	findByDNStmtCache             StmtCache
-	findCredByDNStmtCache         StmtCache
 
 	// repo_update
 	updateAttrsByIdStmt *sqlx.NamedStmt
 	updateDNByIdStmt    *sqlx.NamedStmt
 
 	// repo_delete
-	deleteDCStmt           *sqlx.NamedStmt
-	deleteTreeNodeByIDStmt *sqlx.NamedStmt
-	deleteMemberByIDStmt   *sqlx.NamedStmt
-
-	ROOT_ID int64 = 0
+	deleteTreeByIDStmt         *sqlx.NamedStmt
+	deleteByIDStmt             *sqlx.NamedStmt
+	hasSubStmt                 *sqlx.NamedStmt
+	removeMemberByIDStmt       *sqlx.NamedStmt
+	removeUniqueMemberByIDStmt *sqlx.NamedStmt
 )
 
 // For generic filter
@@ -131,20 +130,49 @@ func (r *Repository) initStmt(db *sqlx.DB) error {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
-	deleteDCStmt, err = db.PrepareNamed(fmt.Sprintf(`DELETE FROM ldap_entry
-		WHERE parent_id = %d RETURNING id`, ROOT_ID))
-	if err != nil {
-		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	}
-
-	deleteTreeNodeByIDStmt, err = db.PrepareNamed(`DELETE FROM ldap_tree
+	deleteTreeByIDStmt, err = db.PrepareNamed(`DELETE FROM ldap_tree
 		WHERE id = :id RETURNING id`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
-	deleteMemberByIDStmt, err = db.PrepareNamed(`DELETE FROM ldap_member
-		WHERE member_id = :id OR member_of_id = :id RETURNING member_id`)
+	deleteByIDStmt, err = db.PrepareNamed(`DELETE FROM ldap_entry 
+		WHERE id = :id RETURNING id`)
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
+
+	hasSubStmt, err = db.PrepareNamed(`SELECT EXISTS (SELECT 1 FROM ldap_entry WHERE parent_id = :id)`)
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
+
+	// Don't need to update modifyTimestamp since it's overlay function
+	removeMemberByIDStmt, err = db.PrepareNamed(`UPDATE ldap_entry
+		SET attrs_norm =
+			CASE WHEN (jsonb_array_length(attrs_norm->'member')) = 1
+				THEN
+					attrs_norm #- '{member}'
+				ELSE
+					attrs_norm || jsonb_build_object('member', jsonb_path_query_array(attrs_norm->'member', :cond_filter))
+			END
+		WHERE attrs_norm @@ :cond_where
+		RETURNING id`)
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
+
+	// Don't need to update modifyTimestamp since it's overlay function
+	removeUniqueMemberByIDStmt, err = db.PrepareNamed(`UPDATE ldap_entry
+		SET attrs_norm =
+			CASE WHEN (jsonb_array_length(attrs_norm->'uniqueMember')) = 1
+				THEN
+					attrs_norm #- '{uniqueMember}'
+				ELSE
+					attrs_norm || jsonb_build_object('uniqueMember', jsonb_path_query_array(attrs_norm->'uniqueMember', :cond_filter))
+			END
+		WHERE attrs_norm @@ :cond_where
+		RETURNING id`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}

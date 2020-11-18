@@ -1,9 +1,7 @@
 package main
 
 import (
-	"fmt"
-	"log"
-	"strings"
+	"strconv"
 
 	"github.com/jmoiron/sqlx"
 	"golang.org/x/xerrors"
@@ -12,163 +10,90 @@ import (
 func (r Repository) DeleteByDN(dn *DN) error {
 	tx := r.db.MustBegin()
 
-	if dn.IsContainer() {
-		has, err := r.hasChildren(tx, dn)
-		if err != nil {
-			tx.Rollback()
-			return err
-		}
-		if has {
-			tx.Rollback()
-			return NewNotAllowedOnNonLeaf()
-		}
-	}
-
-	delID, err := r.deleteByDN(tx, dn)
+	// First, fetch the target entry with lock
+	fetchedDN, err := r.FindDNByDNWithLock(tx, dn, true)
 	if err != nil {
-		tx.Rollback()
+		rollback(tx)
 		return err
 	}
 
-	if dn.IsContainer() {
-		err := r.deleteTreeNodeByID(tx, delID)
-		if err != nil {
-			tx.Rollback()
+	// Not allowed error if the entry has children yet
+	if fetchedDN.HasSub {
+		rollback(tx)
+		return NewNotAllowedOnNonLeaf()
+	}
+
+	// Delete entry
+	delID, err := r.deleteByID(tx, fetchedDN.ID)
+	if err != nil {
+		rollback(tx)
+		return err
+	}
+
+	// Delete tree entry if the parent doesn't have children
+	hasSub, err := r.hasSub(tx, fetchedDN.ParentID)
+	if err != nil {
+		rollback(tx)
+		return err
+	}
+	if !hasSub {
+		if err := r.deleteTreeByID(tx, fetchedDN.ParentID); err != nil {
+			rollback(tx)
 			return err
 		}
 	}
 
-	err = r.deleteMemberByID(tx, delID)
+	// Remove member and uniqueMember if the others have association for the target entry
+	err = r.removeAssociationById(tx, delID)
 	if err != nil {
-		tx.Rollback()
+		rollback(tx)
 		return err
 	}
 
+	// Commit!
 	err = tx.Commit()
 
 	return err
 }
 
-func (r *Repository) hasChildren(tx *sqlx.Tx, dn *DN) (bool, error) {
-	pq, params := r.CreateFindByDNQuery(dn, &FindOption{Lock: true})
-
-	q := fmt.Sprintf(`SELECT count(e.id)
-		FROM (%s) p
-			LEFT JOIN ldap_entry e ON e.parent_id = p.id`, pq)
-
-	stmt, err := tx.PrepareNamed(q)
+func (r *Repository) hasSub(tx *sqlx.Tx, id int64) (bool, error) {
+	var hasSub bool
+	err := tx.NamedStmt(hasSubStmt).Get(&hasSub, map[string]interface{}{
+		"id": id,
+	})
 	if err != nil {
-		return true, xerrors.Errorf("Failed to prepare query: %s, params: %v, err: %w", q, params, err)
+		return false, xerrors.Errorf("Failed to check existence. id: %d, err: %w", id, err)
 	}
 
-	var count int
-	err = stmt.Get(&count, params)
-	if err != nil {
-		return true, xerrors.Errorf("Failed to execute query: %s, params: %v, err: %w", q, params, err)
-	}
-
-	if count == 0 {
-		return false, nil
-	}
-
-	return true, nil
+	return hasSub, nil
 }
 
-func (r *Repository) deleteByDN(tx *sqlx.Tx, dn *DN) (int64, error) {
-	// DELETE FROM ldap_entry e WHERE e.id IN (
-	//     SELECT e0.id
-	//     FROM ldap_tree e3
-	//     INNER JOIN ldap_tree e2 ON e2.parent_id = e3.id
-	//     INNER JOIN ldap_tree e1 ON e1.parent_id = e2.id
-	//     INNER JOIN ldap_entry e0 ON e0.parent_id = e1.id
-	//     WHERE e3.rdn_norm = 'ou=mycompany' AND e2.rdn_norm = 'ou=mysection' AND e1.rdn_norm = 'ou=mydept' AND e0.rdn_norm = 'cn=mygroup';
-	// )
+func (r *Repository) deleteByID(tx *sqlx.Tx, id int64) (int64, error) {
+	var delID int64 = -1
 
-	// TODO check it has children (or add constraint in the table...)
+	err := namedStmt(tx, deleteByIDStmt).Get(&delID, map[string]interface{}{
+		"id": id,
+	})
 
-	if dn.IsDC() {
-		return r.deleteDC(tx)
-	}
-
-	size := len(dn.RDNs)
-	last := size - 1
-	params := make(map[string]interface{}, size)
-
-	var fetchStmt *sqlx.NamedStmt
-	var err error
-
-	join := make([]string, size)
-	where := make([]string, size)
-
-	for i := last; i >= 0; i-- {
-		if i == last {
-			join[last-i] = fmt.Sprintf("ldap_tree e%d", i)
-		} else if i > 0 {
-			join[last-i] = fmt.Sprintf("INNER JOIN ldap_tree e%d ON e%d.parent_id = e%d.id", i, i, i+1)
-		} else {
-			join[last-i] = "INNER JOIN ldap_entry e0 ON e0.parent_id = e1.id"
-		}
-		where[last-i] = fmt.Sprintf("e%d.rdn_norm = :rdn_norm_%d", i, i)
-
-		params[fmt.Sprintf("rdn_norm_%d", i)] = dn.RDNs[i].NormStr()
-	}
-
-	q := fmt.Sprintf(`DELETE FROM ldap_entry e WHERE e.id IN 
-			(
-				SELECT e0.id
-					FROM %s
-					WHERE %s
-			) RETURNING e.id`,
-		strings.Join(join, " "), strings.Join(where, " AND "))
-
-	log.Printf("debug: deleteByDN query: %s, params: %v", q, params)
-
-	fetchStmt, err = tx.PrepareNamed(q)
-	if err != nil {
-		return 0, xerrors.Errorf("Failed to prepare deleteByDN query. query: %s, err: %w", q, err)
-	}
-
-	var delID int64
-	if tx != nil {
-		err = tx.NamedStmt(fetchStmt).Get(&delID, params)
-	} else {
-		err = fetchStmt.Get(&delID, params)
-	}
 	if err != nil {
 		if isNoResult(err) {
 			return 0, NewNoSuchObject()
 		}
-		return 0, xerrors.Errorf("Failed to exec deleteByDN query. query: %s, params: %v, err: %w",
-			fetchStmt.QueryString, fetchStmt.Params, err)
+		return 0, xerrors.Errorf("Failed to exec deleteByID query. query: %s, params: %v, err: %w",
+			deleteByIDStmt.QueryString, deleteByIDStmt.Params, err)
 	}
 
-	if delID == 0 {
+	// TODO need?
+	if delID == -1 {
 		return 0, NewNoSuchObject()
 	}
 
 	return delID, nil
 }
 
-func (r *Repository) deleteDC(tx *sqlx.Tx) (int64, error) {
-	// TODO check it has children (or add constraint in the table...)
-	var id int64
-	err := tx.NamedStmt(deleteDCStmt).Get(&id, map[string]interface{}{})
-	if err != nil {
-		if isNoResult(err) {
-			return 0, NewNoSuchObject()
-		}
-		return 0, xerrors.Errorf("Failed to delete DC entry. err: %w", err)
-	}
-	if id == 0 {
-		return 0, NewNoSuchObject()
-	}
-
-	return id, nil
-}
-
-func (r *Repository) deleteTreeNodeByID(tx *sqlx.Tx, id int64) error {
+func (r *Repository) deleteTreeByID(tx *sqlx.Tx, id int64) error {
 	var delID int64 = -1
-	err := tx.NamedStmt(deleteTreeNodeByIDStmt).Get(&delID, map[string]interface{}{
+	err := tx.NamedStmt(deleteTreeByIDStmt).Get(&delID, map[string]interface{}{
 		"id": id,
 	})
 	if err != nil {
@@ -177,26 +102,43 @@ func (r *Repository) deleteTreeNodeByID(tx *sqlx.Tx, id int64) error {
 		}
 		return xerrors.Errorf("Failed to delete tree node. id: %d, err: %w", id, err)
 	}
-	if delID == 0 {
+
+	// TODO need?
+	if delID == -1 {
 		return NewNoSuchObject()
 	}
 
 	return nil
 }
 
-func (r *Repository) deleteMemberByID(tx *sqlx.Tx, id int64) error {
-	var delID int64 = -1
-	err := tx.NamedStmt(deleteMemberByIDStmt).Get(&delID, map[string]interface{}{
-		"id": id,
+func (r *Repository) removeAssociationById(tx *sqlx.Tx, id int64) error {
+	if err := r.execRemoveAssociatio(tx, id, removeMemberByIDStmt, "member"); err != nil {
+		return err
+	}
+	if err := r.execRemoveAssociatio(tx, id, removeUniqueMemberByIDStmt, "uniqueMember"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *Repository) execRemoveAssociatio(tx *sqlx.Tx, id int64, stmt *sqlx.NamedStmt, attrName string) error {
+	idStr := strconv.FormatInt(id, 10)
+
+	var updatedID int64 = -1
+	err := tx.NamedStmt(stmt).Get(&updatedID, map[string]interface{}{
+		"cond_filter": `$ ? (@ != ` + idStr + `)`,
+		"cond_where":  `$.` + attrName + ` == ` + idStr + ``,
 	})
 	if err != nil {
 		if isNoResult(err) {
 			// Ignore
 			return nil
 		}
-		return xerrors.Errorf("Failed to delete member. id: %d, err: %w", id, err)
+		return xerrors.Errorf("Failed to delete association. query: %s, id: %d, err: %w", stmt.QueryString, id, err)
 	}
-	if delID == 0 {
+
+	// TODO need?
+	if updatedID == 0 {
 		// Ignore
 		return nil
 	}
