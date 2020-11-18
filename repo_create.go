@@ -23,13 +23,13 @@ func (r *Repository) insertWithTx(tx *sqlx.Tx, entry *AddEntry) (int64, error) {
 		newID, _, err = r.insertEntryAndTree(tx, entry)
 	}
 	if err != nil {
-		tx.Rollback()
+		rollback(tx)
 		return 0, err
 	}
 
 	err = tx.Commit()
 	if err != nil {
-		tx.Rollback()
+		rollback(tx)
 		return 0, NewUnavailable()
 	}
 	return newID, nil

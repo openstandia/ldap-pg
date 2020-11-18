@@ -124,7 +124,7 @@ func (m *Mapper) dnArrayToIDArray(tx *sqlx.Tx, norm map[string]interface{}, attr
 			}
 
 			// TODO Optimize converting DN to id
-			fetchedDN, err := m.server.repo.FindDNByDN(tx, dn, false)
+			fetchedDN, err := m.server.repo.FindDNOnlyByDN(tx, dn, true)
 			if err != nil {
 				if lerr, ok := err.(*LDAPError); ok {
 					if lerr.IsNoSuchObjectError() {

@@ -12,6 +12,14 @@ type DN struct {
 	cachedRDN map[string]string
 }
 
+type FetchedDNEntry struct {
+	ID       int64  `db:"id"`
+	ParentID int64  `db:"parent_id"`
+	Path     string `db:"path"`
+	DNOrig   string `db:"dn_orig"`
+	dnNorm   string // not fetched from DB, it's computed
+}
+
 type FetchedDN struct {
 	ID       int64  `db:"id"`
 	ParentID int64  `db:"parent_id"`

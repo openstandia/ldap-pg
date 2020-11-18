@@ -13,6 +13,7 @@ import (
 
 	goldap "github.com/go-ldap/ldap/v3"
 	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
 	"github.com/openstandia/goldap/message"
 	ldap "github.com/openstandia/ldapserver"
 	"golang.org/x/xerrors"
@@ -498,4 +499,11 @@ func normalizeUUID(value string) (string, error) {
 func isNoResult(err error) bool {
 	// see https://golang.org/pkg/database/sql/#pkg-variables
 	return err == sql.ErrNoRows
+}
+
+func rollback(tx *sqlx.Tx) {
+	err := tx.Rollback()
+	if err != nil {
+		log.Printf("warn: Detect error when rollback, ignore it. err: %v", err)
+	}
 }

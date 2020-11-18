@@ -55,11 +55,11 @@ insert into ldap_entry values
    (2, 1, 'ou=users', 'ou=Users', '{"ou":["Users"],"objectClass":["organizationalunit"]}', '{"ou":["People"],"objectClass":["organizationalUnit"]}'),
    (3, 1, 'ou=groups','ou=Groups', '{"ou":["Groups"],"objectClass":["organizationalunit"]}', '{"ou":["Groups"],"objectClass":["organizationalUnit"]}'),
    (4, 2, 'uid=u000001','uid=u000001', '{"uid":["u000001"],"sn":["user000001"],"objectClass":["inetorgperson"]}', '{"uid":["u000001"],"sn":["user000001"],"objectClass":["inetOrgPerson"]}'),
-   (5, 3, 'cn=g000001','cn=g000001', '{"cn":["g000001"],"objectClass":["groupofuniquenames"],"member":[8]}', '{"cn":["g000001"],"objectClass":["groupOfUniqueNames"],"member":[8]}'),
+   (5, 3, 'cn=g000001','cn=g000001', '{"cn":["g000001"],"objectClass":["groupofuniquenames"],"member":[8]}', '{"cn":["g000001"],"objectClass":["groupOfUniqueNames"]}'),
    (6, 5, 'cn=g000002','cn=g000002', '{"cn":["g000002"],"objectClass":["groupofuniquenames"],"member":[8,9]}', '{"cn":["g000002"],"objectClass":["groupOfUniqueNames"],"member":[8,9]}'),
-   (7, 3, 'cn=g000003','cn=g000003', '{"cn":["g000003"],"objectClass":["groupofuniquenames"],"member":[9]}', '{"cn":["g000003"],"objectClass":["groupOfUniqueNames"],"member":[9]}'),
-   (8, 2, 'uid=u000002','uid=u000002', '{"uid":["u000002"],"sn":["user000002"],"objectClass":["inetorgperson"],"memberOf":[5,6]}', '{"uid":["u000002"],"sn":["user000002"],"objectClass":["inetOrgPerson"],"memberOf":[5,6]}'),
-   (9, 2, 'uid=u000003','uid=u000003', '{"uid":["u000003"],"sn":["user000003"],"objectClass":["inetorgperson"],"memberOf":[6,7]}', '{"uid":["u000003"],"sn":["user000003"],"objectClass":["inetOrgPerson"],"memberOf":[6,7]}'),
+   (7, 3, 'cn=g000003','cn=g000003', '{"cn":["g000003"],"objectClass":["groupofuniquenames"],"member":[9]}', '{"cn":["g000003"],"objectClass":["groupOfUniqueNames"]}'),
+   (8, 2, 'uid=u000002','uid=u000002', '{"uid":["u000002"],"sn":["user000002"],"objectClass":["inetorgperson"],"memberOf":["5","6"]}', '{"uid":["u000002"],"sn":["user000002"],"objectClass":["inetOrgPerson"]}'),
+   (9, 2, 'uid=u000003','uid=u000003', '{"uid":["u000003"],"sn":["user000003"],"objectClass":["inetorgperson"],"memberOf":["6","7"]}', '{"uid":["u000003"],"sn":["user000003"],"objectClass":["inetOrgPerson"]}'),
    (10, NULL, 'dc=net','dc=net', '{"dc":["net"],"objectClass":["top","dcObject","organization"]}', '{"dc":["net"],"objectClass":["top","dcObject","organization"]}');
 
 SELECT setval('ldap_entry_id_seq', max(id)) FROM ldap_entry;
