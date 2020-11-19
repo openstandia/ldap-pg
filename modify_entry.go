@@ -10,6 +10,8 @@ type ModifyEntry struct {
 	attributes map[string]*SchemaValue
 	dbEntryID  int64
 	dbParentID int64
+	hasSub     bool
+	path       string
 	add        []*SchemaValue
 	replace    []*SchemaValue
 	del        []*SchemaValue

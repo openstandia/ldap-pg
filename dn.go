@@ -38,7 +38,7 @@ func (e *FetchedEntry) GetAttrsOrig() map[string][]string {
 }
 
 func (f *FetchedDN) IsRoot() bool {
-	return strings.Contains(f.Path, ".")
+	return !strings.Contains(f.Path, ".")
 }
 
 func (f *FetchedDN) DNNorm() string {

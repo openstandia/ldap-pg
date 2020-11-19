@@ -54,8 +54,7 @@ func handleModifyDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	err = s.Repo().UpdateDN(dn, newDN, oldRDN)
 	if err != nil {
-
-		log.Printf("warn: Failed to modify dn: %s err: %s", dn.DNNormStr(), err)
+		log.Printf("warn: Failed to modify dn: %s err: %+v", dn.DNNormStr(), err)
 		// TODO error code
 		responseModifyDNError(w, err)
 		return

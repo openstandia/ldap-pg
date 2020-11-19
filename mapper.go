@@ -245,6 +245,8 @@ func (m *Mapper) FetchedEntryToModifyEntry(dbEntry *FetchedEntry) (*ModifyEntry,
 	}
 	entry.dbEntryID = dbEntry.ID
 	entry.dbParentID = dbEntry.ParentID
+	entry.hasSub = dbEntry.HasSub
+	entry.path = dbEntry.Path
 
 	return entry, nil
 }

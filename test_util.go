@@ -200,12 +200,13 @@ type ModifyDelete struct {
 }
 
 type ModifyDN struct {
-	rdn    string
-	baseDN string
-	newRDN string
-	delOld bool
-	newSup string
-	assert *AssertRename
+	rdn           string
+	baseDN        string
+	newRDN        string
+	delOld        bool
+	newSup        string
+	moveContainer bool
+	assert        *AssertRename
 }
 
 type Delete struct {
@@ -334,15 +335,19 @@ func (m ModifyDelete) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 
 func (m ModifyDN) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 	dn := resolveDN(m.rdn, m.baseDN)
+	var newSup = m.newSup
+	if newSup != "" {
+		newSup = newSup + "," + server.GetSuffix()
+	}
 
-	modifyDN := ldap.NewModifyDNRequest(dn, m.newRDN, m.delOld, m.newSup)
+	modifyDN := ldap.NewModifyDNRequest(dn, m.newRDN, m.delOld, newSup)
 
 	log.Printf("info: Exec modifyDN operation: %v", modifyDN)
 
 	err := conn.ModifyDN(modifyDN)
 
 	if m.assert != nil {
-		err = m.assert.AssertRename(conn, err, m.rdn, m.newRDN, m.baseDN, m.delOld, m.newSup)
+		err = m.assert.AssertRename(conn, err, m.rdn, m.newRDN, m.baseDN, m.delOld, m.newSup, m.moveContainer)
 	}
 	return conn, err
 }
@@ -498,33 +503,79 @@ func (s AssertSearchOne) AssertSearch(conn *ldap.Conn, err error) error {
 type AssertRename struct {
 }
 
-func (s AssertRename) AssertRename(conn *ldap.Conn, err error, oldRDN, newRDN, baseDN string, delOld bool, newSup string) error {
+func (s AssertRename) AssertRename(conn *ldap.Conn, err error, oldRDN, newRDN, baseDN string, delOld bool, newSup string, moveContainer bool) error {
 	if err != nil {
 		return xerrors.Errorf("Unexpected error response when previous operation. err: %w", err)
 	}
 
 	sr, err := searchEntry(conn, oldRDN, baseDN, ldap.ScopeWholeSubtree, "(objectClass=*)", nil)
-	if err == nil {
-		return xerrors.Errorf("Unexpected error. err: %v", err)
-	}
-	if !ldap.IsErrorWithCode(err, 32) {
-		return xerrors.Errorf("Unexpected error when searching the old entry. err: %w", err)
-	}
 
-	sr, err = searchEntry(conn, newRDN, baseDN, ldap.ScopeWholeSubtree, "(objectClass=*)", nil)
-	if err != nil {
-		return xerrors.Errorf("Unexpected error when searching the renamed entry. err: %w", err)
-	}
-	if len(sr.Entries) != 1 {
-		return xerrors.Errorf("Unexpected new renamed count. want = [1] got = %d", len(sr.Entries))
-	}
+	if newSup == "" {
+		if oldRDN == newRDN {
+			// No RDN change case, should returns 1 entry
+			if err != nil {
+				return xerrors.Errorf("Unexpected error when searching the renamed entry. err: %w", err)
+			}
+			if len(sr.Entries) != 1 {
+				return xerrors.Errorf("Unexpected new renamed count. want = [1] got = %d", len(sr.Entries))
+			}
+		} else {
+			// RDN change case, should returns no such entry error (32)
+			if err == nil {
+				return xerrors.Errorf("Unexpected error. err: %v", err)
+			}
+			if !ldap.IsErrorWithCode(err, 32) {
+				return xerrors.Errorf("Unexpected error when searching the old entry. err: %w", err)
+			}
+		}
 
-	or := strings.Split(oldRDN, "=")
-	actualRDNs := sr.Entries[0].GetAttributeValues(or[0])
-	for _, v := range actualRDNs {
-		if v == or[1] {
-			if delOld {
-				return xerrors.Errorf("Unexpected old rdn. want deleted got = %s", v)
+		sr, err = searchEntry(conn, newRDN, baseDN, ldap.ScopeWholeSubtree, "(objectClass=*)", nil)
+		if err != nil {
+			return xerrors.Errorf("Unexpected error when searching the renamed entry. err: %w", err)
+		}
+		if len(sr.Entries) != 1 {
+			return xerrors.Errorf("Unexpected new renamed count. want = [1] got = %d", len(sr.Entries))
+		}
+
+		or := strings.Split(oldRDN, "=")
+		actualRDNs := sr.Entries[0].GetAttributeValues(or[0])
+		for _, v := range actualRDNs {
+			if v == or[1] {
+				if oldRDN != newRDN && delOld {
+					return xerrors.Errorf("Unexpected old rdn. want deleted got = %s", v)
+				}
+			}
+		}
+	} else {
+		// Move case, should returns no such entry error (32) for old entry
+		if err == nil {
+			return xerrors.Errorf("Unexpected error. err: %v", err)
+		}
+		if !ldap.IsErrorWithCode(err, 32) {
+			return xerrors.Errorf("Unexpected error when searching the old entry. err: %w", err)
+		}
+
+		sr, err = searchEntry(conn, newRDN, newSup, ldap.ScopeWholeSubtree, "(objectClass=*)", nil)
+		if err != nil {
+			return xerrors.Errorf("Unexpected error when searching the renamed entry. err: %w", err)
+		}
+
+		if !moveContainer {
+			if len(sr.Entries) != 1 {
+				return xerrors.Errorf("Unexpected new renamed count. want = [1] got = %d", len(sr.Entries))
+			}
+			or := strings.Split(oldRDN, "=")
+			actualRDNs := sr.Entries[0].GetAttributeValues(or[0])
+			for _, v := range actualRDNs {
+				if v == or[1] {
+					if oldRDN != newRDN && delOld {
+						return xerrors.Errorf("Unexpected old rdn. want deleted got = %s", v)
+					}
+				}
+			}
+		} else {
+			if len(sr.Entries) == 0 {
+				return xerrors.Errorf("Unexpected new renamed count. want >= [1] got = %d", len(sr.Entries))
 			}
 		}
 	}
@@ -580,6 +631,8 @@ func searchEntry(c *ldap.Conn, rdn, baseDN string, scope int, filter string, att
 	if rdn != "" {
 		bd = rdn + "," + bd
 	}
+
+	log.Printf("debug: searchEntry %s", bd)
 
 	search := ldap.NewSearchRequest(
 		bd,

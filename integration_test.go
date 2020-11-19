@@ -622,6 +622,7 @@ func TestBasicCRUD(t *testing.T) {
 		AddDC("com"),
 		AddDC("example", "dc=com"),
 		AddOU("Users"),
+		AddOU("Groups"),
 		Add{
 			"uid=user1", "ou=Users",
 			M{
@@ -697,23 +698,72 @@ func TestBasicCRUD(t *testing.T) {
 			},
 			&AssertEntry{},
 		},
+		// Rename with old delete
 		ModifyDN{
 			"uid=user1", "ou=Users",
 			"uid=user1-rename",
 			true,
 			"",
+			false,
 			&AssertRename{},
 		},
+		// Rename without old delete
 		ModifyDN{
 			"uid=user1-rename", "ou=Users",
 			"uid=user1-rename2",
 			false,
 			"",
+			false,
+			&AssertRename{},
+		},
+		// No rename without old delete
+		ModifyDN{
+			"uid=user1-rename2", "ou=Users",
+			"uid=user1-rename2",
+			false,
+			"",
+			false,
+			&AssertRename{},
+		},
+		// No rename with old delete
+		ModifyDN{
+			"uid=user1-rename2", "ou=Users",
+			"uid=user1-rename2",
+			true,
+			"",
+			false,
+			&AssertRename{},
+		},
+		// Change parent of the leaf case
+		ModifyDN{
+			"uid=user1-rename2", "ou=Users",
+			"uid=user1-rename2",
+			true,
+			"ou=Groups",
+			false,
 			&AssertRename{},
 		},
 		Delete{
-			"uid=user1-rename2", "ou=Users",
+			"uid=user1-rename2", "ou=Groups",
 			&AssertNoEntry{},
+		},
+		Add{
+			"uid=user1", "ou=Users",
+			M{
+				"objectClass":  A{"inetOrgPerson"},
+				"sn":           A{"user1"},
+				"userPassword": A{SSHA("password1")},
+			},
+			&AssertEntry{},
+		},
+		// Move tree case
+		ModifyDN{
+			"ou=Users", "",
+			"ou=Users",
+			true,
+			"ou=Groups",
+			true,
+			&AssertRename{},
 		},
 	}
 

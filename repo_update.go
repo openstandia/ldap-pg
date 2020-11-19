@@ -1,6 +1,8 @@
 package main
 
 import (
+	"log"
+
 	"github.com/jmoiron/sqlx"
 	"golang.org/x/xerrors"
 )
@@ -44,6 +46,7 @@ func (r *Repository) updateDN(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *RelativeDN)
 	// Lock the entry
 	oldEntry, err := r.FindEntryByDN(tx, oldDN, true)
 	if err != nil {
+		log.Printf("debug: Failed to fetch the entry by DN: %v, err: %v", oldDN, err)
 		return NewNoSuchObject()
 	}
 
@@ -67,10 +70,12 @@ func (r *Repository) updateDNOntoNewParent(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN
 		// Lock the old/new parent entry
 		newParentFetchedDN, err := r.FindDNByDNWithLock(tx, newParentDN, true)
 		if err != nil {
+			log.Printf("debug: Failed to fetch the new parent by DN: %s, err: %v", newParentDN.DNOrigStr(), err)
 			return NewNoSuchObject()
 		}
 		oldParentFetchedDN, err := r.FindDNByDNWithLock(tx, oldParentDN, true)
 		if err != nil {
+			log.Printf("debug: Failed to fetch the old parent by DN: %s, err: %v", oldParentDN.DNOrigStr(), err)
 			return NewNoSuchObject()
 		}
 
@@ -91,6 +96,13 @@ func (r *Repository) updateDNOntoNewParent(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN
 			// Register as container
 			err = r.insertTree(tx, newParentFetchedDN.ID, newParentFetchedDN.IsRoot())
 			if err != nil {
+				return err
+			}
+		}
+
+		// Move tree if the operation is for tree which means the old entry has children
+		if oldEntry.hasSub {
+			if err := r.moveTree(tx, oldEntry.path, newParentFetchedDN.Path); err != nil {
 				return err
 			}
 		}
@@ -122,7 +134,7 @@ func (r *Repository) updateDNOntoNewParent(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN
 	}
 
 	if !oldParentDN.Equal(newParentDN) {
-		// Check if the old parent entry stil has children
+		// Check if the old parent entry still has children
 		hasSub, err := r.hasSub(tx, oldParentID)
 		if err != nil {
 			return err
@@ -168,4 +180,25 @@ func (r *Repository) updateRDN(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *RelativeDN
 
 	return nil
 
+}
+
+func (r *Repository) moveTree(tx *sqlx.Tx, sourcePath, newParentPath string) error {
+	// http://patshaughnessy.net/2017/12/14/manipulating-trees-using-sql-and-the-postgres-ltree-extension
+	// update tree set path = DESTINATION_PATH || subpath(path, nlevel(SOURCE_PATH)-1) where path <@ SOURCE_PATH;
+
+	q := `
+		UPDATE ldap_tree SET path = :dest_path || subpath(path, nlevel(:source_path)-1)
+		WHERE path <@ :source_path
+	`
+
+	_, err := tx.NamedExec(q, map[string]interface{}{
+		"dest_path":   newParentPath,
+		"source_path": sourcePath,
+	})
+
+	if err != nil {
+		return xerrors.Errorf("Failed to move tree, sourcePath: %s, destPath: %s, err: %w", sourcePath, newParentPath, err)
+	}
+
+	return nil
 }
