@@ -133,12 +133,52 @@ Options:
 #### Example
 
 ```
-ldap-pg -h localhost -u testuser -w testpass -d testdb \
- -suffix dc=example,dc=com -root-dn cn=Manager -root-pw secret \
+ldap-pg -h localhost -u testuser -w testpass -d testdb -s public \
+ -suffix dc=example,dc=com -root-dn cn=Manager,dc=example,dc=com -root-pw secret \
  -log-level info
 
 [  info ] 2019/10/03 15:13:37 main.go:169: Setup GOMAXPROCS with NumCPU: 8
 [  info ] 2019/10/03 15:13:37 main.go:234: Starting ldap-pg on 127.0.0.1:8389
+```
+
+`ldap-pg` creates required tables and indexes into PostgreSQL if not exists.
+You can import your LDIF file by using standard LDAP tools like `ldapadd` command.
+
+```
+$ cat << EOS > base.ldif
+
+dn: dc=com
+objectClass: top
+objectClass: dcObject
+objectClass: organization
+o: com
+dc: com
+
+dn: dc=example,dc=com
+objectClass: top
+objectClass: dcObject
+objectClass: organization
+o: Example Inc.
+dc: example
+
+dn: ou=Users,dc=example,dc=com
+objectClass: organizationalUnit
+ou: Users
+
+dn: ou=Groups,dc=example,dc=com
+objectClass: organizationalUnit
+ou: Group
+
+EOS
+
+$ ldapadd -H ldap://localhost:8389 -x -D cn=manager,dc=example,dc=com -w secret -f base.ldif
+adding new entry "dc=com"
+
+adding new entry "dc=example,dc=com"
+
+adding new entry "ou=Users,dc=example,dc=com"
+
+adding new entry "ou=Groups,dc=example,dc=com"
 ```
 
 ## License
