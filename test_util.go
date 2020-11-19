@@ -43,7 +43,7 @@ func IntegrationTestRunner(m *testing.M) int {
 		}
 	}()
 
-	truncateTables()
+	// truncateTables()
 
 	// SetupDefaultFixtures()
 
@@ -503,23 +503,30 @@ func (s AssertRename) AssertRename(conn *ldap.Conn, err error, oldRDN, newRDN, b
 		return xerrors.Errorf("Unexpected error response when previous operation. err: %w", err)
 	}
 
-	sr, err := searchEntry(conn, "", baseDN, ldap.ScopeWholeSubtree, fmt.Sprintf("(%s)", oldRDN), nil)
-	if delOld {
-		if err != nil && !ldap.IsErrorWithCode(err, 32) {
-			return xerrors.Errorf("Unexpected error when searching the old entry. err: %w", err)
-		}
-	} else {
-		if len(sr.Entries) != 1 {
-			return xerrors.Errorf("Unexpected old entry count. want = [1] got = %d", len(sr.Entries))
-		}
+	sr, err := searchEntry(conn, oldRDN, baseDN, ldap.ScopeWholeSubtree, "(objectClass=*)", nil)
+	if err == nil {
+		return xerrors.Errorf("Unexpected error. err: %v", err)
+	}
+	if !ldap.IsErrorWithCode(err, 32) {
+		return xerrors.Errorf("Unexpected error when searching the old entry. err: %w", err)
 	}
 
-	sr, err = searchEntry(conn, "", baseDN, ldap.ScopeWholeSubtree, fmt.Sprintf("(%s)", newRDN), nil)
+	sr, err = searchEntry(conn, newRDN, baseDN, ldap.ScopeWholeSubtree, "(objectClass=*)", nil)
 	if err != nil {
 		return xerrors.Errorf("Unexpected error when searching the renamed entry. err: %w", err)
 	}
 	if len(sr.Entries) != 1 {
 		return xerrors.Errorf("Unexpected new renamed count. want = [1] got = %d", len(sr.Entries))
+	}
+
+	or := strings.Split(oldRDN, "=")
+	actualRDNs := sr.Entries[0].GetAttributeValues(or[0])
+	for _, v := range actualRDNs {
+		if v == or[1] {
+			if delOld {
+				return xerrors.Errorf("Unexpected old rdn. want deleted got = %s", v)
+			}
+		}
 	}
 	// TODO support newSup
 	return nil
@@ -570,6 +577,9 @@ func searchEntry(c *ldap.Conn, rdn, baseDN string, scope int, filter string, att
 	if baseDN != "" {
 		bd = baseDN + "," + bd
 	}
+	if rdn != "" {
+		bd = rdn + "," + bd
+	}
 
 	search := ldap.NewSearchRequest(
 		bd,
@@ -584,7 +594,9 @@ func searchEntry(c *ldap.Conn, rdn, baseDN string, scope int, filter string, att
 	)
 	sr, err := c.Search(search)
 	if err != nil {
-		log.Printf("error: search error: baseDN: %s, filter: %s", bd, filter)
+		if !ldap.IsErrorWithCode(err, 32) {
+			log.Printf("error: search error: baseDN: %s, filter: %s", bd, filter)
+		}
 		return nil, err
 	}
 
@@ -642,7 +654,7 @@ func setupLDAPServer() *Server {
 }
 
 func truncateTables() {
-	log.Printf("warn: Truncate tables")
+	log.Printf("info: Truncate tables")
 
 	db, err := sql.Open("postgres", fmt.Sprintf("host=127.0.0.1 port=%d user=dev password=dev dbname=ldap sslmode=disable search_path=public", testPGPort))
 	if err != nil {

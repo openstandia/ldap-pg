@@ -704,8 +704,15 @@ func TestBasicCRUD(t *testing.T) {
 			"",
 			&AssertRename{},
 		},
-		Delete{
+		ModifyDN{
 			"uid=user1-rename", "ou=Users",
+			"uid=user1-rename2",
+			false,
+			"",
+			&AssertRename{},
+		},
+		Delete{
+			"uid=user1-rename2", "ou=Users",
 			&AssertNoEntry{},
 		},
 	}

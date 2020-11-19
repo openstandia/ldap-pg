@@ -224,7 +224,7 @@ func responseEntry(s *Server, w ldap.ResponseWriter, r message.SearchRequest, se
 func responseSearchError(w ldap.ResponseWriter, err error) {
 	var ldapErr *LDAPError
 	if ok := xerrors.As(err, &ldapErr); ok {
-		if ldapErr.Code != ldap.LDAPResultSuccess {
+		if ldapErr.Code != ldap.LDAPResultSuccess && !ldapErr.IsNoSuchObjectError() {
 			log.Printf("warn: Search LDAP error. err: %+v", err)
 		}
 

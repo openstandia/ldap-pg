@@ -212,9 +212,6 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []st
 		}
 	}
 
-	// LEFT JOIN LATERAL(
-	// 		SELECT t.rdn_norm, t.rdn_orig FROM ldap_tree t WHERE t.id = e.parent_id
-	// 	) p ON true
 	searchQuery := fmt.Sprintf(`
 		SELECT
 			e.id, e.parent_id, e.rdn_orig, '' AS dn_orig,
