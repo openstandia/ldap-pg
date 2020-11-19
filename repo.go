@@ -15,6 +15,7 @@ var (
 	// repo_create
 
 	// repo_read
+	findDNByIDStmt                 *sqlx.NamedStmt
 	findContainerByPathStmt        *sqlx.NamedStmt
 	findIDByParentIDAndRDNNormStmt *sqlx.NamedStmt
 
@@ -73,6 +74,12 @@ func NewRepository(server *Server) (*Repository, error) {
 		server: server,
 		db:     db,
 	}
+
+	err = repo.initTables(db)
+	if err != nil {
+		return nil, err
+	}
+
 	err = repo.initStmt(db)
 	if err != nil {
 		return nil, err
@@ -81,8 +88,52 @@ func NewRepository(server *Server) (*Repository, error) {
 	return repo, nil
 }
 
+func (r *Repository) initTables(db *sqlx.DB) error {
+	_, err := db.Exec(`
+	CREATE EXTENSION IF NOT EXISTS pgcrypto;
+	CREATE EXTENSION IF NOT EXISTS ltree;
+	
+	CREATE TABLE IF NOT EXISTS ldap_tree (
+		id BIGINT PRIMARY KEY,
+		path ltree NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS idx_ldap_tree_path ON ldap_tree USING GIST (path);
+	
+	CREATE TABLE IF NOT EXISTS ldap_entry (
+		id BIGSERIAL PRIMARY KEY,
+		parent_id BIGINT,
+		rdn_norm VARCHAR(255) NOT NULL,
+		rdn_orig VARCHAR(255) NOT NULL,
+		attrs_norm JSONB NOT NULL,
+		attrs_orig JSONB NOT NULL
+	);
+	
+	-- basic index
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_ldap_entry_rdn_norm ON ldap_entry (parent_id, rdn_norm);
+	
+	-- all json index
+	CREATE INDEX IF NOT EXISTS idx_ldap_entry_attrs ON ldap_entry USING gin (attrs_norm jsonb_path_ops);
+	`)
+	return err
+}
+
 func (r *Repository) initStmt(db *sqlx.DB) error {
 	var err error
+
+	// Can't find root by this query
+	findDNByIDStmt, err = db.PrepareNamed(`SELECT
+		e.id, e.rdn_orig || ',' || string_agg(pe.rdn_orig, ',' ORDER BY dn.ord DESC) AS dn_orig
+		FROM
+			ldap_entry e
+			INNER JOIN ldap_tree t ON t.id = e.parent_id
+			JOIN regexp_split_to_table(t.path::::text, '[.]') WITH ORDINALITY dn(id, ord) ON true
+			JOIN ldap_entry pe ON pe.id = dn.id::::bigint
+		WHERE
+			e.id = :id
+		GROUP BY e.id`)
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
 
 	findContainerByPathStmt, err = db.PrepareNamed(`SELECT
 		t.id, string_agg(e.rdn_orig, ',' ORDER BY dn.ord DESC) AS dn_orig

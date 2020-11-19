@@ -1,4 +1,4 @@
-# ldap-pg 
+# ldap-pg
 
 [![GoDoc](https://godoc.org/github.com/openstandia/ldap-pg?status.svg)](https://godoc.org/github.com/openstandia/ldap-pg)
 
@@ -8,45 +8,45 @@
 
 ## Features
 
-* Basic LDAP operations 
-  * Bind
-    * [x] PLAIN
-    * [x] SSHA
-    * [x] SSHA256
-    * [x] SSHA512
-    * [x] Pass-through authentication (Support `{SASL}foo@domain`)
-  * Search
-    * [x] base
-    * [x] one
-    * [x] sub
-    * [x] children
-  * [x] Add
-  * [x] Modify
-  * [x] Delete
-  * ModifyDN
-    * [x] Rename RDN
-    * [ ] Support deleteoldrdn with 0
-    * [ ] Support newsuperior
-  * [ ] Compare
-  * [ ] Extended
-* LDAP Controls
-  * [x] Simple Paged Results Control
-* Support member/memberOf association (like OpenLDAP memberOf overlay)
-  * [x] Return memberOf attribute as operational attribute
-  * [x] Maintain member/memberOf
-  * [x] Search filter using memberOf
-* Schema
-  * [x] Basic schema processing
-  * [ ] More schema processing
-  * [x] User defined schema
-* Network
-  * [ ] SSL/StartTLS
-* [ ] Prometheus metrics
-* [ ] Auto create/migrate table for PostgreSQL 
+- Basic LDAP operations
+  - Bind
+    - [x] PLAIN
+    - [x] SSHA
+    - [x] SSHA256
+    - [x] SSHA512
+    - [x] Pass-through authentication (Support `{SASL}foo@domain`)
+  - Search
+    - [x] base
+    - [x] one
+    - [x] sub
+    - [x] children
+  - [x] Add
+  - [x] Modify
+  - [x] Delete
+  - ModifyDN
+    - [x] Rename RDN
+    - [x] Support deleteoldrdn with 0
+    - [x] Support newsuperior
+  - [ ] Compare
+  - [ ] Extended
+- LDAP Controls
+  - [x] Simple Paged Results Control
+- Support member/memberOf association (like OpenLDAP memberOf overlay)
+  - [x] Return memberOf attribute as operational attribute
+  - [x] Maintain member/memberOf
+  - [x] Search filter using memberOf
+- Schema
+  - [x] Basic schema processing
+  - [ ] More schema processing
+  - [x] User defined schema
+- Network
+  - [ ] SSL/StartTLS
+- [ ] Prometheus metrics
+- [ ] Auto create/migrate table for PostgreSQL
 
 ## Requirement
 
-PostgreSQL 10 or later.
+PostgreSQL 12 or later.
 
 ## Install
 
@@ -56,7 +56,7 @@ Please download it from [release page](../../releases).
 
 ### From source
 
-`ldap-pg` is written by Golang. Install Golang then build `ldap-pg`:  
+`ldap-pg` is written by Golang. Install Golang then build `ldap-pg`:
 
 ```
 make
@@ -68,7 +68,7 @@ You can find the binary in `./bin/` directory.
 
 ### Init table
 
-Currently, `ldap-pg` doesn't support creating DB table automatically. You need to create table manually. Please use [sample.sql](/misc/sample.sql). 
+Currently, `ldap-pg` doesn't support creating DB table automatically. You need to create table manually. Please use [sample.sql](/misc/sample.sql).
 
 ### Start `ldap-pg`
 
@@ -145,4 +145,3 @@ ldap-pg -h localhost -u testuser -w testpass -d testdb \
 ## License
 
 Licensed under the [GPL](/LICENSE) license.
-

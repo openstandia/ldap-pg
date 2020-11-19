@@ -18,16 +18,14 @@ import (
 	"github.com/jsimonetti/pwscheme/ssha512"
 
 	//"github.com/hashicorp/logutils"
-	"github.com/jmoiron/sqlx"
+
 	_ "github.com/lib/pq"
 	ldap "github.com/openstandia/ldapserver"
 )
 
 var (
-	db        *sqlx.DB
 	schemaMap SchemaMap
 	mapper    *Mapper
-	rootDN    *DN
 )
 
 type ServerConfig struct {
@@ -187,7 +185,7 @@ func (s *Server) Start() {
 		Label("Search - ROOT DSE")
 
 	routes.Search(NewHandler(s, handleSearchRootDN)).
-		BaseDn(s.rootDN.DNOrigStr() + "," + s.GetSuffix()).
+		BaseDn(s.rootDN.DNOrigStr()).
 		Scope(ldap.SearchRequestScopeBaseObject).
 		Label("Search - root DN")
 

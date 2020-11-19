@@ -18,7 +18,7 @@ func handleSearchRootDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	log.Printf("info: Request Attributes=%s", r.Attributes())
 	log.Printf("info: Request TimeLimit=%d", r.TimeLimit().Int())
 
-	e := ldap.NewSearchResultEntry(s.GetRootDN().DNOrigStr() + "," + s.GetSuffix())
+	e := ldap.NewSearchResultEntry(s.GetRootDN().DNOrigStr())
 
 	uuid, _ := uuid.NewRandom()
 

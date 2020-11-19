@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"strconv"
 
 	"github.com/jmoiron/sqlx"
@@ -30,18 +31,23 @@ func (r Repository) DeleteByDN(dn *DN) error {
 		return err
 	}
 
+	log.Printf("debug: deleteByID end")
+
 	// Delete tree entry if the parent doesn't have children
 	hasSub, err := r.hasSub(tx, fetchedDN.ParentID)
 	if err != nil {
 		rollback(tx)
 		return err
 	}
+	log.Printf("debug: hasSub end")
 	if !hasSub {
 		if err := r.deleteTreeByID(tx, fetchedDN.ParentID); err != nil {
 			rollback(tx)
 			return err
 		}
+		log.Printf("debug: deleteTreeByID end")
 	}
+	log.Printf("debug: removeAssociationById start")
 
 	// Remove member and uniqueMember if the others have association for the target entry
 	err = r.removeAssociationById(tx, delID)
@@ -49,11 +55,10 @@ func (r Repository) DeleteByDN(dn *DN) error {
 		rollback(tx)
 		return err
 	}
+	log.Printf("debug: removeAssociationById end")
 
 	// Commit!
-	err = tx.Commit()
-
-	return err
+	return commit(tx)
 }
 
 func (r *Repository) hasSub(tx *sqlx.Tx, id int64) (bool, error) {
@@ -138,7 +143,7 @@ func (r *Repository) execRemoveAssociatio(tx *sqlx.Tx, id int64, stmt *sqlx.Name
 	}
 
 	// TODO need?
-	if updatedID == 0 {
+	if updatedID == -1 {
 		// Ignore
 		return nil
 	}

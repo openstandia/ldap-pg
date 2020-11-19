@@ -43,8 +43,7 @@ func IntegrationTestRunner(m *testing.M) int {
 		}
 	}()
 
-	// createTablesIfNotExist()
-	//truncateTables()
+	truncateTables()
 
 	// SetupDefaultFixtures()
 
@@ -139,16 +138,18 @@ func (c Bind) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 	return conn, err
 }
 
-func AddDC() Add {
+func AddDC(dc string, parents ...string) Add {
 	type A []string
 	type M map[string][]string
 
+	parentDN := strings.Join(parents, ",")
+
 	return Add{
-		"",
-		"",
+		"dc=" + dc,
+		parentDN,
 		M{
 			"objectClass": A{"top", "dcObject", "organization"},
-			"o":           A{"Example Inc."},
+			"o":           A{dc},
 		},
 		nil,
 	}
@@ -248,19 +249,27 @@ func (s Search) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 	return conn, nil
 }
 
-func (a Add) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
-	var dn string
-	if a.rdn == "" {
-		dn = server.GetSuffix()
-	} else if a.baseDN != "" {
-		dn = fmt.Sprintf("%s,%s,%s", a.rdn, a.baseDN, server.GetSuffix())
-	} else {
-		dn = fmt.Sprintf("%s,%s", a.rdn, server.GetSuffix())
+func resolveDN(rdn, baseDN string) string {
+	dn := rdn
+	if baseDN != "" {
+		dn = rdn + `,` + baseDN
 	}
+	if !strings.HasPrefix(strings.ToLower(rdn), "dc=") {
+		dn = dn + `,` + server.GetSuffix()
+	}
+	return dn
+}
+
+func (a Add) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
+	dn := resolveDN(a.rdn, a.baseDN)
+
 	add := ldap.NewAddRequest(dn, nil)
 	for k, v := range a.attrs {
 		add.Attribute(k, v)
 	}
+
+	log.Printf("info: Exec add operation: %v", add)
+
 	err := conn.Add(add)
 
 	if a.assert != nil {
@@ -270,16 +279,15 @@ func (a Add) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 }
 
 func (m ModifyAdd) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
-	var dn string
-	if m.baseDN != "" {
-		dn = fmt.Sprintf("%s,%s,%s", m.rdn, m.baseDN, server.GetSuffix())
-	} else {
-		dn = fmt.Sprintf("%s,%s", m.rdn, server.GetSuffix())
-	}
+	dn := resolveDN(m.rdn, m.baseDN)
+
 	modify := ldap.NewModifyRequest(dn, nil)
 	for k, v := range m.attrs {
 		modify.Add(k, v)
 	}
+
+	log.Printf("info: Exec modify(add) operation: %v", modify)
+
 	err := conn.Modify(modify)
 
 	if m.assert != nil {
@@ -289,16 +297,15 @@ func (m ModifyAdd) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 }
 
 func (m ModifyReplace) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
-	var dn string
-	if m.baseDN != "" {
-		dn = fmt.Sprintf("%s,%s,%s", m.rdn, m.baseDN, server.GetSuffix())
-	} else {
-		dn = fmt.Sprintf("%s,%s", m.rdn, server.GetSuffix())
-	}
+	dn := resolveDN(m.rdn, m.baseDN)
+
 	modify := ldap.NewModifyRequest(dn, nil)
 	for k, v := range m.attrs {
 		modify.Replace(k, v)
 	}
+
+	log.Printf("info: Exec modify(replace) operation: %v", modify)
+
 	err := conn.Modify(modify)
 
 	if m.assert != nil {
@@ -308,16 +315,15 @@ func (m ModifyReplace) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 }
 
 func (m ModifyDelete) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
-	var dn string
-	if m.baseDN != "" {
-		dn = fmt.Sprintf("%s,%s,%s", m.rdn, m.baseDN, server.GetSuffix())
-	} else {
-		dn = fmt.Sprintf("%s,%s", m.rdn, server.GetSuffix())
-	}
+	dn := resolveDN(m.rdn, m.baseDN)
+
 	modify := ldap.NewModifyRequest(dn, nil)
 	for k, v := range m.attrs {
 		modify.Delete(k, v)
 	}
+
+	log.Printf("info: Exec modify(delete) operation: %v", modify)
+
 	err := conn.Modify(modify)
 
 	if m.assert != nil {
@@ -327,13 +333,12 @@ func (m ModifyDelete) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 }
 
 func (m ModifyDN) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
-	var dn string
-	if m.baseDN != "" {
-		dn = fmt.Sprintf("%s,%s,%s", m.rdn, m.baseDN, server.GetSuffix())
-	} else {
-		dn = fmt.Sprintf("%s,%s", m.rdn, server.GetSuffix())
-	}
+	dn := resolveDN(m.rdn, m.baseDN)
+
 	modifyDN := ldap.NewModifyDNRequest(dn, m.newRDN, m.delOld, m.newSup)
+
+	log.Printf("info: Exec modifyDN operation: %v", modifyDN)
+
 	err := conn.ModifyDN(modifyDN)
 
 	if m.assert != nil {
@@ -343,13 +348,12 @@ func (m ModifyDN) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 }
 
 func (d Delete) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
-	var dn string
-	if d.baseDN != "" {
-		dn = fmt.Sprintf("%s,%s,%s", d.rdn, d.baseDN, server.GetSuffix())
-	} else {
-		dn = fmt.Sprintf("%s,%s", d.rdn, server.GetSuffix())
-	}
+	dn := resolveDN(d.rdn, d.baseDN)
+
 	del := ldap.NewDelRequest(dn, nil)
+
+	log.Printf("info: Exec delete operation: %v", del)
+
 	err := conn.Del(del)
 
 	if d.assert != nil {
@@ -589,18 +593,23 @@ func searchEntry(c *ldap.Conn, rdn, baseDN string, scope int, filter string, att
 
 // You can boot the postgres server for tests using docker.
 //
-// docker run --rm -e POSTGRES_DB=ldap -e POSTGRES_USER=dev  -e POSTGRES_PASSWORD=dev -p 5432:5432 -v (pwd)/misc:/docker-entrypoint-initdb.d postgres:11-alpine \
-//   -c log_destination=stderr \
-//   -c log_statement=all \
-//   -c log_connections=on \
-//   -c log_disconnections=on
+/*
+docker run --rm -e POSTGRES_DB=ldap -e POSTGRES_USER=dev  -e POSTGRES_PASSWORD=dev -p 35432:5432 -v (pwd)/misc:/docker-entrypoint-initdb.d postgres:12-alpine \
+  -c log_destination=stderr \
+  -c log_statement=all \
+  -c log_connections=on \
+  -c log_disconnections=on
+*/
+
+var testPGPort int = 35432
 
 func setupLDAPServer() *Server {
 	go func() {
 		server = NewServer(&ServerConfig{
 			DBHostName:     "localhost",
-			DBPort:         5432,
+			DBPort:         testPGPort,
 			DBName:         "ldap",
+			DBSchema:       "public",
 			DBUser:         "dev",
 			DBPassword:     "dev",
 			DBMaxOpenConns: 2,
@@ -633,7 +642,9 @@ func setupLDAPServer() *Server {
 }
 
 func truncateTables() {
-	db, err := sql.Open("postgres", "host=127.0.0.1 port=5432 user=dev password=dev dbname=ldap sslmode=disable")
+	log.Printf("warn: Truncate tables")
+
+	db, err := sql.Open("postgres", fmt.Sprintf("host=127.0.0.1 port=%d user=dev password=dev dbname=ldap sslmode=disable search_path=public", testPGPort))
 	if err != nil {
 		log.Fatal("db connection error:", err)
 	}
@@ -644,10 +655,6 @@ func truncateTables() {
 		log.Fatal("truncate table error:", err)
 	}
 	_, err = db.Exec("TRUNCATE ldap_tree")
-	if err != nil {
-		log.Fatal("truncate table error:", err)
-	}
-	_, err = db.Exec("TRUNCATE ldap_member")
 	if err != nil {
 		log.Fatal("truncate table error:", err)
 	}

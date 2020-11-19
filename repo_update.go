@@ -60,7 +60,8 @@ func (r *Repository) updateDNOntoNewParent(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN
 	oldParentDN := oldDN.ParentDN()
 	newParentDN := newDN.ParentDN()
 
-	parentID := oldEntry.dbParentID
+	newParentID := oldEntry.dbParentID
+	var oldParentID int64 = -1
 
 	if !oldParentDN.Equal(newParentDN) {
 		// Lock the old/new parent entry
@@ -68,12 +69,13 @@ func (r *Repository) updateDNOntoNewParent(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN
 		if err != nil {
 			return NewNoSuchObject()
 		}
-		_, err = r.FindDNByDNWithLock(tx, oldParentDN, true)
+		oldParentFetchedDN, err := r.FindDNByDNWithLock(tx, oldParentDN, true)
 		if err != nil {
 			return NewNoSuchObject()
 		}
 
-		parentID = newParentFetchedDN.ID
+		newParentID = newParentFetchedDN.ID
+		oldParentID = oldParentFetchedDN.ID
 
 		if !newParentFetchedDN.HasSub {
 			// If the parent doesn't have any sub, need to insert tree entry first.
@@ -87,7 +89,7 @@ func (r *Repository) updateDNOntoNewParent(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN
 			}
 
 			// Register as container
-			err = r.insertTree(tx, newParentFetchedDN.ID)
+			err = r.insertTree(tx, newParentFetchedDN.ID, newParentFetchedDN.IsRoot())
 			if err != nil {
 				return err
 			}
@@ -109,7 +111,7 @@ func (r *Repository) updateDNOntoNewParent(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN
 
 	_, err = tx.NamedStmt(updateDNByIdStmt).Exec(map[string]interface{}{
 		"id":           oldEntry.dbEntryID,
-		"parent_id":    parentID,
+		"parent_id":    newParentID,
 		"new_rdn_norm": newDN.RDNNormStr(),
 		"new_rdn_orig": newDN.RDNOrigStr(),
 		"attrs_norm":   dbEntry.AttrsNorm,
@@ -120,15 +122,15 @@ func (r *Repository) updateDNOntoNewParent(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN
 	}
 
 	if !oldParentDN.Equal(newParentDN) {
-		// Reload the old parent entry
-		oldParentFetchedDN, err := r.FindDNByDNWithLock(tx, oldParentDN, true)
+		// Check if the old parent entry stil has children
+		hasSub, err := r.hasSub(tx, oldParentID)
 		if err != nil {
-			return NewNoSuchObject()
+			return err
 		}
 
 		// Delete the tree entry if the old parent doesn't have any children now
-		if !oldParentFetchedDN.HasSub {
-			if err := r.deleteTreeByID(tx, oldParentFetchedDN.ID); err != nil {
+		if !hasSub {
+			if err := r.deleteTreeByID(tx, oldParentID); err != nil {
 				return err
 			}
 		}

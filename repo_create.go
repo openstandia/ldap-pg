@@ -45,7 +45,9 @@ func (r *Repository) insertEntryAndTree(tx *sqlx.Tx, entry *AddEntry) (int64, in
 		return 0, 0, err
 	}
 
-	err = r.insertTree(tx, parentId)
+	// Now, the parent entry has a child
+	// Insert tree entry for the parent
+	err = r.insertTree(tx, parentId, entry.ParentDN().IsRoot())
 	if err != nil {
 		return 0, 0, err
 	}
@@ -113,23 +115,35 @@ func (r *Repository) insertEntry(tx *sqlx.Tx, entry *AddEntry) (int64, int64, er
 	return id, parentId, nil
 }
 
-func (r *Repository) insertTree(tx *sqlx.Tx, id int64) error {
-	q := `
-		INSERT INTO ldap_tree (id, path)
-		SELECT :id, p.path || :id as path
-		FROM (
-			SELECT
-				t.id, t.path
-			FROM
-				ldap_tree t, ldap_entry e
-			WHERE 
-				e.id = :id AND e.parent_id = t.id
-		) p
-		WHERE NOT EXISTS (
-			SELECT id FROM ldap_tree WHERE id = :id
-		)
-		RETURNING id, path
+func (r *Repository) insertTree(tx *sqlx.Tx, id int64, isRoot bool) error {
+	var q string
+	if isRoot {
+		q = `
+			INSERT INTO ldap_tree (id, path)
+			SELECT :id, :id as path
+			WHERE NOT EXISTS (
+				SELECT id FROM ldap_tree WHERE id = :id
+			)
+			RETURNING id, path
 	`
+	} else {
+		q = `
+			INSERT INTO ldap_tree (id, path)
+			SELECT :id, p.path || :id as path
+			FROM (
+				SELECT
+					t.id, t.path
+				FROM
+					ldap_tree t, ldap_entry e
+				WHERE 
+					e.id = :id AND e.parent_id = t.id
+			) p
+			WHERE NOT EXISTS (
+				SELECT id FROM ldap_tree WHERE id = :id
+			)
+			RETURNING id, path
+		`
+	}
 	params := map[string]interface{}{}
 	params["id"] = id
 

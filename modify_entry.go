@@ -24,7 +24,7 @@ func NewModifyEntry(dn *DN, valuesOrig map[string][]string) (*ModifyEntry, error
 	}
 
 	for k, v := range valuesOrig {
-		err := modifyEntry.Add(k, v)
+		err := modifyEntry.AddNoCheck(k, v)
 		if err != nil {
 			return nil, err
 		}
@@ -93,6 +93,21 @@ func (j *ModifyEntry) Add(attrName string, attrValue []string) error {
 	}
 	if sv.IsNoUserModification() {
 		return NewNoUserModificationAllowedConstraintViolation(sv.Name())
+	}
+	if err := j.addsv(sv); err != nil {
+		return err
+	}
+
+	// Record changelog
+	j.add = append(j.add, sv)
+
+	return nil
+}
+
+func (j *ModifyEntry) AddNoCheck(attrName string, attrValue []string) error {
+	sv, err := NewSchemaValue(attrName, attrValue)
+	if err != nil {
+		return err
 	}
 	if err := j.addsv(sv); err != nil {
 		return err
@@ -229,40 +244,6 @@ func (j *ModifyEntry) GetAttrs() (map[string]interface{}, map[string][]string) {
 		orig[k] = v.Orig()
 	}
 	return norm, orig
-}
-
-type diffAttr struct {
-	add []string
-	del []string
-}
-
-func calcDiffAttr(from, to *ModifyEntry, attrName string) *diffAttr {
-	fromAttrsNorm, _ := from.GetAttrNorm(attrName)
-	toAttrsNorm, _ := to.GetAttrNorm(attrName)
-
-	fromMap := make(map[string]struct{}, len(fromAttrsNorm))
-	toMap := make(map[string]struct{}, len(toAttrsNorm))
-
-	for _, v := range fromAttrsNorm {
-		fromMap[v] = struct{}{}
-	}
-
-	diff := &diffAttr{}
-
-	for _, v := range toAttrsNorm {
-		toMap[v] = struct{}{}
-		if _, found := fromMap[v]; !found {
-			diff.add = append(diff.add, v)
-		}
-	}
-
-	for _, v := range fromAttrsNorm {
-		if _, found := toMap[v]; !found {
-			diff.del = append(diff.del, v)
-		}
-	}
-
-	return diff
 }
 
 func (e *ModifyEntry) Clone() *ModifyEntry {

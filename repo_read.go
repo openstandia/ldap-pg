@@ -25,7 +25,7 @@ type FetchedDBEntry struct {
 	ParentDNOrig    string         // No real column in the table
 }
 
-func (e *FetchedDBEntry) Member(IdToDNOrigCache map[int64]string) ([]string, error) {
+func (e *FetchedDBEntry) Member(repo *Repository, IdToDNOrigCache map[int64]string) ([]string, error) {
 	if len(e.RawMember) == 0 {
 		return nil, nil
 	}
@@ -38,6 +38,8 @@ func (e *FetchedDBEntry) Member(IdToDNOrigCache map[int64]string) ([]string, err
 	results := make([]string, len(jsonArray))
 
 	for i, m := range jsonArray {
+		// m[0]: parent_id
+		// m[1]: rdn_orig
 		parentId, err := strconv.ParseInt(m[0], 10, 64)
 		if err != nil {
 			return nil, xerrors.Errorf("Failed to parse parent_id: %s, err: %w", parentId, err)
@@ -46,8 +48,16 @@ func (e *FetchedDBEntry) Member(IdToDNOrigCache map[int64]string) ([]string, err
 
 		parentDNOrig, ok := IdToDNOrigCache[parentId]
 		if !ok {
-			// TODO find parent DN orig from database...
-			parentDNOrig = "<unknown>"
+			// TODO optimize
+			parentDN, err := repo.FindDNByID(nil, parentId, false)
+			if err != nil {
+				// TODO ignore no result
+				return nil, xerrors.Errorf("Failed to fetch by parent_id: %s, err: %w", parentId, err)
+			}
+			parentDNOrig = parentDN.DNOrig
+
+			// Cache
+			IdToDNOrigCache[parentId] = parentDN.DNOrig
 		}
 
 		results[i] = rdnOrig + `,` + parentDNOrig
@@ -55,7 +65,7 @@ func (e *FetchedDBEntry) Member(IdToDNOrigCache map[int64]string) ([]string, err
 	return results, nil
 }
 
-func (e *FetchedDBEntry) MemberOf(IdToDNOrigCache map[int64]string) ([]string, error) {
+func (e *FetchedDBEntry) MemberOf(repo *Repository, IdToDNOrigCache map[int64]string) ([]string, error) {
 	if len(e.RawMemberOf) == 0 {
 		return nil, nil
 	}
@@ -69,6 +79,8 @@ func (e *FetchedDBEntry) MemberOf(IdToDNOrigCache map[int64]string) ([]string, e
 	results := make([]string, len(jsonArray))
 
 	for i, m := range jsonArray {
+		// m[0]: parent_id
+		// m[1]: rdn_orig
 		parentId, err := strconv.ParseInt(m[0], 10, 64)
 		if err != nil {
 			return nil, xerrors.Errorf("Failed to parse parent_id: %s, err: %w", parentId, err)
@@ -77,8 +89,16 @@ func (e *FetchedDBEntry) MemberOf(IdToDNOrigCache map[int64]string) ([]string, e
 
 		parentDNOrig, ok := IdToDNOrigCache[parentId]
 		if !ok {
-			// TODO find parent DN orig from database...
-			parentDNOrig = "<unknown>"
+			// TODO optimize
+			parentDN, err := repo.FindDNByID(nil, parentId, false)
+			if err != nil {
+				// TODO ignore no result
+				return nil, xerrors.Errorf("Failed to fetch by parent_id: %s, err: %w", parentId, err)
+			}
+			parentDNOrig = parentDN.DNOrig
+
+			// Cache
+			IdToDNOrigCache[parentId] = parentDN.DNOrig
 		}
 
 		results[i] = rdnOrig + `,` + parentDNOrig
@@ -422,7 +442,7 @@ func createFindBasePathByDNSQL(baseDN *DN, opt *FindOption) (string, error) {
 				e0.parent_id,
 				` + fetchAttrsCols + `
 				` + fetchCredCols + `
-				e0.id::ltree as path,
+				e0.id as path,
 				COALESCE((SELECT true FROM ldap_tree t WHERE t.id = e0.id), false) as has_sub
 			FROM
 				ldap_entry e0 
@@ -523,6 +543,21 @@ func createFindBasePathByDNSQL(baseDN *DN, opt *FindOption) (string, error) {
 	log.Printf("debug: createFindBasePathByDNSQL: %s", sql)
 
 	return sql, nil
+}
+
+func (r *Repository) FindDNByID(tx *sqlx.Tx, id int64, lock bool) (*FetchedDNOrig, error) {
+	var dest FetchedDNOrig
+	err := namedStmt(tx, findDNByIDStmt).Get(&dest, map[string]interface{}{
+		"id": id,
+	})
+	if err != nil {
+		if isNoResult(err) {
+			return nil, NewNoSuchObject()
+		}
+		return nil, xerrors.Errorf("Failed to fetch FindDNByID in %s, id: %d, err: %w", txLabel(tx), id, err)
+	}
+
+	return &dest, nil
 }
 
 // FindDNByDNWithLock returns FetchedDN object from database by DN search.
@@ -637,13 +672,16 @@ func (r *Repository) FindIDByParentIDAndRDNNorm(tx *sqlx.Tx, parentId int64, rdn
 func (r *Repository) FindCredByDN(dn *DN) ([]string, error) {
 	stmt, params, err := r.PrepareFindDNByDN(dn, &FindOption{FetchCred: true})
 	if err != nil {
-		return nil, xerrors.Errorf("Failed to prepare FindEntryByDN: %v, err: %w", dn, err)
+		return nil, xerrors.Errorf("Failed to prepare FindCredByDN: %v, err: %w", dn, err)
 	}
 
 	dest := struct {
-		ID     int64          `db:"id"`
-		DNOrig string         `db:"dn_orig"`
-		Cred   types.JSONText `db:"cred"`
+		ID       int64          `db:"id"`
+		ParentID int64          `db:"parent_id"`
+		Path     string         `db:"path"`
+		DNOrig   string         `db:"dn_orig"`
+		HasSub   bool           `db:"has_sub"`
+		Cred     types.JSONText `db:"cred"`
 	}{}
 
 	err = stmt.Get(&dest, params)
@@ -687,17 +725,21 @@ func (r *Repository) AppenScopeFilter(scope int, q *Query, fetchedDN *FetchedDN)
 			return "", err
 		}
 
-		// Cache
-		for _, c := range containers {
-			q.IdToDNOrigCache[c.ID] = c.DNOrig
-		}
+		if len(containers) > 0 {
+			// Cache
+			for _, c := range containers {
+				q.IdToDNOrigCache[c.ID] = c.DNOrig
+			}
 
-		in, params := expandContainersIn(containers)
-		parentFilter = "(e.id = :baseDNID OR e.parent_id IN (" + in + "))"
-		q.Params["baseDNID"] = fetchedDN.ID
-		for k, v := range params {
-			q.Params[k] = v
+			in, params := expandContainersIn(containers)
+			parentFilter = "(e.id = :baseDNID OR e.parent_id IN (" + in + "))"
+			for k, v := range params {
+				q.Params[k] = v
+			}
+		} else {
+			parentFilter = "(e.id = :baseDNID)"
 		}
+		q.Params["baseDNID"] = fetchedDN.ID
 
 	} else if scope == 3 { // children
 		containers, err := r.FindContainerByDN(nil, fetchedDN, scope)
