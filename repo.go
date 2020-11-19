@@ -233,16 +233,14 @@ func (r *Repository) initStmt(db *sqlx.DB) error {
 }
 
 type DBEntry struct {
-	ID            int64          `db:"id"`
-	DNNorm        string         `db:"dn_norm"`
-	DNOrig        string         `db:"dn_orig"`
-	EntryUUID     string         `db:"uuid"`
-	Created       time.Time      `db:"created"`
-	Updated       time.Time      `db:"updated"`
-	AttrsNorm     types.JSONText `db:"attrs_norm"`
-	AttrsOrig     types.JSONText `db:"attrs_orig"`
-	Count         int32          `db:"count"`    // No real column in the table
-	MemberOf      types.JSONText `db:"memberof"` // No real column in the table
-	jsonAttrsNorm map[string]interface{}
-	jsonAttrsOrig map[string][]string
+	ID        int64          `db:"id"`
+	DNNorm    string         `db:"dn_norm"`
+	DNOrig    string         `db:"dn_orig"`
+	EntryUUID string         `db:"uuid"`
+	Created   time.Time      `db:"created"`
+	Updated   time.Time      `db:"updated"`
+	AttrsNorm types.JSONText `db:"attrs_norm"`
+	AttrsOrig types.JSONText `db:"attrs_orig"`
+	Count     int32          `db:"count"`    // No real column in the table
+	MemberOf  types.JSONText `db:"memberof"` // No real column in the table
 }

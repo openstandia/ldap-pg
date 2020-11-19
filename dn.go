@@ -30,7 +30,9 @@ type FetchedEntry struct {
 func (e *FetchedEntry) GetAttrsOrig() map[string][]string {
 	if len(e.AttrsOrig) > 0 {
 		jsonMap := make(map[string][]string)
-		e.AttrsOrig.Unmarshal(&jsonMap)
+		if err := e.AttrsOrig.Unmarshal(&jsonMap); err != nil {
+			log.Printf("error: Unexpected unmarshal error. err: %s", err)
+		}
 
 		return jsonMap
 	}

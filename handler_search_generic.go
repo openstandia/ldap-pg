@@ -152,8 +152,6 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	} else {
 		w.Write(res)
 	}
-
-	return
 }
 
 func responseEntry(s *Server, w ldap.ResponseWriter, r message.SearchRequest, searchEntry *SearchEntry) {
@@ -247,18 +245,6 @@ func expandContainersIn(containers []*FetchedDNOrig) (string, map[string]int64) 
 		k := "parent_id_" + strconv.Itoa(i)
 		s[i] = ":" + k
 		m[k] = c.ID
-	}
-	return strings.Join(s, ","), m
-}
-
-func expandIn(cid []int64) (string, map[string]int64) {
-	s := make([]string, len(cid))
-	m := make(map[string]int64, len(cid))
-
-	for i, id := range cid {
-		k := "parent_id_" + strconv.Itoa(i)
-		s[i] = ":" + k
-		m[k] = id
 	}
 	return strings.Join(s, ","), m
 }

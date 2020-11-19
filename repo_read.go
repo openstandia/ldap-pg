@@ -109,11 +109,15 @@ func (e *FetchedDBEntry) MemberOf(repo *Repository, IdToDNOrigCache map[int64]st
 func (e *FetchedDBEntry) AttrsOrig() map[string][]string {
 	if len(e.RawAttrsOrig) > 0 {
 		jsonMap := make(map[string][]string)
-		e.RawAttrsOrig.Unmarshal(&jsonMap)
+		if err := e.RawAttrsOrig.Unmarshal(&jsonMap); err != nil {
+			log.Printf("erro: Unexpectd umarshal error: %s", err)
+		}
 
 		if len(e.RawMemberOf) > 0 {
 			jsonArray := []string{}
-			e.RawMemberOf.Unmarshal(&jsonArray)
+			if err := e.RawMemberOf.Unmarshal(&jsonArray); err != nil {
+				log.Printf("erro: Unexpectd umarshal error: %s", err)
+			}
 			jsonMap["memberOf"] = jsonArray
 		}
 

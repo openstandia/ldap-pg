@@ -113,7 +113,9 @@ func (j *AddEntry) addsv(value *SchemaValue) error {
 	current, ok := j.attributes[name]
 	if !ok {
 		j.attributes[name] = value
+		return nil
 	} else {
+		// TODO
 		current.Add(value)
 	}
 	return nil

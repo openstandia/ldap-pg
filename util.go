@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	goldap "github.com/go-ldap/ldap/v3"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/openstandia/goldap/message"
@@ -130,24 +129,6 @@ func getRequestedMemberAttrs(r message.SearchRequest) []string {
 		}
 	}
 	return list
-}
-
-func isMemberRequested(r message.SearchRequest) bool {
-	if len(r.Attributes()) == 0 {
-		return true
-	}
-	for _, attr := range r.Attributes() {
-		if string(attr) == "*" {
-			return true
-		}
-		a := string(attr)
-
-		// TODO move to schema
-		if strings.EqualFold(a, "member") || strings.EqualFold(a, "uniquemember") {
-			return true
-		}
-	}
-	return false
 }
 
 func responseUnsupportedSearch(w ldap.ResponseWriter, r message.SearchRequest) {
@@ -283,52 +264,6 @@ func normalizeSpace(value string) string {
 func removeAllSpace(value string) string {
 	str := SPACE_PATTERN.ReplaceAllString(value, "")
 	return str
-}
-
-func parseDN(value string) (*goldap.DN, []string, []string, error) {
-	d, err := goldap.ParseDN(value)
-	if err != nil {
-		log.Printf("warn: Invalid DN syntax. dn: %s", value)
-		return nil, nil, nil, NewInvalidDNSyntax()
-	}
-
-	dcCount := 0
-	n := make([]string, len(d.RDNs))  // Normalized
-	no := make([]string, len(d.RDNs)) // Orig
-	for i, v := range d.RDNs {
-		nn := make([]string, len(v.Attributes))
-		nno := make([]string, len(v.Attributes))
-		for j, a := range v.Attributes {
-			sv, err := NewSchemaValue(a.Type, []string{a.Value})
-			if err != nil {
-				log.Printf("warn: Invalid DN syntax. Not found in schema. dn: %s err: %+v", value, err)
-				return nil, nil, nil, NewInvalidDNSyntax()
-			}
-
-			vv, err := sv.Normalize()
-			if err != nil {
-				log.Printf("warn: Invalid RDN of DN syntax. dn: %s", value)
-				return nil, nil, nil, NewInvalidDNSyntax()
-			}
-
-			// TODO normalize type
-			attrType := strings.ToLower(a.Type)
-			if attrType == "dc" {
-				// Store only first dc as normalized rdn
-				if dcCount == 0 {
-					nn[j] = fmt.Sprintf("%s=%s", attrType, vv[0])
-				}
-				dcCount++
-			} else {
-				nn[j] = fmt.Sprintf("%s=%s", attrType, vv[0])
-			}
-
-			nno[j] = fmt.Sprintf("%s=%s", attrType, a.Value)
-		}
-		n[i] = strings.Join(nn, ",")
-		no[i] = strings.Join(nno, ",")
-	}
-	return d, n[0 : len(n)-dcCount+1], no, nil
 }
 
 // ParseDN returns a distinguishedName or an error.

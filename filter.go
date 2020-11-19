@@ -73,8 +73,3 @@ func findSchema(schemaMap SchemaMap, attrName string) (*Schema, bool) {
 	}
 	return s, true
 }
-
-func resolveKeyTable(baseObject string) string {
-	keyTable := strings.Split(strings.Split(baseObject, ",")[0], "=")[1]
-	return keyTable
-}

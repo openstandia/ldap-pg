@@ -225,8 +225,3 @@ func (r *Repository) insertRootEntry(tx *sqlx.Tx, entry *AddEntry) (int64, error
 
 	return id, nil
 }
-
-type nordNorm struct {
-	ID     int64  `db:"id"`
-	DNNorm string `db:"dn_norm"`
-}

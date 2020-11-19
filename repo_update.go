@@ -112,7 +112,10 @@ func (r *Repository) updateDNOntoNewParent(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN
 
 	if oldRDN != nil {
 		for _, attr := range oldRDN.Attributes {
-			newEntry.Add(attr.TypeOrig, []string{attr.ValueOrig})
+			if err := newEntry.Add(attr.TypeOrig, []string{attr.ValueOrig}); err != nil {
+				log.Printf("warn: Failed to remain old RDN, err: %s", err)
+				return err
+			}
 		}
 	}
 
@@ -157,7 +160,9 @@ func (r *Repository) updateRDN(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *RelativeDN
 
 	if oldRDN != nil {
 		for _, attr := range oldRDN.Attributes {
-			newEntry.Add(attr.TypeOrig, []string{attr.ValueOrig})
+			if err := newEntry.Add(attr.TypeOrig, []string{attr.ValueOrig}); err != nil {
+				log.Printf("info: Schema error but ignore it. err: %s", err)
+			}
 		}
 	}
 
