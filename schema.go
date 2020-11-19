@@ -489,7 +489,7 @@ func (s *SchemaValue) Orig() []string {
 
 func (s *SchemaValue) AsTime() []time.Time {
 	t := make([]time.Time, len(s.value))
-	for i, _ := range s.value {
+	for i := range s.value {
 		// Already validated, ignore error
 		t[i], _ = time.Parse(TIMESTAMP_FORMAT, s.value[i])
 	}
@@ -503,9 +503,6 @@ func (s *SchemaValue) Norm() []string {
 
 func (s *SchemaValue) GetForJSON() interface{} {
 	s.Normalize()
-	if s.schema.SingleValue {
-		return s.cachedNorm[0]
-	}
 	return s.cachedNorm
 }
 

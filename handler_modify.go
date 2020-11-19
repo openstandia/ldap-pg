@@ -30,9 +30,9 @@ func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	tx := s.Repo().db.MustBegin()
 
-	oldEntry, err := s.Repo().FindByDNWithLock(tx, dn)
+	oldEntry, err := s.Repo().FindEntryByDN(tx, dn, true)
 	if err != nil {
-		tx.Rollback()
+		rollback(tx)
 		if err == sql.ErrNoRows {
 			responseModifyError(w, NewNoSuchObject())
 			return
@@ -69,7 +69,7 @@ func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		}
 
 		if err != nil {
-			tx.Rollback()
+			rollback(tx)
 
 			responseModifyError(w, xerrors.Errorf("Failed to modify the entry. dn: %s, err: %w", dn.DNNormStr(), err))
 			return
@@ -81,7 +81,7 @@ func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	err = s.Repo().Update(tx, oldEntry, newEntry)
 
 	if err != nil {
-		tx.Rollback()
+		rollback(tx)
 
 		// TODO error code
 		responseModifyError(w, xerrors.Errorf("Failed to modify the entry. dn: %s, entry: %v, err: %w", dn.DNNormStr(), newEntry, err))
@@ -90,6 +90,7 @@ func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	err = tx.Commit()
 	if err != nil {
+		rollback(tx)
 		responseModifyError(w, xerrors.Errorf("Failed to commit of modify entry operation. dn: %s, err: %w", dn.DNNormStr(), err))
 		return
 	}

@@ -10,7 +10,7 @@ import (
 	"github.com/openstandia/goldap/message"
 )
 
-type ToQueryTestData struct {
+type ToQueryTestByFullJsonData struct {
 	label     string
 	schemaMap SchemaMap
 	filter    message.Filter
@@ -18,9 +18,14 @@ type ToQueryTestData struct {
 	out       *Query
 }
 
-func TestToQuery(t *testing.T) {
-	for i, test := range getToQueryTestData() {
-		q, err := ToQuery(test.schemaMap, test.filter, nil, nil)
+func TestToQueryByFullJson(t *testing.T) {
+	server := NewServer(&ServerConfig{
+		Suffix:          "dc=example,dc=com",
+		QueryTranslator: "default",
+	})
+	schemaMap = InitSchemaMap(server)
+	for i, test := range getToQueryByFullTestData() {
+		q, err := ToQuery(server, test.schemaMap, test.filter)
 		if err == nil {
 			if test.out == nil {
 				t.Errorf("#%d: %s\nEXPECTED ERROR MESSAGE:\n%s\nGOT A STRUCT INSTEAD:\n%#+v", i, test.label, test.err, q)
@@ -33,12 +38,12 @@ func TestToQuery(t *testing.T) {
 	}
 }
 
-func getToQueryTestData() (ret []ToQueryTestData) {
-	return []ToQueryTestData{
+func getToQueryByFullTestData() (ret []ToQueryTestByFullJsonData) {
+	return []ToQueryTestByFullJsonData{
 		{
 			label: "cn=foo",
 			schemaMap: map[string]*Schema{
-				"cn": &Schema{
+				"cn": {
 					Name:        "cn",
 					Equality:    "",
 					SingleValue: true,
@@ -46,22 +51,25 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 			},
 			filter: message.NewFilterEqualityMatch("cn", "foo"),
 			out: &Query{
-				Query: "e.attrs_norm->>'cn' = :0_cn",
+				Query: "e.attrs_norm @@ :filter",
 				Params: map[string]interface{}{
-					"0_cn": "foo",
+					"filter": `$.cn == "foo"`,
 				},
+				PendingParams:   map[*DN]string{},
+				IdToDNOrigCache: map[int64]string{},
+				DNNormToIdCache: map[string]int64{},
 			},
 		},
 
 		{
 			label: "(&(cn=foo)(uid=foo))",
 			schemaMap: map[string]*Schema{
-				"cn": &Schema{
+				"cn": {
 					Name:        "cn",
 					Equality:    "",
 					SingleValue: true,
 				},
-				"uid": &Schema{
+				"uid": {
 					Name:        "uid",
 					Equality:    "",
 					SingleValue: true,
@@ -72,18 +80,20 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 				message.NewFilterEqualityMatch("uid", "bar"),
 			},
 			out: &Query{
-				Query: "(e.attrs_norm->>'cn' = :0_cn AND e.attrs_norm->>'uid' = :1_uid)",
+				Query: "e.attrs_norm @@ :filter",
 				Params: map[string]interface{}{
-					"0_cn":  "foo",
-					"1_uid": "bar",
+					"filter": `($.cn == "foo" && $.uid == "bar")`,
 				},
+				PendingParams:   map[*DN]string{},
+				IdToDNOrigCache: map[int64]string{},
+				DNNormToIdCache: map[string]int64{},
 			},
 		},
 
 		{
-			label: "(||(cn=foo)(cn=bar))",
+			label: "(|(cn=foo)(cn=bar))",
 			schemaMap: map[string]*Schema{
-				"cn": &Schema{
+				"cn": {
 					Name:        "cn",
 					Equality:    "",
 					SingleValue: true,
@@ -94,18 +104,20 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 				message.NewFilterEqualityMatch("cn", "bar"),
 			},
 			out: &Query{
-				Query: "(e.attrs_norm->>'cn' = :0_cn OR e.attrs_norm->>'cn' = :1_cn)",
+				Query: "e.attrs_norm @@ :filter",
 				Params: map[string]interface{}{
-					"0_cn": "foo",
-					"1_cn": "bar",
+					"filter": `($.cn == "foo" || $.cn == "bar")`,
 				},
+				PendingParams:   map[*DN]string{},
+				IdToDNOrigCache: map[int64]string{},
+				DNNormToIdCache: map[string]int64{},
 			},
 		},
 
 		{
-			label: "(||(cn=foo)(cn=bar)(cn=hoge))",
+			label: "(|(cn=foo)(cn=bar)(cn=hoge))",
 			schemaMap: map[string]*Schema{
-				"cn": &Schema{
+				"cn": {
 					Name:        "cn",
 					Equality:    "",
 					SingleValue: true,
@@ -117,29 +129,30 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 				message.NewFilterEqualityMatch("cn", "hoge"),
 			},
 			out: &Query{
-				Query: "(e.attrs_norm->>'cn' = :0_cn OR e.attrs_norm->>'cn' = :1_cn OR e.attrs_norm->>'cn' = :2_cn)",
+				Query: "e.attrs_norm @@ :filter",
 				Params: map[string]interface{}{
-					"0_cn": "foo",
-					"1_cn": "bar",
-					"2_cn": "hoge",
+					"filter": `($.cn == "foo" || $.cn == "bar" || $.cn == "hoge")`,
 				},
+				PendingParams:   map[*DN]string{},
+				IdToDNOrigCache: map[int64]string{},
+				DNNormToIdCache: map[string]int64{},
 			},
 		},
 
 		{
-			label: "(||(cn=foo)(&&(uid=bar)(sn=hoge)))",
+			label: "(|(cn=foo)(&(uid=bar)(sn=hoge)))",
 			schemaMap: map[string]*Schema{
-				"cn": &Schema{
+				"cn": {
 					Name:        "cn",
 					Equality:    "",
 					SingleValue: true,
 				},
-				"uid": &Schema{
+				"uid": {
 					Name:        "uid",
 					Equality:    "",
 					SingleValue: true,
 				},
-				"sn": &Schema{
+				"sn": {
 					Name:        "sn",
 					Equality:    "",
 					SingleValue: true,
@@ -153,32 +166,36 @@ func getToQueryTestData() (ret []ToQueryTestData) {
 				},
 			},
 			out: &Query{
-				Query: "(e.attrs_norm->>'cn' = :0_cn OR (e.attrs_norm->>'uid' = :1_uid AND e.attrs_norm->>'sn' = :2_sn))",
+				Query: "e.attrs_norm @@ :filter",
 				Params: map[string]interface{}{
-					"0_cn":  "foo",
-					"1_uid": "bar",
-					"2_sn":  "hoge",
+					"filter": `($.cn == "foo" || ($.uid == "bar" && $.sn == "hoge"))`,
 				},
+				PendingParams:   map[*DN]string{},
+				IdToDNOrigCache: map[int64]string{},
+				DNNormToIdCache: map[string]int64{},
 			},
 		},
 
 		{
 			label: "(!(cn=foo))",
 			schemaMap: map[string]*Schema{
-				"cn": &Schema{
+				"cn": {
 					Name:        "cn",
 					Equality:    "",
 					SingleValue: true,
 				},
 			},
 			filter: message.FilterNot{
-				message.NewFilterEqualityMatch("cn", "foo"),
+				Filter: message.NewFilterEqualityMatch("cn", "foo"),
 			},
 			out: &Query{
-				Query: "NOT (e.attrs_norm->>'cn' = :0_cn)",
+				Query: "e.attrs_norm @@ :filter",
 				Params: map[string]interface{}{
-					"0_cn": "foo",
+					"filter": `(!($.cn == "foo"))`,
 				},
+				PendingParams:   map[*DN]string{},
+				IdToDNOrigCache: map[int64]string{},
+				DNNormToIdCache: map[string]int64{},
 			},
 		},
 	}

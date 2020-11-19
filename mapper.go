@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
 	"github.com/jmoiron/sqlx/types"
 	"github.com/openstandia/goldap/message"
 )
@@ -50,37 +51,45 @@ func (m *Mapper) LDAPMessageToAddEntry(dn *DN, ldapAttrs message.AttributeList) 
 	return entry, nil
 }
 
-func (m *Mapper) AddEntryToDBEntry(entry *AddEntry) (*DBEntry, error) {
+// AddEntryToDBEntry converts LDAP entry object to DB entry object.
+// It handles metadata such as createTimistamp, modifyTimestamp and entryUUID.
+// Also, it handles member and uniqueMember attributes.
+func (m *Mapper) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*DBEntry, error) {
 	norm, orig := entry.Attrs()
 
 	created := time.Now()
 	updated := created
 	if _, ok := norm["createTimestamp"]; ok {
 		// Already validated, ignore error
-		created, _ = time.Parse(TIMESTAMP_FORMAT, norm["createTimestamp"].(string))
+		created, _ = time.Parse(TIMESTAMP_FORMAT, norm["createTimestamp"].([]string)[0])
 	}
+	norm["createTimestamp"] = []int64{created.Unix()}
+	orig["createTimestamp"] = []string{created.In(time.UTC).Format(TIMESTAMP_FORMAT)}
+
 	if _, ok := norm["modifyTimestamp"]; ok {
 		// Already validated, ignore error
-		updated, _ = time.Parse(TIMESTAMP_FORMAT, norm["modifyTimestamp"].(string))
+		updated, _ = time.Parse(TIMESTAMP_FORMAT, norm["modifyTimestamp"].([]string)[0])
 	}
+	norm["modifyTimestamp"] = []int64{updated.Unix()}
+	orig["modifyTimestamp"] = []string{updated.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 
 	// TODO strict mode
-	var entryUUID string
-	if e, ok := norm["entryUUID"]; ok {
-		entryUUID = e.(string)
-	} else {
+	if _, ok := norm["entryUUID"]; !ok {
 		u, _ := uuid.NewRandom()
-		entryUUID = u.String()
+		norm["entryUUID"] = []string{u.String()}
+		orig["entryUUID"] = []string{u.String()}
 	}
 
-	// TODO move to schema?
-	delete(norm, "member")
-	delete(orig, "member")
-	delete(norm, "uniqueMember")
-	delete(orig, "uniqueMember")
+	// Remove attributes to reduce attrs_orig column size
+	removeComputedAttrs(orig)
 
-	delete(norm, "entryUUID")
-	delete(orig, "entryUUID")
+	// Convert the value of member and uniqueMamber attributes, DN => int64
+	if err := m.dnArrayToIDArray(tx, norm, "member"); err != nil {
+		return nil, err
+	}
+	if err := m.dnArrayToIDArray(tx, norm, "uniqueMember"); err != nil {
+		return nil, err
+	}
 
 	bNorm, _ := json.Marshal(norm)
 	bOrig, _ := json.Marshal(orig)
@@ -88,9 +97,6 @@ func (m *Mapper) AddEntryToDBEntry(entry *AddEntry) (*DBEntry, error) {
 	dbEntry := &DBEntry{
 		DNNorm:    entry.DN().DNNormStr(),
 		DNOrig:    entry.DN().DNOrigStr(),
-		EntryUUID: entryUUID,
-		Created:   created,
-		Updated:   updated,
 		AttrsNorm: types.JSONText(string(bNorm)),
 		AttrsOrig: types.JSONText(string(bOrig)),
 	}
@@ -98,25 +104,70 @@ func (m *Mapper) AddEntryToDBEntry(entry *AddEntry) (*DBEntry, error) {
 	return dbEntry, nil
 }
 
-func (m *Mapper) ModifyEntryToDBEntry(entry *ModifyEntry) (*DBEntry, error) {
+// TODO move to schema?
+func removeComputedAttrs(orig map[string][]string) {
+	delete(orig, "member")
+	delete(orig, "uniqueMember")
+	// delete(orig, "createTimestamp")
+	// delete(orig, "modifyTimestamp")
+	// delete(orig, "entryUUID")
+}
+
+func (m *Mapper) dnArrayToIDArray(tx *sqlx.Tx, norm map[string]interface{}, attrName string) error {
+	if members, ok := norm[attrName].([]string); ok && len(members) > 0 {
+
+		memberNorm := make([]int64, len(members))
+		for i, v := range members {
+			dn, err := NormalizeDN(v)
+			if err != nil {
+				return NewInvalidPerSyntax(attrName, i)
+			}
+
+			// TODO Optimize converting DN to id
+			fetchedDN, err := m.server.repo.FindDNByDNWithLock(tx, dn, true)
+			if err != nil {
+				if lerr, ok := err.(*LDAPError); ok {
+					if lerr.IsNoSuchObjectError() {
+						// TODO should be return error or special handling?
+						return NewInvalidPerSyntax(attrName, i)
+					}
+				}
+				// System error
+				return NewUnavailable()
+			}
+
+			memberNorm[i] = fetchedDN.ID
+		}
+
+		// Replace with id member
+		norm[attrName] = memberNorm
+	}
+	return nil
+}
+
+func (m *Mapper) ModifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry) (*DBEntry, error) {
 	norm, orig := entry.GetAttrs()
 
-	// TODO move to schema?
-	delete(norm, "member")
-	delete(orig, "member")
-	delete(norm, "uniqueMember")
-	delete(orig, "uniqueMember")
+	// Remove attributes to reduce attrs_orig column size
+	removeComputedAttrs(orig)
 
-	delete(norm, "entryUUID")
-	delete(orig, "entryUUID")
+	// Convert the value of member and uniqueMamber attributes, DN => int64
+	if err := m.dnArrayToIDArray(tx, norm, "member"); err != nil {
+		return nil, err
+	}
+	if err := m.dnArrayToIDArray(tx, norm, "uniqueMember"); err != nil {
+		return nil, err
+	}
+
+	updated := time.Now()
+	norm["modifyTimestamp"] = []int64{updated.Unix()}
+	orig["modifyTimestamp"] = []string{updated.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 
 	bNorm, _ := json.Marshal(norm)
 	bOrig, _ := json.Marshal(orig)
 
-	updated := time.Now()
-
 	dbEntry := &DBEntry{
-		ID:        entry.dbEntryId,
+		ID:        entry.dbEntryID,
 		Updated:   updated,
 		AttrsNorm: types.JSONText(string(bNorm)),
 		AttrsOrig: types.JSONText(string(bOrig)),
@@ -133,8 +184,8 @@ func (m *Mapper) ModifyEntryToAddEntry(entry *ModifyEntry) (*AddEntry, error) {
 	return add, nil
 }
 
-func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry, dnOrigCache map[int64]string) (*SearchEntry, error) {
-	if !dbEntry.IsDC() && dbEntry.DNOrig == "" {
+func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry, IdToDNOrigCache map[int64]string) (*SearchEntry, error) {
+	if dbEntry.DNOrig == "" {
 		log.Printf("error: Invalid state. FetchedDBEntiry mush have DNOrig always...")
 		return nil, NewUnavailable()
 	}
@@ -143,24 +194,27 @@ func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry, dnOrigCach
 	if err != nil {
 		return nil, err
 	}
-	orig := dbEntry.GetAttrsOrig()
-	orig["entryUUID"] = []string{dbEntry.EntryUUID}
-	orig["createTimestamp"] = []string{dbEntry.Created.In(time.UTC).Format(TIMESTAMP_FORMAT)}
-	orig["modifyTimestamp"] = []string{dbEntry.Updated.In(time.UTC).Format(TIMESTAMP_FORMAT)}
+	orig := dbEntry.AttrsOrig()
+	// orig["entryUUID"] = []string{dbEntry.EntryUUID}
+	// orig["createTimestamp"] = []string{dbEntry.Created.In(time.UTC).Format(TIMESTAMP_FORMAT)}
+	// orig["modifyTimestamp"] = []string{dbEntry.Updated.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 
 	// member
-	members, err := dbEntry.Members(dnOrigCache, m.server.SuffixOrigStr())
+	members, err := dbEntry.Member(m.server.repo, IdToDNOrigCache)
 	if err != nil {
 		log.Printf("warn: Invalid state. FetchedDBEntiry cannot resolve member DN. err: %+v", err)
 		// TODO busy?
 		return nil, NewUnavailable()
 	}
-	for k, v := range members {
-		orig[k] = v
+	if len(members) > 0 {
+		orig["member"] = members
 	}
+	// for k, v := range members {
+	// 	orig[k] = v
+	// }
 
 	// memberOf
-	memberOfs, err := dbEntry.MemberOfs(dnOrigCache, m.server.SuffixOrigStr())
+	memberOfs, err := dbEntry.MemberOf(m.server.repo, IdToDNOrigCache)
 	if err != nil {
 		log.Printf("warn: Invalid state. FetchedDBEntiry cannot resolve memberOf DN. err: %+v", err)
 		// TODO busy?
@@ -178,24 +232,21 @@ func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry, dnOrigCach
 	return readEntry, nil
 }
 
-func (m *Mapper) FetchedDBEntryToModifyEntry(dbEntry *FetchedDBEntry, dnOrigCache map[int64]string) (*ModifyEntry, error) {
+func (m *Mapper) FetchedEntryToModifyEntry(dbEntry *FetchedEntry) (*ModifyEntry, error) {
 	dn, err := m.normalizeDN(dbEntry.DNOrig)
 	if err != nil {
 		return nil, err
 	}
 	orig := dbEntry.GetAttrsOrig()
 
-	members, err := dbEntry.Members(dnOrigCache, "") // For modification, don't need suffix
-	for k, v := range members {
-		orig[k] = v
-	}
-
 	entry, err := NewModifyEntry(dn, orig)
 	if err != nil {
 		return nil, err
 	}
-	entry.dbEntryId = dbEntry.ID
+	entry.dbEntryID = dbEntry.ID
 	entry.dbParentID = dbEntry.ParentID
+	entry.hasSub = dbEntry.HasSub
+	entry.path = dbEntry.Path
 
 	return entry, nil
 }

@@ -24,14 +24,14 @@ func handleSearchDSE(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	// e.AddAttribute("namingContexts", "ou=system", "ou=schema", "dc=example,dc=com", "ou=config")
 
 	searchEntry := NewSearchEntry(nil, map[string][]string{
-		"objectClass":          []string{"top"},
-		"subschemaSubentry":    []string{"cn=Subschema"},
-		"namingContexts":       []string{s.GetSuffix()},
-		"supportedLDAPVersion": []string{"3"},
-		"supportedFeatures": []string{
+		"objectClass":          {"top"},
+		"subschemaSubentry":    {"cn=Subschema"},
+		"namingContexts":       {s.GetSuffix()},
+		"supportedLDAPVersion": {"3"},
+		"supportedFeatures": {
 			"1.3.6.1.4.1.4203.1.5.1",
 		},
-		"supportedControl": []string{
+		"supportedControl": {
 			"1.2.840.113556.1.4.319",
 		},
 	})

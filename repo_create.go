@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"strconv"
-	"strings"
 
 	"github.com/jmoiron/sqlx"
 	"golang.org/x/xerrors"
@@ -16,90 +14,85 @@ func (r *Repository) Insert(entry *AddEntry) (int64, error) {
 }
 
 func (r *Repository) insertWithTx(tx *sqlx.Tx, entry *AddEntry) (int64, error) {
-	if !entry.IsDC() {
-		has, err := r.hasParent(tx, entry.DN())
-		if err != nil {
-			tx.Rollback()
-			return 0, err
-		}
-		if !has {
-			tx.Rollback()
-			// TODO
-			// return 0, NewNoSuchObjectWithMatchedDN(entry.DN().DNNormStr())
-			return 0, NewNoSuchObject()
-		}
-	}
+	var err error
+	var newID int64
 
-	newID, parentID, err := r.insertEntry(tx, entry)
+	if entry.dn.IsRoot() {
+		newID, err = r.insertRootEntry(tx, entry)
+	} else {
+		newID, _, err = r.insertEntryAndTree(tx, entry)
+	}
 	if err != nil {
-		tx.Rollback()
+		rollback(tx)
 		return 0, err
 	}
 
-	err = insertTree(tx, newID, parentID, entry)
+	err = tx.Commit()
 	if err != nil {
-		tx.Rollback()
-		return 0, err
+		rollback(tx)
+		return 0, NewUnavailable()
 	}
-
-	err = r.insertMember(tx, newID, entry)
-	if err != nil {
-		tx.Rollback()
-		return 0, err
-	}
-
-	tx.Commit()
 	return newID, nil
 }
 
-func (r *Repository) hasParent(tx *sqlx.Tx, dn *DN) (bool, error) {
-	_, err := r.FindByDN(tx, dn.ParentDN(), &FindOption{Lock: true})
-	if err != nil {
-		if isNoResult(err) {
-			return false, nil
-		}
-		return false, xerrors.Errorf("Failed to find parent by DN: %s, err: %w", dn.DNNormStr(), err)
+func (r *Repository) insertEntryAndTree(tx *sqlx.Tx, entry *AddEntry) (int64, int64, error) {
+	if entry.DN().IsRoot() {
+		return 0, 0, xerrors.Errorf("Invalid entry, it should not be root DN. DN: %v", entry.dn)
 	}
 
-	return true, nil
-}
-
-func (r *Repository) insertEntry(tx *sqlx.Tx, entry *AddEntry) (int64, int64, error) {
-	if entry.IsDC() {
-		return r.insertDCEntry(tx, entry)
-	}
-
-	if entry.ParentDN().IsDC() {
-		return r.insertUnderDCEntry(tx, entry)
-	}
-
-	dbEntry, err := mapper.AddEntryToDBEntry(entry)
+	newID, parentId, err := r.insertEntry(tx, entry)
 	if err != nil {
 		return 0, 0, err
 	}
 
-	pq, params := r.CreateFindByDNQuery(entry.ParentDN(), &FindOption{Lock: false})
+	// Now, the parent entry has a child
+	// Insert tree entry for the parent
+	err = r.insertTree(tx, parentId, entry.ParentDN().IsRoot())
+	if err != nil {
+		return 0, 0, err
+	}
 
-	q := fmt.Sprintf(`INSERT INTO ldap_entry (parent_id, rdn_norm, rdn_orig, uuid, created, updated, attrs_norm, attrs_orig)
-		SELECT p.id AS parent_id, :rdn_norm, :rdn_orig, :uuid, :created, :updated, :attrs_norm, :attrs_orig
+	return newID, parentId, nil
+}
+
+func (r *Repository) insertEntry(tx *sqlx.Tx, entry *AddEntry) (int64, int64, error) {
+	if entry.DN().IsRoot() {
+		return 0, 0, xerrors.Errorf("Invalid entry, it should not be root DN. DN: %v", entry.dn)
+	}
+
+	dbEntry, err := mapper.AddEntryToDBEntry(tx, entry)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	params := createFindTreePathByDNParams(entry.ParentDN())
+	params["rdn_norm"] = entry.RDNNorm()
+	params["rdn_orig"] = entry.RDNOrig()
+	params["attrs_norm"] = dbEntry.AttrsNorm
+	params["attrs_orig"] = dbEntry.AttrsOrig
+
+	// When inserting new entry, we need to lock the parent DN entry while the processing
+	// because there is a chance other thread deletes the parent DN entry before the inserting if no lock.
+	findParentDNByDN, err := createFindBasePathByDNSQL(entry.ParentDN(), &FindOption{Lock: true})
+	if err != nil {
+		return 0, 0, xerrors.Errorf("Failed to create findTreePathByDN sql, err: %w", err)
+	}
+
+	q := fmt.Sprintf(`
+		INSERT INTO ldap_entry (parent_id, rdn_norm, rdn_orig, attrs_norm, attrs_orig)
+		SELECT p.id AS parent_id, :rdn_norm, :rdn_orig, :attrs_norm, :attrs_orig
 			FROM (%s) p
-			WHERE NOT EXISTS (SELECT id FROM ldap_entry WHERE parent_id = p.id AND rdn_norm = :rdn_norm)
-		RETURNING id, parent_id`, pq)
+			WHERE NOT EXISTS (
+				SELECT id FROM ldap_entry WHERE parent_id = p.id AND rdn_norm = :rdn_norm
+			)
+		RETURNING id, parent_id`, findParentDNByDN)
 
-	log.Printf("insert query: %s, params: %v", q, params)
+	log.Printf("insert entry query:\n%s\nparams:\n%v", q, params)
 
 	stmt, err := tx.PrepareNamed(q)
 	if err != nil {
-		return 0, 0, xerrors.Errorf("Failed to prepare query. query: %s, err: %w", err)
+		return 0, 0, xerrors.Errorf("Failed to prepare insert query. query: %s, err: %w", q, err)
 	}
-
-	params["rdn_norm"] = entry.RDNNorm()
-	params["rdn_orig"] = entry.RDNOrig()
-	params["uuid"] = dbEntry.EntryUUID
-	params["created"] = dbEntry.Created
-	params["updated"] = dbEntry.Updated
-	params["attrs_norm"] = dbEntry.AttrsNorm
-	params["attrs_orig"] = dbEntry.AttrsOrig
 
 	rows, err := tx.NamedStmt(stmt).Queryx(params)
 	if err != nil {
@@ -108,34 +101,114 @@ func (r *Repository) insertEntry(tx *sqlx.Tx, entry *AddEntry) (int64, int64, er
 	defer rows.Close()
 
 	var id int64
-	var parentID int64
+	var parentId int64
 	if rows.Next() {
-		rows.Scan(&id, &parentID)
+		err := rows.Scan(&id, &parentId)
+		if err != nil {
+			return 0, 0, xerrors.Errorf("Failed to scan. entry: %v, err: %w", entry, err)
+		}
 	} else {
-		log.Printf("debug: Already exists. parentID: %d, rdn_norm: %s", parentID, entry.RDNNorm())
+		log.Printf("debug: The new entry already exists. parentId: %d, rdn_norm: %s", parentId, entry.RDNNorm())
 		return 0, 0, NewAlreadyExists()
 	}
 
-	return id, parentID, nil
+	return id, parentId, nil
 }
 
-func (r *Repository) insertDCEntry(tx *sqlx.Tx, entry *AddEntry) (int64, int64, error) {
-	dbEntry, err := mapper.AddEntryToDBEntry(entry)
+func (r *Repository) insertTree(tx *sqlx.Tx, id int64, isRoot bool) error {
+	var q string
+	if isRoot {
+		q = `
+			INSERT INTO ldap_tree (id, path)
+			SELECT :id, :id as path
+			WHERE NOT EXISTS (
+				SELECT id FROM ldap_tree WHERE id = :id
+			)
+			RETURNING id, path
+	`
+	} else {
+		q = `
+			INSERT INTO ldap_tree (id, path)
+			SELECT :id, p.path || :id as path
+			FROM (
+				SELECT
+					t.id, t.path
+				FROM
+					ldap_tree t, ldap_entry e
+				WHERE 
+					e.id = :id AND e.parent_id = t.id
+			) p
+			WHERE NOT EXISTS (
+				SELECT id FROM ldap_tree WHERE id = :id
+			)
+			RETURNING id, path
+		`
+	}
+	params := map[string]interface{}{}
+	params["id"] = id
+
+	log.Printf("insert tree query:\n%s\nparams:\n%v", q, params)
+
+	stmt, err := tx.PrepareNamed(q)
 	if err != nil {
-		return 0, 0, err
+		return xerrors.Errorf("Failed to prepare insert tree entry query. query: %s, params: %v, err: %w", q, params, err)
 	}
 
-	rows, err := tx.NamedStmt(insertDCStmt).Queryx(map[string]interface{}{
-		"rdn_norm":   entry.RDNNorm(),
-		"rdn_orig":   entry.RDNOrig(),
-		"uuid":       dbEntry.EntryUUID,
-		"created":    dbEntry.Created,
-		"updated":    dbEntry.Updated,
-		"attrs_norm": dbEntry.AttrsNorm,
-		"attrs_orig": dbEntry.AttrsOrig,
-	})
+	rows, err := tx.NamedStmt(stmt).Queryx(params)
 	if err != nil {
-		return 0, 0, xerrors.Errorf("Failed to insert DC entry record. DC entry: %v, err: %w", entry, err)
+		return xerrors.Errorf("Failed to insert tree entry record. query: %s, params: %v, err: %w", q, params, err)
+	}
+	defer rows.Close()
+
+	var newTreeID int64
+	var path string
+	if rows.Next() {
+		err := rows.Scan(&newTreeID, &path)
+		if err != nil {
+			return xerrors.Errorf("Failed to scan. id: %d, err: %w", id, err)
+		}
+		log.Printf("debug: Inserted new tree entry. id: %d, path: %s", newTreeID, path)
+	} else {
+		log.Printf("debug: The tree entry already exists. id: %d", id)
+	}
+
+	return nil
+}
+
+func (r *Repository) insertRootEntry(tx *sqlx.Tx, entry *AddEntry) (int64, error) {
+	if !entry.DN().IsRoot() {
+		return 0, xerrors.Errorf("Invalid entry, it should be root DN. DN: %v", entry.dn)
+	}
+
+	dbEntry, err := mapper.AddEntryToDBEntry(tx, entry)
+	if err != nil {
+		return 0, err
+	}
+
+	params := map[string]interface{}{}
+	params["rdn_norm"] = entry.RDNNorm()
+	params["rdn_orig"] = entry.RDNOrig()
+	params["attrs_norm"] = dbEntry.AttrsNorm
+	params["attrs_orig"] = dbEntry.AttrsOrig
+
+	q := `
+		INSERT INTO ldap_entry (parent_id, rdn_norm, rdn_orig, attrs_norm, attrs_orig)
+		SELECT NULL as parent_id, :rdn_norm, :rdn_orig, :attrs_norm, :attrs_orig
+		WHERE NOT EXISTS (
+			SELECT id FROM ldap_entry WHERE parent_id IS NULL AND rdn_norm = :rdn_norm
+		)
+		RETURNING id`
+
+	log.Printf("insert root entry query:\n%s\nparams:\n%v", q, params)
+
+	stmt, err := tx.PrepareNamed(q)
+	if err != nil {
+		return 0, xerrors.Errorf("Failed to prepare insert root query. query: %s, err: %w", q, err)
+	}
+
+	rows, err := tx.NamedStmt(stmt).Queryx(params)
+	if err != nil {
+		return 0, xerrors.Errorf("Failed to insert root entry record. entry: %v, err: %w", entry, err)
 	}
 	defer rows.Close()
 
@@ -143,239 +216,12 @@ func (r *Repository) insertDCEntry(tx *sqlx.Tx, entry *AddEntry) (int64, int64, 
 	if rows.Next() {
 		err := rows.Scan(&id)
 		if err != nil {
-			return 0, 0, xerrors.Errorf("Failed to scan returning id. err: %w", err)
+			return 0, xerrors.Errorf("Failed to scan result of the new root entry. entry: %v, err: %w", entry, err)
 		}
 	} else {
-		log.Printf("warn: Already exists. parentID: %d, rdn_norm: %s", ROOT_ID, entry.RDNNorm())
-		return 0, 0, NewAlreadyExists()
+		log.Printf("debug: The root entry already exists. rdn_norm: %s", entry.RDNNorm())
+		return 0, NewAlreadyExists()
 	}
 
-	return id, ROOT_ID, nil
-}
-
-func (r *Repository) insertUnderDCEntry(tx *sqlx.Tx, entry *AddEntry) (int64, int64, error) {
-	dbEntry, err := mapper.AddEntryToDBEntry(entry)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	rows, err := tx.NamedStmt(insertUnderDCStmt).Queryx(map[string]interface{}{
-		"rdn_norm":   entry.RDNNorm(),
-		"rdn_orig":   entry.RDNOrig(),
-		"uuid":       dbEntry.EntryUUID,
-		"created":    dbEntry.Created,
-		"updated":    dbEntry.Updated,
-		"attrs_norm": dbEntry.AttrsNorm,
-		"attrs_orig": dbEntry.AttrsOrig,
-	})
-	if err != nil {
-		return 0, 0, xerrors.Errorf("Failed to insert entry record. entry: %v, err: %w", entry, err)
-	}
-	defer rows.Close()
-
-	var id int64
-	var parentID int64
-	if rows.Next() {
-		err := rows.Scan(&id, &parentID)
-		if err != nil {
-			return 0, 0, xerrors.Errorf("Failed to scan returning id. err: %w", err)
-		}
-	} else {
-		log.Printf("warn: Already exists. dn: %s", entry.DN().DNOrigStr())
-		return 0, 0, NewAlreadyExists()
-	}
-
-	return id, parentID, nil
-}
-
-func insertTree(tx *sqlx.Tx, id, parentID int64, entry *AddEntry) error {
-	if entry.IsContainer() {
-		_, err := tx.NamedStmt(insertTreeStmt).Exec(map[string]interface{}{
-			"id":        id,
-			"parent_id": parentID,
-			"rdn_norm":  entry.dn.RDNNormStr(),
-			"rdn_orig":  entry.dn.RDNOrigStr(),
-		})
-		if err != nil {
-			return xerrors.Errorf("Failed to insert tree record. parent_id: %d, rdn_norm: %s err: %w",
-				parentID, entry.RDNNorm(), err)
-		}
-	}
-	return nil
-}
-
-func (r *Repository) insertMember(tx *sqlx.Tx, subjectID int64, entry *AddEntry) error {
-	members := entry.Member()
-	if len(members) == 0 {
-		log.Printf("The new entry doesn't have member attributes. DN: %s", entry.DN().DNOrigStr())
-		return nil
-	}
-
-	// First, cache all parent IDs
-	// TODO should optimize if ldap_tree tables is too big
-	dc, err := getDCDNOrig(tx)
-	if err != nil {
-		return err
-	}
-	dnIDCache := map[string]int64{} // dn_orig => id cache map
-	dnIDCache[dc.DNOrig] = dc.ID
-
-	nodeNorms, err := collectNodeNormByParentID(tx, dc.ID)
-	if err != nil {
-		return err
-	}
-
-	for _, node := range nodeNorms {
-		dnIDCache[node.DNNorm] = node.ID
-	}
-
-	max := 100
-	gcount := len(members) / max
-	remain := len(members) % max
-
-	for i := 0; i < gcount; i++ {
-		start := i * max
-		m := members[start : start+max]
-		r.insertSubMembers(tx, subjectID, entry.DN(), m, dnIDCache)
-	}
-
-	if remain > 0 {
-		start := gcount * max
-		m := members[start : start+remain]
-		r.insertSubMembers(tx, subjectID, entry.DN(), m, dnIDCache)
-	}
-
-	return nil
-}
-
-func (r *Repository) insertSubMembers(tx *sqlx.Tx, subjectID int64, dn *DN, members []*MemberEntry, dnIDCache map[string]int64) error {
-	// Resolve IDs from memberOfDNs
-	dns := make([]string, len(members))
-	where := make([]string, len(members))
-	params := make(map[string]interface{}, len(members))
-
-	memberTypeCache := map[string]string{}
-
-	for i, m := range members {
-		dns[i] = m.MemberOfDNNorm
-
-		dn, err := r.server.NormalizeDN(m.MemberOfDNNorm)
-		if err != nil {
-			log.Printf("info: Invalid member DN sintax. DN: %s, %s DN: %s", dn.DNOrigStr(), m.AttrNameNorm, m.MemberOfDNNorm)
-			return NewInvalidDNSyntax()
-		}
-		parent := dn.ParentDN()
-		parentID, ok := dnIDCache[parent.DNNormStr()]
-		if !ok {
-			log.Printf("info: Not found member DN. DN: %s, %s DN: %s", dn.DNOrigStr(), m.AttrNameNorm, m.MemberOfDNNorm)
-			return NewInvalidDNSyntax()
-		}
-		where[i] = fmt.Sprintf("(parent_id = :parent_id_%d AND rdn_norm = :rdn_norm_%d)", i, i)
-		params[fmt.Sprintf("parent_id_%d", i)] = parentID
-		params[fmt.Sprintf("rdn_norm_%d", i)] = dn.RDNNormStr()
-
-		// cache
-		memberTypeCache[fmt.Sprintf("%d_%s", parentID, dn.RDNNormStr())] = m.AttrNameNorm
-	}
-
-	log.Printf("debug: Fetch start")
-
-	query := fmt.Sprintf("SELECT id, parent_id, rdn_norm FROM ldap_entry WHERE %s", strings.Join(where, " OR "))
-
-	rows, err := tx.NamedQuery(query, params)
-	if err != nil {
-		return xerrors.Errorf("Failed to fetch member's id. err: %w", err)
-	}
-
-	defer rows.Close()
-
-	values := make([]string, len(where))
-	params = make(map[string]interface{}, len(where))
-	count := 0
-
-	for rows.Next() {
-		var id int64
-		var parentID int64
-		var rdnNorm string
-		err := rows.Scan(&id, &parentID, &rdnNorm)
-		if err != nil {
-			return xerrors.Errorf("Failed to scan member's id. err: %w", err)
-		}
-		memberType, ok := memberTypeCache[fmt.Sprintf("%d_%s", parentID, rdnNorm)]
-		if !ok {
-			return xerrors.Errorf("Failed to fetch member's id. err: %w", err)
-		}
-		k1 := "a_" + strconv.Itoa(count)
-		k2 := "o_" + strconv.Itoa(count)
-		values[count] = fmt.Sprintf("(%d, :%s, :%s)", subjectID, k1, k2)
-		params[k1] = memberType
-		params[k2] = id
-
-		count++
-	}
-	log.Printf("debuginfo: Fetch end")
-
-	// Not found the member DN
-	if count != len(dns) {
-		log.Printf("warn: Invalid member DN. member dn: %v, values: %v", dns, values)
-		return NewInvalidDNSyntax()
-	}
-
-	// work around
-	rows.Close()
-
-	log.Printf("debug: Insert start")
-
-	insert := fmt.Sprintf("INSERT INTO ldap_member VALUES %s", strings.Join(values, ", "))
-
-	_, err = tx.NamedExec(insert, params)
-	if err != nil {
-		return xerrors.Errorf("Failed to bulk insert members. err: %w", err)
-	}
-
-	log.Printf("debug: Insert end")
-
-	return nil
-}
-
-type nordNorm struct {
-	ID     int64  `db:"id"`
-	DNNorm string `db:"dn_norm"`
-}
-
-func collectNodeNormByParentID(tx *sqlx.Tx, parentID int64) ([]*nordNorm, error) {
-	if parentID == ROOT_ID {
-		return nil, xerrors.Errorf("Invalid parentID: %d", parentID)
-	}
-
-	var rows *sqlx.Rows
-	var err error
-	if tx != nil {
-		rows, err = tx.NamedStmt(collectNodeNormByParentIDStmt).Queryx(map[string]interface{}{
-			"parent_id": parentID,
-		})
-	} else {
-		rows, err = collectNodeNormByParentIDStmt.Queryx(map[string]interface{}{
-			"parent_id": parentID,
-		})
-	}
-	if err != nil {
-		return nil, xerrors.Errorf("Failed to fetch child ID by parentID: %s, err: %w", parentID, err)
-	}
-	defer rows.Close()
-
-	list := []*nordNorm{}
-	for rows.Next() {
-		child := nordNorm{}
-		rows.StructScan(&child)
-		list = append(list, &child)
-	}
-
-	err = rows.Err()
-	if err != nil {
-		log.Printf("error: Search children error: %#v", err)
-		return nil, err
-	}
-
-	return list, nil
+	return id, nil
 }

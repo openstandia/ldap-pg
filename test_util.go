@@ -43,8 +43,7 @@ func IntegrationTestRunner(m *testing.M) int {
 		}
 	}()
 
-	// createTablesIfNotExist()
-	//truncateTables()
+	// truncateTables()
 
 	// SetupDefaultFixtures()
 
@@ -139,16 +138,18 @@ func (c Bind) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 	return conn, err
 }
 
-func AddDC() Add {
+func AddDC(dc string, parents ...string) Add {
 	type A []string
 	type M map[string][]string
 
+	parentDN := strings.Join(parents, ",")
+
 	return Add{
-		"",
-		"",
+		"dc=" + dc,
+		parentDN,
 		M{
 			"objectClass": A{"top", "dcObject", "organization"},
-			"o":           A{"Example Inc."},
+			"o":           A{dc},
 		},
 		nil,
 	}
@@ -199,12 +200,13 @@ type ModifyDelete struct {
 }
 
 type ModifyDN struct {
-	rdn    string
-	baseDN string
-	newRDN string
-	delOld bool
-	newSup string
-	assert *AssertRename
+	rdn           string
+	baseDN        string
+	newRDN        string
+	delOld        bool
+	newSup        string
+	moveContainer bool
+	assert        *AssertRename
 }
 
 type Delete struct {
@@ -248,19 +250,27 @@ func (s Search) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 	return conn, nil
 }
 
-func (a Add) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
-	var dn string
-	if a.rdn == "" {
-		dn = server.GetSuffix()
-	} else if a.baseDN != "" {
-		dn = fmt.Sprintf("%s,%s,%s", a.rdn, a.baseDN, server.GetSuffix())
-	} else {
-		dn = fmt.Sprintf("%s,%s", a.rdn, server.GetSuffix())
+func resolveDN(rdn, baseDN string) string {
+	dn := rdn
+	if baseDN != "" {
+		dn = rdn + `,` + baseDN
 	}
+	if !strings.HasPrefix(strings.ToLower(rdn), "dc=") {
+		dn = dn + `,` + server.GetSuffix()
+	}
+	return dn
+}
+
+func (a Add) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
+	dn := resolveDN(a.rdn, a.baseDN)
+
 	add := ldap.NewAddRequest(dn, nil)
 	for k, v := range a.attrs {
 		add.Attribute(k, v)
 	}
+
+	log.Printf("info: Exec add operation: %v", add)
+
 	err := conn.Add(add)
 
 	if a.assert != nil {
@@ -270,16 +280,15 @@ func (a Add) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 }
 
 func (m ModifyAdd) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
-	var dn string
-	if m.baseDN != "" {
-		dn = fmt.Sprintf("%s,%s,%s", m.rdn, m.baseDN, server.GetSuffix())
-	} else {
-		dn = fmt.Sprintf("%s,%s", m.rdn, server.GetSuffix())
-	}
+	dn := resolveDN(m.rdn, m.baseDN)
+
 	modify := ldap.NewModifyRequest(dn, nil)
 	for k, v := range m.attrs {
 		modify.Add(k, v)
 	}
+
+	log.Printf("info: Exec modify(add) operation: %v", modify)
+
 	err := conn.Modify(modify)
 
 	if m.assert != nil {
@@ -289,16 +298,15 @@ func (m ModifyAdd) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 }
 
 func (m ModifyReplace) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
-	var dn string
-	if m.baseDN != "" {
-		dn = fmt.Sprintf("%s,%s,%s", m.rdn, m.baseDN, server.GetSuffix())
-	} else {
-		dn = fmt.Sprintf("%s,%s", m.rdn, server.GetSuffix())
-	}
+	dn := resolveDN(m.rdn, m.baseDN)
+
 	modify := ldap.NewModifyRequest(dn, nil)
 	for k, v := range m.attrs {
 		modify.Replace(k, v)
 	}
+
+	log.Printf("info: Exec modify(replace) operation: %v", modify)
+
 	err := conn.Modify(modify)
 
 	if m.assert != nil {
@@ -308,16 +316,15 @@ func (m ModifyReplace) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 }
 
 func (m ModifyDelete) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
-	var dn string
-	if m.baseDN != "" {
-		dn = fmt.Sprintf("%s,%s,%s", m.rdn, m.baseDN, server.GetSuffix())
-	} else {
-		dn = fmt.Sprintf("%s,%s", m.rdn, server.GetSuffix())
-	}
+	dn := resolveDN(m.rdn, m.baseDN)
+
 	modify := ldap.NewModifyRequest(dn, nil)
 	for k, v := range m.attrs {
 		modify.Delete(k, v)
 	}
+
+	log.Printf("info: Exec modify(delete) operation: %v", modify)
+
 	err := conn.Modify(modify)
 
 	if m.assert != nil {
@@ -327,29 +334,31 @@ func (m ModifyDelete) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 }
 
 func (m ModifyDN) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
-	var dn string
-	if m.baseDN != "" {
-		dn = fmt.Sprintf("%s,%s,%s", m.rdn, m.baseDN, server.GetSuffix())
-	} else {
-		dn = fmt.Sprintf("%s,%s", m.rdn, server.GetSuffix())
+	dn := resolveDN(m.rdn, m.baseDN)
+	var newSup = m.newSup
+	if newSup != "" {
+		newSup = newSup + "," + server.GetSuffix()
 	}
-	modifyDN := ldap.NewModifyDNRequest(dn, m.newRDN, m.delOld, m.newSup)
+
+	modifyDN := ldap.NewModifyDNRequest(dn, m.newRDN, m.delOld, newSup)
+
+	log.Printf("info: Exec modifyDN operation: %v", modifyDN)
+
 	err := conn.ModifyDN(modifyDN)
 
 	if m.assert != nil {
-		err = m.assert.AssertRename(conn, err, m.rdn, m.newRDN, m.baseDN, m.delOld, m.newSup)
+		err = m.assert.AssertRename(conn, err, m.rdn, m.newRDN, m.baseDN, m.delOld, m.newSup, m.moveContainer)
 	}
 	return conn, err
 }
 
 func (d Delete) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
-	var dn string
-	if d.baseDN != "" {
-		dn = fmt.Sprintf("%s,%s,%s", d.rdn, d.baseDN, server.GetSuffix())
-	} else {
-		dn = fmt.Sprintf("%s,%s", d.rdn, server.GetSuffix())
-	}
+	dn := resolveDN(d.rdn, d.baseDN)
+
 	del := ldap.NewDelRequest(dn, nil)
+
+	log.Printf("info: Exec delete operation: %v", del)
+
 	err := conn.Del(del)
 
 	if d.assert != nil {
@@ -494,28 +503,81 @@ func (s AssertSearchOne) AssertSearch(conn *ldap.Conn, err error) error {
 type AssertRename struct {
 }
 
-func (s AssertRename) AssertRename(conn *ldap.Conn, err error, oldRDN, newRDN, baseDN string, delOld bool, newSup string) error {
+func (s AssertRename) AssertRename(conn *ldap.Conn, err error, oldRDN, newRDN, baseDN string, delOld bool, newSup string, moveContainer bool) error {
 	if err != nil {
 		return xerrors.Errorf("Unexpected error response when previous operation. err: %w", err)
 	}
 
-	sr, err := searchEntry(conn, "", baseDN, ldap.ScopeWholeSubtree, fmt.Sprintf("(%s)", oldRDN), nil)
-	if delOld {
-		if err != nil && !ldap.IsErrorWithCode(err, 32) {
-			return xerrors.Errorf("Unexpected error when searching the old entry. err: %w", err)
+	sr, err := searchEntry(conn, oldRDN, baseDN, ldap.ScopeWholeSubtree, "(objectClass=*)", nil)
+
+	if newSup == "" {
+		if oldRDN == newRDN {
+			// No RDN change case, should returns 1 entry
+			if err != nil {
+				return xerrors.Errorf("Unexpected error when searching the renamed entry. err: %w", err)
+			}
+			if len(sr.Entries) != 1 {
+				return xerrors.Errorf("Unexpected new renamed count. want = [1] got = %d", len(sr.Entries))
+			}
+		} else {
+			// RDN change case, should returns no such entry error (32)
+			if err == nil {
+				return xerrors.Errorf("Unexpected error. err: %v", err)
+			}
+			if !ldap.IsErrorWithCode(err, 32) {
+				return xerrors.Errorf("Unexpected error when searching the old entry. err: %w", err)
+			}
+		}
+
+		sr, err = searchEntry(conn, newRDN, baseDN, ldap.ScopeWholeSubtree, "(objectClass=*)", nil)
+		if err != nil {
+			return xerrors.Errorf("Unexpected error when searching the renamed entry. err: %w", err)
+		}
+		if len(sr.Entries) != 1 {
+			return xerrors.Errorf("Unexpected new renamed count. want = [1] got = %d", len(sr.Entries))
+		}
+
+		or := strings.Split(oldRDN, "=")
+		actualRDNs := sr.Entries[0].GetAttributeValues(or[0])
+		for _, v := range actualRDNs {
+			if v == or[1] {
+				if oldRDN != newRDN && delOld {
+					return xerrors.Errorf("Unexpected old rdn. want deleted got = %s", v)
+				}
+			}
 		}
 	} else {
-		if len(sr.Entries) != 1 {
-			return xerrors.Errorf("Unexpected old entry count. want = [1] got = %d", len(sr.Entries))
+		// Move case, should returns no such entry error (32) for old entry
+		if err == nil {
+			return xerrors.Errorf("Unexpected error. err: %v", err)
 		}
-	}
+		if !ldap.IsErrorWithCode(err, 32) {
+			return xerrors.Errorf("Unexpected error when searching the old entry. err: %w", err)
+		}
 
-	sr, err = searchEntry(conn, "", baseDN, ldap.ScopeWholeSubtree, fmt.Sprintf("(%s)", newRDN), nil)
-	if err != nil {
-		return xerrors.Errorf("Unexpected error when searching the renamed entry. err: %w", err)
-	}
-	if len(sr.Entries) != 1 {
-		return xerrors.Errorf("Unexpected new renamed count. want = [1] got = %d", len(sr.Entries))
+		sr, err = searchEntry(conn, newRDN, newSup, ldap.ScopeWholeSubtree, "(objectClass=*)", nil)
+		if err != nil {
+			return xerrors.Errorf("Unexpected error when searching the renamed entry. err: %w", err)
+		}
+
+		if !moveContainer {
+			if len(sr.Entries) != 1 {
+				return xerrors.Errorf("Unexpected new renamed count. want = [1] got = %d", len(sr.Entries))
+			}
+			or := strings.Split(oldRDN, "=")
+			actualRDNs := sr.Entries[0].GetAttributeValues(or[0])
+			for _, v := range actualRDNs {
+				if v == or[1] {
+					if oldRDN != newRDN && delOld {
+						return xerrors.Errorf("Unexpected old rdn. want deleted got = %s", v)
+					}
+				}
+			}
+		} else {
+			if len(sr.Entries) == 0 {
+				return xerrors.Errorf("Unexpected new renamed count. want >= [1] got = %d", len(sr.Entries))
+			}
+		}
 	}
 	// TODO support newSup
 	return nil
@@ -566,6 +628,11 @@ func searchEntry(c *ldap.Conn, rdn, baseDN string, scope int, filter string, att
 	if baseDN != "" {
 		bd = baseDN + "," + bd
 	}
+	if rdn != "" {
+		bd = rdn + "," + bd
+	}
+
+	log.Printf("debug: searchEntry %s", bd)
 
 	search := ldap.NewSearchRequest(
 		bd,
@@ -580,7 +647,9 @@ func searchEntry(c *ldap.Conn, rdn, baseDN string, scope int, filter string, att
 	)
 	sr, err := c.Search(search)
 	if err != nil {
-		log.Printf("error: search error: baseDN: %s, filter: %s", bd, filter)
+		if !ldap.IsErrorWithCode(err, 32) {
+			log.Printf("error: search error: baseDN: %s, filter: %s", bd, filter)
+		}
 		return nil, err
 	}
 
@@ -589,29 +658,35 @@ func searchEntry(c *ldap.Conn, rdn, baseDN string, scope int, filter string, att
 
 // You can boot the postgres server for tests using docker.
 //
-// docker run --rm -e POSTGRES_DB=ldap -e POSTGRES_USER=dev  -e POSTGRES_PASSWORD=dev -p 5432:5432 -v (pwd)/misc:/docker-entrypoint-initdb.d postgres:11-alpine \
-//   -c log_destination=stderr \
-//   -c log_statement=all \
-//   -c log_connections=on \
-//   -c log_disconnections=on
+/*
+docker run --rm -e POSTGRES_DB=ldap -e POSTGRES_USER=dev  -e POSTGRES_PASSWORD=dev -p 35432:5432 -v (pwd)/misc:/docker-entrypoint-initdb.d postgres:12-alpine \
+  -c log_destination=stderr \
+  -c log_statement=all \
+  -c log_connections=on \
+  -c log_disconnections=on
+*/
+
+var testPGPort int = 35432
 
 func setupLDAPServer() *Server {
 	go func() {
 		server = NewServer(&ServerConfig{
-			DBHostName:     "localhost",
-			DBPort:         5432,
-			DBName:         "ldap",
-			DBUser:         "dev",
-			DBPassword:     "dev",
-			DBMaxOpenConns: 2,
-			DBMaxIdleConns: 1,
-			Suffix:         "dc=example,dc=com",
-			RootDN:         "cn=Manager,dc=example,dc=com",
-			RootPW:         "secret",
-			BindAddress:    "127.0.0.1:8389",
-			LogLevel:       "warn",
-			PProfServer:    "127.0.0.1:10000",
-			GoMaxProcs:     0,
+			DBHostName:      "localhost",
+			DBPort:          testPGPort,
+			DBName:          "ldap",
+			DBSchema:        "public",
+			DBUser:          "dev",
+			DBPassword:      "dev",
+			DBMaxOpenConns:  2,
+			DBMaxIdleConns:  1,
+			Suffix:          "dc=example,dc=com",
+			RootDN:          "cn=Manager,dc=example,dc=com",
+			RootPW:          "secret",
+			BindAddress:     "127.0.0.1:8389",
+			LogLevel:        "warn",
+			PProfServer:     "127.0.0.1:10000",
+			GoMaxProcs:      0,
+			QueryTranslator: "default",
 		})
 		server.Start()
 	}()
@@ -633,7 +708,9 @@ func setupLDAPServer() *Server {
 }
 
 func truncateTables() {
-	db, err := sql.Open("postgres", "host=127.0.0.1 port=5432 user=dev password=dev dbname=ldap sslmode=disable")
+	log.Printf("info: Truncate tables")
+
+	db, err := sql.Open("postgres", fmt.Sprintf("host=127.0.0.1 port=%d user=dev password=dev dbname=ldap sslmode=disable search_path=public", testPGPort))
 	if err != nil {
 		log.Fatal("db connection error:", err)
 	}
@@ -644,10 +721,6 @@ func truncateTables() {
 		log.Fatal("truncate table error:", err)
 	}
 	_, err = db.Exec("TRUNCATE ldap_tree")
-	if err != nil {
-		log.Fatal("truncate table error:", err)
-	}
-	_, err = db.Exec("TRUNCATE ldap_member")
 	if err != nil {
 		log.Fatal("truncate table error:", err)
 	}

@@ -1,12 +1,10 @@
 package main
 
 import (
-	"database/sql"
 	"fmt"
 	"log"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/jmoiron/sqlx/types"
@@ -16,111 +14,110 @@ import (
 type FetchedDBEntry struct {
 	ID              int64          `db:"id"`
 	ParentID        int64          `db:"parent_id"`
-	EntryUUID       string         `db:"uuid"`
-	Created         time.Time      `db:"created"`
-	Updated         time.Time      `db:"updated"`
 	RDNOrig         string         `db:"rdn_orig"`
-	AttrsOrig       types.JSONText `db:"attrs_orig"`
-	Member          types.JSONText `db:"member"`          // No real column in the table
-	MemberOf        types.JSONText `db:"member_of"`       // No real column in the table
+	RawAttrsOrig    types.JSONText `db:"attrs_orig"`
+	RawMember       types.JSONText `db:"member"`          // No real column in the table
+	RawUniqueMember types.JSONText `db:"uniquemember"`    // No real column in the table
+	RawMemberOf     types.JSONText `db:"member_of"`       // No real column in the table
 	HasSubordinates string         `db:"hassubordinates"` // No real column in the table
 	DNOrig          string         `db:"dn_orig"`         // No real clumn in t he table
 	Count           int32          `db:"count"`           // No real column in the table
-	ParentDNOrig    string         // No real column in t he table
+	ParentDNOrig    string         // No real column in the table
 }
 
-type FetchedMember struct {
-	RDNOrig      string `db:"r`
-	ParentID     int64  `db:"p`
-	AttrNameNorm string `db:"a`
-}
-
-func (e *FetchedDBEntry) IsDC() bool {
-	return e.ParentID == ROOT_ID
-}
-
-func (e *FetchedDBEntry) Members(dnOrigCache map[int64]string, suffix string) (map[string][]string, error) {
-	if len(e.Member) > 0 {
-		jsonMap := make(map[string][]string)
-		jsonArray := []map[string]string{}
-		err := e.Member.Unmarshal(&jsonArray)
-		if err != nil {
-			return nil, err
-		}
-		for _, m := range jsonArray {
-			v, ok := jsonMap[m["a"]]
-			if !ok {
-				v = []string{}
-			}
-			pid, err := strconv.ParseInt(m["p"], 10, 64)
-			if err != nil {
-				return nil, xerrors.Errorf("Invalid parent_id: %s", m["p"])
-			}
-			parentDNOrig, ok := dnOrigCache[pid]
-			if !ok {
-				return nil, xerrors.Errorf("No cached: %s", m["p"])
-			}
-
-			s := parentDNOrig
-			if suffix != "" {
-				if parentDNOrig == "" {
-					s = suffix
-				} else {
-					s += "," + suffix
-				}
-			}
-
-			v = append(v, m["r"]+","+s)
-
-			jsonMap[m["a"]] = v
-		}
-		return jsonMap, nil
+func (e *FetchedDBEntry) Member(repo *Repository, IdToDNOrigCache map[int64]string) ([]string, error) {
+	if len(e.RawMember) == 0 {
+		return nil, nil
 	}
-	return nil, nil
-}
 
-func (e *FetchedDBEntry) MemberOfs(dnOrigCache map[int64]string, suffix string) ([]string, error) {
-	if len(e.MemberOf) > 0 {
-		jsonArray := []map[string]string{}
-		err := e.MemberOf.Unmarshal(&jsonArray)
-		if err != nil {
-			return nil, err
-		}
-
-		dns := make([]string, len(jsonArray))
-
-		for i, m := range jsonArray {
-			pid, err := strconv.ParseInt(m["p"], 10, 64)
-			if err != nil {
-				return nil, xerrors.Errorf("Invalid parent_id: %s", m["p"])
-			}
-			parentDNOrig, ok := dnOrigCache[pid]
-			if !ok {
-				return nil, xerrors.Errorf("No cached: %s", m["p"])
-			}
-
-			var s string
-			if parentDNOrig == "" {
-				s = suffix
-			} else {
-				s = parentDNOrig + "," + suffix
-			}
-
-			dns[i] = m["r"] + "," + s
-		}
-		return dns, nil
+	jsonArray := [][]string{}
+	err := e.RawMember.Unmarshal(&jsonArray)
+	if err != nil {
+		return nil, err
 	}
-	return nil, nil
+	results := make([]string, len(jsonArray))
+
+	for i, m := range jsonArray {
+		// m[0]: parent_id
+		// m[1]: rdn_orig
+		parentId, err := strconv.ParseInt(m[0], 10, 64)
+		if err != nil {
+			return nil, xerrors.Errorf("Failed to parse parent_id: %s, err: %w", parentId, err)
+		}
+		rdnOrig := m[1]
+
+		parentDNOrig, ok := IdToDNOrigCache[parentId]
+		if !ok {
+			// TODO optimize
+			parentDN, err := repo.FindDNByID(nil, parentId, false)
+			if err != nil {
+				// TODO ignore no result
+				return nil, xerrors.Errorf("Failed to fetch by parent_id: %s, err: %w", parentId, err)
+			}
+			parentDNOrig = parentDN.DNOrig
+
+			// Cache
+			IdToDNOrigCache[parentId] = parentDN.DNOrig
+		}
+
+		results[i] = rdnOrig + `,` + parentDNOrig
+	}
+	return results, nil
 }
 
-func (e *FetchedDBEntry) GetAttrsOrig() map[string][]string {
-	if len(e.AttrsOrig) > 0 {
-		jsonMap := make(map[string][]string)
-		e.AttrsOrig.Unmarshal(&jsonMap)
+func (e *FetchedDBEntry) MemberOf(repo *Repository, IdToDNOrigCache map[int64]string) ([]string, error) {
+	if len(e.RawMemberOf) == 0 {
+		return nil, nil
+	}
 
-		if len(e.MemberOf) > 0 {
+	jsonArray := [][]string{}
+	err := e.RawMemberOf.Unmarshal(&jsonArray)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]string, len(jsonArray))
+
+	for i, m := range jsonArray {
+		// m[0]: parent_id
+		// m[1]: rdn_orig
+		parentId, err := strconv.ParseInt(m[0], 10, 64)
+		if err != nil {
+			return nil, xerrors.Errorf("Failed to parse parent_id: %s, err: %w", parentId, err)
+		}
+		rdnOrig := m[1]
+
+		parentDNOrig, ok := IdToDNOrigCache[parentId]
+		if !ok {
+			// TODO optimize
+			parentDN, err := repo.FindDNByID(nil, parentId, false)
+			if err != nil {
+				// TODO ignore no result
+				return nil, xerrors.Errorf("Failed to fetch by parent_id: %s, err: %w", parentId, err)
+			}
+			parentDNOrig = parentDN.DNOrig
+
+			// Cache
+			IdToDNOrigCache[parentId] = parentDN.DNOrig
+		}
+
+		results[i] = rdnOrig + `,` + parentDNOrig
+	}
+	return results, nil
+}
+
+func (e *FetchedDBEntry) AttrsOrig() map[string][]string {
+	if len(e.RawAttrsOrig) > 0 {
+		jsonMap := make(map[string][]string)
+		if err := e.RawAttrsOrig.Unmarshal(&jsonMap); err != nil {
+			log.Printf("erro: Unexpectd umarshal error: %s", err)
+		}
+
+		if len(e.RawMemberOf) > 0 {
 			jsonArray := []string{}
-			e.MemberOf.Unmarshal(&jsonArray)
+			if err := e.RawMemberOf.Unmarshal(&jsonArray); err != nil {
+				log.Printf("erro: Unexpectd umarshal error: %s", err)
+			}
 			jsonMap["memberOf"] = jsonArray
 		}
 
@@ -132,8 +129,8 @@ func (e *FetchedDBEntry) GetAttrsOrig() map[string][]string {
 func (e *FetchedDBEntry) Clear() {
 	e.ID = 0
 	e.DNOrig = ""
-	e.AttrsOrig = nil
-	e.MemberOf = nil
+	e.RawAttrsOrig = nil
+	e.RawMemberOf = nil
 	e.Count = 0
 }
 
@@ -144,52 +141,22 @@ type FetchedDNOrig struct {
 
 func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []string,
 	reqMemberOf, isHasSubordinatesRequested bool, handler func(entry *SearchEntry) error) (int32, int32, error) {
-	// TODO
-	dnOrigCache := q.dnOrigCache
 
-	baseDNID, cid, err := r.collectParentIDs(baseDN, scope, dnOrigCache)
+	fetchedDN, err := r.FindDNByDNWithLock(nil, baseDN, false)
+	if err != nil {
+		log.Printf("debug: Failed to find DN by DN. err: %+v", err)
+		return 0, 0, err
+	}
+
+	// Cache
+	q.IdToDNOrigCache[fetchedDN.ID] = fetchedDN.DNOrig
+
+	where, err := r.AppenScopeFilter(scope, q, fetchedDN)
 	if err != nil {
 		return 0, 0, err
 	}
 
-	where, err := appenScopeFilter(scope, q, baseDNID, cid)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	var memberCol string
-	var memberJoin string
-	if len(reqMemberAttrs) > 0 {
-		// TODO bind parameter
-		in := make([]string, len(reqMemberAttrs))
-		for i, v := range reqMemberAttrs {
-			in[i] = "'" + v + "'"
-		}
-
-		memberCol = ", to_jsonb(ma.member_array) as member"
-		memberJoin = fmt.Sprintf(`, LATERAL (
-			SELECT ARRAY (
-				SELECT jsonb_build_object('r', ee.rdn_orig, 'p', ee.parent_id::::TEXT, 'a', lm.attr_name_norm) 
-					FROM ldap_member lm
-						JOIN ldap_entry ee ON ee.id = lm.member_of_id
-					WHERE lm.member_id = e.id AND lm.attr_name_norm IN (%s)
-			) AS member_array
-		) ma`, strings.Join(in, ", "))
-	}
-
-	var memberOfCol string
-	var memberOfJoin string
-	if reqMemberOf {
-		memberOfCol = ", to_jsonb(moa.member_of_array) as member_of"
-		memberOfJoin = `, LATERAL (
-			SELECT ARRAY (
-				SELECT jsonb_build_object('r', ee.rdn_orig, 'p', ee.parent_id::::TEXT) 
-					FROM ldap_member lm
-						JOIN ldap_entry ee ON ee.id = lm.member_id
-					WHERE lm.member_of_id = e.id
-			) AS member_of_array
-		) moa`
-	}
+	log.Printf("debug: where: %s", where)
 
 	var hasSubordinatesCol string
 	if isHasSubordinatesRequested {
@@ -200,13 +167,137 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []st
 			) THEN 'TRUE' ELSE 'FALSE' END as hassubordinates`
 	}
 
-	// LEFT JOIN LATERAL(
-	// 		SELECT t.rdn_norm, t.rdn_orig FROM ldap_tree t WHERE t.id = e.parent_id
-	// 	) p ON true
-	searchQuery := fmt.Sprintf(`SELECT e.id, e.parent_id, e.uuid, e.created, e.updated, e.rdn_orig, '' AS dn_orig, e.attrs_orig %s %s %s, count(e.id) over() AS count
-		FROM ldap_entry e %s %s
+	var memberCol string
+	var memberJoin string
+	var groupBy string
+	if len(reqMemberAttrs) > 0 {
+		var cb strings.Builder
+		var jb strings.Builder
+
+		cb.Grow(128)
+		jb.Grow(128)
+
+		for i, attr := range reqMemberAttrs {
+			index := strconv.Itoa(i)
+
+			cb.WriteString(`
+			, JSON_AGG(
+				JSONB_BUILD_ARRAY(me` + index + `.parent_id::::text, me` + index + `.rdn_orig) ORDER BY mdn` + index + `.ord ASC
+			) FILTER (WHERE me` + index + `.parent_id IS NOT NULL) AS ` + attr + `
+			`)
+			jb.WriteString(`
+				LEFT JOIN JSONB_ARRAY_ELEMENTS(e.attrs_norm->'` + attr + `') WITH ORDINALITY mdn` + index + `(id, ord) ON TRUE
+				LEFT JOIN ldap_entry me` + index + ` ON mdn` + index + `.id::::bigint = me` + index + `.id  
+			`)
+		}
+		memberCol = cb.String()
+		memberJoin = jb.String()
+		groupBy = `GROUP BY e.id`
+	}
+
+	var memberOfCol string
+	var memberOfJoin string
+	if reqMemberOf {
+		var cb strings.Builder
+		var jb strings.Builder
+
+		cb.Grow(128)
+		jb.Grow(128)
+
+		cb.WriteString(`
+			, JSON_AGG(
+				JSONB_BUILD_ARRAY(mo.parent_id::::text, mo.rdn_orig)
+			) FILTER (WHERE mo.parent_id IS NOT NULL) AS member_of	
+		`)
+		jb.WriteString(`
+			LEFT JOIN ldap_entry mo ON mo.attrs_norm @@ FORMAT('$.member[*] == %s || $.uniquemember[*] == %s', e.id, e.id)::::jsonpath
+		`)
+
+		memberOfCol = cb.String()
+		memberOfJoin = jb.String()
+
+		if groupBy == "" {
+			groupBy = `GROUP BY e.id`
+		}
+	}
+
+	searchQuery := fmt.Sprintf(`
+		SELECT
+			e.id, e.parent_id, e.rdn_orig, '' AS dn_orig,
+			e.attrs_orig %s, count(e.id) over() AS count
+			%s
+			%s
+		FROM ldap_entry e 
+		%s
+		%s
 		WHERE %s
-		LIMIT :pageSize OFFSET :offset`, memberCol, memberOfCol, hasSubordinatesCol, memberJoin, memberOfJoin, where)
+		%s
+		LIMIT :pageSize OFFSET :offset
+	`, hasSubordinatesCol, memberCol, memberOfCol, memberJoin, memberOfJoin, where, groupBy)
+
+	// Resolve pending params
+	if len(q.PendingParams) > 0 {
+		// Create contaner DN cache
+		for k, v := range q.IdToDNOrigCache {
+			dn, err := NormalizeDN(v)
+			if err != nil {
+				log.Printf("error: Failed to normalize DN fetched from DB, err: %s", err)
+				return 0, 0, NewUnavailable()
+			}
+			q.DNNormToIdCache[dn.DNNormStr()] = k
+		}
+		for pendingDN, paramKey := range q.PendingParams {
+			// Find it from cache
+			dnNorm := pendingDN.DNNormStr()
+			if id, ok := q.DNNormToIdCache[dnNorm]; ok {
+				q.Params["filter"] = strings.Replace(q.Params["filter"].(string), ":"+paramKey, strconv.FormatInt(id, 10), 1)
+				continue
+			}
+			// Find the parent container from cache
+			parentDNNorm := pendingDN.ParentDN().DNNormStr()
+			if parentId, ok := q.DNNormToIdCache[parentDNNorm]; ok {
+				// Find by the parent_id and rdn_norm
+				rdnNorm := pendingDN.RDNs[0].NormStr()
+				id, err := r.FindIDByParentIDAndRDNNorm(nil, parentId, rdnNorm)
+				if err != nil {
+					log.Printf("debug: Can't find the DN by parent_id: %d and rdn_norm: %s, err: %s", parentId, rdnNorm, err)
+					continue
+				}
+
+				q.Params["filter"] = strings.Replace(q.Params["filter"].(string), ":"+paramKey, strconv.FormatInt(id, 10), 1)
+
+				// Update cache
+				q.DNNormToIdCache[dnNorm] = id
+
+				continue
+			}
+			// No cache, need to full search...
+
+			dn, err := r.FindDNByDNWithLock(nil, pendingDN, false)
+			if err != nil {
+				log.Printf("debug: Can't find the DN by DN: %s, err: %s", pendingDN.DNNormStr(), err)
+				continue
+			}
+
+			q.Params["filter"] = strings.Replace(q.Params["filter"].(string), ":"+paramKey, strconv.FormatInt(dn.ID, 10), 1)
+
+			// Update cache
+			q.DNNormToIdCache[dnNorm] = dn.ID
+			// Update cache with the parent DN
+			if _, ok := q.DNNormToIdCache[parentDNNorm]; !ok {
+				parentDN := dn.ParentDN()
+				for parentDN != nil {
+					if _, ok := q.DNNormToIdCache[parentDN.DNNorm()]; ok {
+						break
+					}
+					q.DNNormToIdCache[parentDN.DNNorm()] = parentDN.ID
+
+					// Next parent
+					parentDN = parentDN.ParentDN()
+				}
+			}
+		}
+	}
 
 	log.Printf("Fetch Query: %s Params: %v", searchQuery, q.Params)
 
@@ -239,25 +330,20 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []st
 			return 0, 0, err
 		}
 
+		// Set dn_orig using cache from fetching before phase
 		var dnOrig string
-		if dnOrig, ok = dnOrigCache[dbEntry.ID]; !ok {
-			parentDNOrig, ok := dnOrigCache[dbEntry.ParentID]
+		if dnOrig, ok = q.IdToDNOrigCache[dbEntry.ID]; !ok {
+			parentDNOrig, ok := q.IdToDNOrigCache[dbEntry.ParentID]
 			if !ok {
-				log.Printf("warn: Failed to retrieve parent by parent_id: %d. The parent might be removed or renamed.", dbEntry.ParentID)
-				// TODO return busy?
+				log.Printf("error: Invalid state, failed to retrieve parent by parent_id: %d", dbEntry.ParentID)
 				return 0, 0, xerrors.Errorf("Failed to retrieve parent by parent_id: %d", dbEntry.ParentID)
 			}
 
-			// Set dn_orig using cache from fetching ldap_tree table
-			if parentDNOrig != "" {
-				dnOrig = fmt.Sprintf("%s,%s", dbEntry.RDNOrig, parentDNOrig)
-			} else {
-				dnOrig = dbEntry.RDNOrig
-			}
+			dnOrig = dbEntry.RDNOrig + "," + parentDNOrig
 		}
 		dbEntry.DNOrig = dnOrig
 
-		readEntry, err := mapper.FetchedDBEntryToSearchEntry(&dbEntry, dnOrigCache)
+		readEntry, err := mapper.FetchedDBEntryToSearchEntry(&dbEntry, q.IdToDNOrigCache)
 		if err != nil {
 			log.Printf("error: Mapper error: %#v", err)
 			return 0, 0, err
@@ -286,298 +372,281 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []st
 	return maxCount, count, nil
 }
 
-func getDC(tx *sqlx.Tx) (*FetchedDBEntry, error) {
-	var err error
-	dest := FetchedDBEntry{}
-
-	if tx != nil {
-		err = tx.NamedStmt(getDCStmt).Get(&dest, map[string]interface{}{})
-	} else {
-		err = getDCStmt.Get(&dest, map[string]interface{}{})
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	return &dest, nil
-}
-
-func getDCDNOrig(tx *sqlx.Tx) (*FetchedDNOrig, error) {
-	var err error
-	dest := FetchedDNOrig{}
-
-	if tx != nil {
-		err = tx.NamedStmt(getDCDNOrigStmt).Get(&dest, map[string]interface{}{})
-	} else {
-		err = getDCDNOrigStmt.Get(&dest, map[string]interface{}{})
-	}
-	if err != nil {
-		if err == sql.ErrNoRows {
-			log.Printf("warn: Not found DC in the tree.")
-			return nil, NewNoSuchObject()
-		}
-		return nil, xerrors.Errorf("Failed to get DC DN. err: %w", err)
-	}
-
-	return &dest, nil
-}
-
 type FindOption struct {
 	Lock       bool
 	FetchAttrs bool
 	FetchCred  bool
 }
 
-func (r *Repository) FindByDN(tx *sqlx.Tx, dn *DN, option *FindOption) (*FetchedDBEntry, error) {
-	if dn == nil {
-		return nil, xerrors.Errorf("Failed to find by DN because the DN is nil. You might try to find parent of DC entry.")
-	}
-	if dn.IsDC() {
-		return getDC(tx)
-	}
-
-	stmt, params, err := r.PrepareFindByDN(tx, dn, option)
-	if err != nil {
-		return nil, err
-	}
-
-	dest := FetchedDBEntry{}
-
-	if tx != nil {
-		err = tx.NamedStmt(stmt).Get(&dest, params)
-	} else {
-		err = stmt.Get(&dest, params)
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	return &dest, nil
-}
-
-func (r *Repository) PrepareFindByDN(tx *sqlx.Tx, dn *DN, option *FindOption) (*sqlx.NamedStmt, map[string]interface{}, error) {
+func (r *Repository) PrepareFindDNByDN(dn *DN, opt *FindOption) (*sqlx.NamedStmt, map[string]interface{}, error) {
 	//  Key for stmt cache
-	key := fmt.Sprintf("LOCK:%v/FETCH_ATTRS:%v/FETCH_CRED:%v/DEPTH:%d",
-		option.Lock, option.FetchAttrs, option.FetchCred, len(dn.dnNorm))
+	key := fmt.Sprintf("PrepareFindDNByDN/LOCK:%v/FETCH_ATTRS:%v/FETCH_CRED:%v/DEPTH:%d",
+		opt.Lock, opt.FetchAttrs, opt.FetchCred, len(dn.RDNs))
 
-	if stmt, ok := findByDNStmtCache.Get(key); ok {
-		// Already cached, make params only
-		depthj := len(dn.dnNorm)
-		last := depthj - 1
-		params := make(map[string]interface{}, depthj)
+	// make params
+	params := createFindTreePathByDNParams(dn)
 
-		for i := last; i >= 0; i-- {
-			params[fmt.Sprintf("rdn_norm_%d", i)] = dn.dnNorm[i]
-		}
+	if stmt, ok := treeStmtCache.Get(key); ok {
+		// Already cached
 		return stmt, params, nil
 	}
 
 	// Not cached yet, create query and params, then cache the stmt
-	q, params := r.CreateFindByDNQuery(dn, option)
-
-	var err error
-	var stmt *sqlx.NamedStmt
-	if tx != nil {
-		stmt, err = tx.PrepareNamed(q)
-	} else {
-		stmt, err = r.db.PrepareNamed(q)
-	}
+	q, err := createFindBasePathByDNSQL(dn, opt)
 	if err != nil {
 		return nil, nil, err
 	}
-	findByDNStmtCache.Put(key, stmt)
 
-	return stmt, params, nil
-}
-
-func (r *Repository) PrepareFindTreeByDN(dn *DN) (*sqlx.NamedStmt, map[string]interface{}, error) {
-	//  Key for stmt cache
-	key := fmt.Sprintf("TREE/DEPTH:%d", len(dn.dnNorm))
-
-	if stmt, ok := findByDNStmtCache.Get(key); ok {
-		// Already cached, make params only
-		depthj := len(dn.dnNorm)
-		last := depthj - 1
-		params := make(map[string]interface{}, depthj)
-
-		for i := last; i >= 0; i-- {
-			params[fmt.Sprintf("rdn_norm_%d", i)] = dn.dnNorm[i]
-		}
-		return stmt, params, nil
-	}
-
-	// Not cached yet, create query and params, then cache the stmt
-	dnq, params := r.CreateFindByDNQuery(dn, &FindOption{Lock: false})
-
-	q := fmt.Sprintf(`WITH RECURSIVE dn AS
-	(
-		%s
-	),
-	child (depth, dn_orig, id, parent_id) AS
-	(
-		SELECT 0, dn.dn_orig::::TEXT AS dn_orig, e.id, e.parent_id
-			FROM ldap_tree e, dn WHERE e.id = dn.id 
-			UNION ALL
-				SELECT
-					child.depth + 1,
-					CASE child.dn_orig
-						WHEN '' THEN e.rdn_orig 
-						ELSE e.rdn_orig || ',' || child.dn_orig
-					END,
-					e.id,
-					e.parent_id
-				FROM ldap_tree e, child
-				WHERE e.parent_id = child.id
-	)
-	SELECT id, dn_orig FROM child ORDER BY depth`, dnq)
-
-	log.Printf("PrepareFindTreeByDN: %s", q)
+	log.Printf("debug: createFindTreePathByDNSQL: %s\nparams: %v", q, params)
 
 	stmt, err := r.db.PrepareNamed(q)
 	if err != nil {
 		return nil, nil, err
 	}
-	findByDNStmtCache.Put(key, stmt)
+	treeStmtCache.Put(key, stmt)
 
 	return stmt, params, nil
 }
 
-func (r *Repository) CreateFindByDNQuery(dn *DN, option *FindOption) (string, map[string]interface{}) {
-	// 	SELECT e.id, e.rdn_orig || ',' || e0.rdn_orig || ',' || e1.rdn_orig || ',' || e2.rdn_orig AS dn_orig
-	//	   FROM ldap_tree dc
-	//     INNER JOIN ldap_tree e2 ON e2.parent_id = dc.id
-	//     INNER JOIN ldap_tree e1 ON e1.parent_id = e2.id
-	//     INNER JOIN ldap_tree e0 ON e0.parent_id = e1.id
-	//     INNER JOIN ldap_entry e ON e.parent_id = e0.id
-	//     WHERE dc.parent_id = 0 AND e2.rdn_norm = 'ou=mycompany' AND e1.rdn_norm = 'ou=mysection' AND e0.rdn_norm = 'ou=mydept' AND e.rdn_norm = 'cn=mygroup'
-	//     FOR UPDATE ldap_entry
-
-	var fetchAttrsProjection string
-	var memberJoin string
-	if option.FetchAttrs {
-		fetchAttrsProjection += `, e0.parent_id, e0.rdn_orig, e0.attrs_orig, to_jsonb(ma.member_array) as member`
-		// TODO use join when the entry's schema has member
-		memberJoin += `, LATERAL (
-				SELECT ARRAY (
-					SELECT jsonb_build_object('r', ee.rdn_orig, 'p', ee.parent_id::::TEXT, 'a', lm.attr_name_norm) 
-						FROM ldap_member lm
-							JOIN ldap_entry ee ON ee.id = lm.member_of_id
-						WHERE lm.member_id = e0.id 
-				) AS member_array
-			) ma`
-	}
-	if option.FetchCred {
-		fetchAttrsProjection += `, e0.attrs_norm->>'userPassword' as cred`
+func createFindTreePathByDNParams(baseDN *DN) map[string]interface{} {
+	if baseDN == nil {
+		return map[string]interface{}{}
 	}
 
-	if dn.IsDC() {
-		q := fmt.Sprintf(`SELECT id, '' as dn_orig %s FROM ldap_entry
-		WHERE parent_id = %d`, fetchAttrsProjection, ROOT_ID)
-		return q, map[string]interface{}{}
-	}
-
-	size := len(dn.dnNorm)
-	last := size - 1
-	params := make(map[string]interface{}, size)
-
-	projection := make([]string, size)
-	join := make([]string, size)
-	where := make([]string, size)
-
+	depth := len(baseDN.RDNs)
+	last := depth - 1
+	params := make(map[string]interface{}, depth)
+	ii := 0
 	for i := last; i >= 0; i-- {
-		projection[i] = fmt.Sprintf("e%d.rdn_orig", i)
-		if i == last {
-			join[last-i] = fmt.Sprintf("INNER JOIN ldap_tree e%d ON e%d.parent_id = dc.id", i, i)
-		} else if i > 0 {
-			join[last-i] = fmt.Sprintf("INNER JOIN ldap_tree e%d ON e%d.parent_id = e%d.id", i, i, i+1)
+		params["rdn_norm"+strconv.Itoa(ii)] = baseDN.RDNs[i].NormStr()
+		ii++
+	}
+	return params
+}
+
+// createFindBasePathByDNSQL returns a SQL which selects id, parent_id, path, dn_orig and has_sub.
+func createFindBasePathByDNSQL(baseDN *DN, opt *FindOption) (string, error) {
+	if len(baseDN.RDNs) == 0 {
+		return "", xerrors.Errorf("Invalid DN, it's anonymous")
+	}
+
+	var fetchAttrsCols string
+	if opt.FetchAttrs {
+		fetchAttrsCols = `e0.attrs_orig,`
+	}
+
+	var fetchCredCols string
+	if opt.FetchCred {
+		fetchCredCols = `e0.attrs_orig->'userPassword' as cred,`
+	}
+
+	if baseDN.IsRoot() {
+		return `
+			SELECT
+				e0.rdn_orig as dn_orig,
+				e0.id,
+				e0.parent_id,
+				` + fetchAttrsCols + `
+				` + fetchCredCols + `
+				e0.id as path,
+				COALESCE((SELECT true FROM ldap_tree t WHERE t.id = e0.id), false) as has_sub
+			FROM
+				ldap_entry e0 
+			WHERE
+				e0.rdn_norm = :rdn_norm0 AND e0.parent_id is NULL
+		`, nil
+	}
+
+	// Caution: We can't use out join when locking because it causes the following error.
+	// ERROR:  FOR UPDATE cannot be applied to the nullable side of an outer join
+	// Instead of it, use sub query in projection.
+
+	/*
+		SELECT
+			e2.rdn_orig || ',' || e1.rdn_orig || ',' || e0.rdn_orig,
+			e2.id,
+			e2.parent_id,
+			(e0.id || '.' || e1.id || '.' || e2.id) as path,
+			COALESCE((SELECT true FROM ldap_tree t WHERE t.id = e2.id), false) as has_sub
+		FROM
+			ldap_entry e0, ldap_entry e1, ldap_entry e2
+		WHERE
+			e0.rdn_norm = 'dc=com' AND e1.rdn_norm = 'dc=example' AND e2.rdn_norm = 'ou=users'
+			AND e0.parent_id is NULL AND e1.parent_id = e0.id AND e2.parent_id = e1.id
+
+				?column?          | id | parent_id | path  | has_sub
+		----------------------------+----+-----------+-------+---------
+		ou=Users,dc=Example,dc=com |  2 |         1 | 0.1.2 |      t
+
+
+		SELECT
+			e3.rdn_orig || ',' || e2.rdn_orig || ',' || e1.rdn_orig || ',' || e0.rdn_orig,
+			e3.id,
+			e3.parent_id,
+			(e0.id || '.' || e1.id || '.' || e2.id || '.' || e3.id) as path,
+			COALESCE((SELECT true FROM ldap_tree t WHERE t.id = e3.id), false) as has_sub
+		FROM
+			ldap_entry e0, ldap_entry e1, ldap_entry e2, ldap_entry e3
+		WHERE
+			e0.rdn_norm = 'dc=com' AND e1.rdn_norm = 'dc=example' AND e2.rdn_norm = 'ou=users' AND e3.rdn_norm = 'uid=u000001'
+			AND e0.parent_id is NULL AND e1.parent_id = e0.id AND e2.parent_id = e1.id AND e3.parent_id = e2.id
+
+						?column?                | id | parent_id |  path   | has_sub
+		----------------------------------------+----+-----------+---------+---------
+		uid=u000001,ou=Users,dc=Example,dc=com |  4 |         2 | 0.1.2.4 |       f
+
+	*/
+	lastIndex := len(baseDN.RDNs) - 1
+	lastIndexStr := strconv.Itoa(lastIndex)
+
+	proj := []string{}
+	proj2 := []string{}
+	table := []string{}
+	where := []string{}
+	where2 := []string{}
+	for index := range baseDN.RDNs {
+		proj = append(proj, fmt.Sprintf("e%d.rdn_orig", lastIndex-index))
+		proj2 = append(proj2, fmt.Sprintf("e%d.id", index))
+		table = append(table, fmt.Sprintf("ldap_entry e%d", index))
+		where = append(where, fmt.Sprintf("e%d.rdn_norm = :rdn_norm%d", index, index))
+		if index == 0 {
+			where2 = append(where2, fmt.Sprintf("e%d.parent_id is NULL", index))
 		} else {
-			join[last-i] = "INNER JOIN ldap_entry e0 ON e0.parent_id = e1.id"
+			where2 = append(where2, fmt.Sprintf("e%d.parent_id = e%d.id", index, index-1))
 		}
-		where[last-i] = fmt.Sprintf("e%d.rdn_norm = :rdn_norm_%d", i, i)
-
-		params[fmt.Sprintf("rdn_norm_%d", i)] = dn.dnNorm[i]
+	}
+	if opt.FetchAttrs {
+		fetchAttrsCols = `e` + lastIndexStr + `.attrs_orig,`
 	}
 
-	q := fmt.Sprintf(`SELECT e0.id, %s AS dn_orig %s
-		FROM ldap_tree dc %s %s
-		WHERE dc.parent_id = %d AND %s`,
-		strings.Join(projection, " || ',' || "), fetchAttrsProjection,
-		strings.Join(join, " "), memberJoin,
-		ROOT_ID, strings.Join(where, " AND "))
-
-	if option.Lock {
-		q += " FOR UPDATE"
+	if opt.FetchCred {
+		fetchCredCols = `e` + lastIndexStr + `.attrs_orig->'userPassword' as cred,`
 	}
 
-	log.Printf("debug: findByDN query: %s, params: %v", q, params)
+	var lock string
+	if opt.Lock {
+		lock = " for UPDATE"
+	}
 
-	return q, params
+	sql := `
+	SELECT
+	  ` + strings.Join(proj, " || ',' || ") + ` as dn_orig,
+	  e` + lastIndexStr + `.id, 
+	  e` + lastIndexStr + `.parent_id, 
+	  ` + fetchAttrsCols + `
+	  ` + fetchCredCols + `
+	  ` + strings.Join(proj2, " || '.' || ") + ` as path,
+	  COALESCE((SELECT true FROM ldap_tree t WHERE t.id = e` + lastIndexStr + `.id), false) as has_sub
+	FROM
+	  ` + strings.Join(table, ", ") + `
+	WHERE
+	  ` + strings.Join(where, " AND ") + ` 
+	  AND
+	  ` + strings.Join(where2, " AND ") + ` 
+	` + lock + `
+	`
+
+	log.Printf("debug: createFindBasePathByDNSQL: %s", sql)
+
+	return sql, nil
 }
 
-func collectAllNodeNorm() (map[string]int64, error) {
-	dc, err := getDCDNOrig(nil)
+func (r *Repository) FindDNByID(tx *sqlx.Tx, id int64, lock bool) (*FetchedDNOrig, error) {
+	var dest FetchedDNOrig
+	err := namedStmt(tx, findDNByIDStmt).Get(&dest, map[string]interface{}{
+		"id": id,
+	})
 	if err != nil {
-		return nil, err
-	}
-	nodes, err := collectNodeNormByParentID(nil, dc.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	cache := make(map[string]int64, len(nodes)+1)
-	cache[""] = dc.ID
-
-	for _, n := range nodes {
-		cache[n.DNNorm] = n.ID
+		if isNoResult(err) {
+			return nil, NewNoSuchObject()
+		}
+		return nil, xerrors.Errorf("Failed to fetch FindDNByID in %s, id: %d, err: %w", txLabel(tx), id, err)
 	}
 
-	return cache, nil
+	return &dest, nil
 }
 
-func collectAllNodeOrig(tx *sqlx.Tx) (map[int64]string, error) {
-	dc, err := getDCDNOrig(tx)
+// FindDNByDNWithLock returns FetchedDN object from database by DN search.
+func (r *Repository) FindDNByDNWithLock(tx *sqlx.Tx, dn *DN, lock bool) (*FetchedDN, error) {
+	stmt, params, err := r.PrepareFindDNByDN(dn, &FindOption{Lock: lock})
 	if err != nil {
-		return nil, err
+		return nil, xerrors.Errorf("Failed to prepare FindDNOnlyByDN: %v, err: %w", dn, err)
 	}
-	nodes, err := collectNodeOrigByParentID(tx, dc.ID)
+
+	var dest FetchedDN
+	err = namedStmt(tx, stmt).Get(&dest, params)
 	if err != nil {
-		return nil, err
+		if isNoResult(err) {
+			return nil, NewNoSuchObject()
+		}
+		return nil, xerrors.Errorf("Failed to fetch FindDNOnlyByDN in %s: %v, err: %w", txLabel(tx), dn, err)
 	}
 
-	cache := make(map[int64]string, len(nodes)+1)
-	cache[dc.ID] = dc.DNOrig
-
-	for _, n := range nodes {
-		cache[n.ID] = n.DNOrig
-	}
-
-	return cache, nil
+	return &dest, nil
 }
 
-func collectNodeOrigByParentID(tx *sqlx.Tx, parentID int64) ([]*FetchedDNOrig, error) {
-	if parentID == ROOT_ID {
-		return nil, xerrors.Errorf("Invalid parentID: %d", parentID)
+// FindEntryByDN returns FetchedDBEntry object from database by DN search.
+func (r *Repository) FindEntryByDN(tx *sqlx.Tx, dn *DN, lock bool) (*ModifyEntry, error) {
+	stmt, params, err := r.PrepareFindDNByDN(dn, &FindOption{Lock: lock, FetchAttrs: true})
+	if err != nil {
+		return nil, xerrors.Errorf("Failed to prepare FindEntryByDN: %v, err: %w", dn, err)
 	}
+
+	var dest FetchedEntry
+	err = namedStmt(tx, stmt).Get(&dest, params)
+	if err != nil {
+		if isNoResult(err) {
+			return nil, NewNoSuchObject()
+		}
+		return nil, xerrors.Errorf("Failed to fetch FindEntryByDN in %s: %v, err: %w", txLabel(tx), dn, err)
+	}
+
+	return mapper.FetchedEntryToModifyEntry(&dest)
+}
+
+func (r *Repository) FindContainerByDN(tx *sqlx.Tx, dn *FetchedDN, scope int) ([]*FetchedDNOrig, error) {
+	// Scope handling, sub need to include base.
+	// 0: base
+	// 1: one
+	// 2: sub
+	// 3: children
+
+	if scope == 0 || scope == 1 {
+		return nil, xerrors.Errorf("Invalid scope, it should be 2(sub) or 3(children): %d", scope)
+	}
+
 	var rows *sqlx.Rows
 	var err error
-	if tx != nil {
-		rows, err = tx.NamedStmt(collectNodeOrigByParentIDStmt).Queryx(map[string]interface{}{
-			"parent_id": parentID,
+
+	if !dn.HasSub {
+		return []*FetchedDNOrig{{
+			ID:     dn.ID,
+			DNOrig: dn.DNOrig,
+		}}, nil
+	}
+
+	if scope == 2 { // sub
+		rows, err = namedStmt(tx, findContainerByPathStmt).Queryx(map[string]interface{}{
+			"path": dn.Path + ".*{0,}",
 		})
-	} else {
-		rows, err = collectNodeOrigByParentIDStmt.Queryx(map[string]interface{}{
-			"parent_id": parentID,
+	} else if scope == 3 { // children
+		rows, err = namedStmt(tx, findContainerByPathStmt).Queryx(map[string]interface{}{
+			"path": dn.Path + ".*{1,}",
 		})
 	}
+
 	if err != nil {
-		return nil, xerrors.Errorf("Failed to fetch child ID by parentID: %s, err: %w", parentID, err)
+		return nil, xerrors.Errorf("Failed to find containers by DN: %v, err: %w", dn, err)
 	}
 	defer rows.Close()
 
 	list := []*FetchedDNOrig{}
 	for rows.Next() {
 		child := FetchedDNOrig{}
-		rows.StructScan(&child)
+		err = rows.StructScan(&child)
+		if err != nil {
+			return nil, xerrors.Errorf("Failed to find containers by DN due to fail struct scan, DN: %v, err: %w", dn, err)
+		}
 		list = append(list, &child)
 	}
 
@@ -590,44 +659,38 @@ func collectNodeOrigByParentID(tx *sqlx.Tx, parentID int64) ([]*FetchedDNOrig, e
 	return list, nil
 }
 
-func (r *Repository) FindByDNWithLock(tx *sqlx.Tx, dn *DN) (*ModifyEntry, error) {
-	// TODO optimize collecting all container DN orig
-	dnOrigCache, err := collectAllNodeOrig(tx)
+func (r *Repository) FindIDByParentIDAndRDNNorm(tx *sqlx.Tx, parentId int64, rdn_norm string) (int64, error) {
+	var dest int64
+	err := namedStmt(tx, findIDByParentIDAndRDNNormStmt).Get(&dest, map[string]interface{}{
+		"parent_id": parentId,
+		"rdn_norm":  rdn_norm,
+	})
 	if err != nil {
-		return nil, err
+		if isNoResult(err) {
+			return 0, NewNoSuchObject()
+		}
+		return 0, xerrors.Errorf("Failed to find ID by parent_id: %d and rdn_norm: %s, err: %w", parentId, rdn_norm, err)
 	}
 
-	entry, err := r.FindByDN(tx, dn, &FindOption{Lock: true, FetchAttrs: true})
-	if err != nil {
-		return nil, err
-	}
-	return mapper.FetchedDBEntryToModifyEntry(entry, dnOrigCache)
+	return dest, nil
 }
 
 func (r *Repository) FindCredByDN(dn *DN) ([]string, error) {
-	q, params := r.CreateFindByDNQuery(dn, &FindOption{Lock: false, FetchCred: true})
-
-	key := "DEPTH:" + strconv.Itoa(len(dn.dnNorm))
-
-	dest := struct {
-		ID     int64          `db:"id"`
-		DNOrig string         `db:"dn_orig"`
-		Cred   types.JSONText `db:"cred"`
-	}{}
-
-	var stmt *sqlx.NamedStmt
-	var ok bool
-
-	if stmt, ok = findCredByDNStmtCache.Get(key); !ok {
-		var err error
-		stmt, err = r.db.PrepareNamed(q)
-		if err != nil {
-			return nil, xerrors.Errorf("Failed to prepare name query. query: %s, params: %v, dn: %s, err: %w", q, params, dn.DNOrigStr(), err)
-		}
-		findCredByDNStmtCache.Put(key, stmt)
+	stmt, params, err := r.PrepareFindDNByDN(dn, &FindOption{FetchCred: true})
+	if err != nil {
+		return nil, xerrors.Errorf("Failed to prepare FindCredByDN: %v, err: %w", dn, err)
 	}
 
-	err := stmt.Get(&dest, params)
+	dest := struct {
+		ID       int64          `db:"id"`
+		ParentID int64          `db:"parent_id"`
+		Path     string         `db:"path"`
+		DNOrig   string         `db:"dn_orig"`
+		HasSub   bool           `db:"has_sub"`
+		Cred     types.JSONText `db:"cred"`
+	}{}
+
+	err = stmt.Get(&dest, params)
 	if err != nil {
 		if isNoResult(err) {
 			return nil, NewInvalidCredentials()
@@ -644,7 +707,8 @@ func (r *Repository) FindCredByDN(dn *DN) ([]string, error) {
 	return cred, nil
 }
 
-func appenScopeFilter(scope int, q *Query, baseDNID int64, childrenDNIDs []int64) (string, error) {
+func (r *Repository) AppenScopeFilter(scope int, q *Query, fetchedDN *FetchedDN) (string, error) {
+
 	// Make query based on the requested scope
 
 	// Scope handling, one and sub need to include base.
@@ -653,27 +717,50 @@ func appenScopeFilter(scope int, q *Query, baseDNID int64, childrenDNIDs []int64
 	// 2: sub
 	// 3: children
 	var parentFilter string
-	if scope == 0 {
+	if scope == 0 { // base
 		parentFilter = "e.id = :baseDNID"
-		q.Params["baseDNID"] = baseDNID
+		q.Params["baseDNID"] = fetchedDN.ID
 
-	} else if scope == 1 {
+	} else if scope == 1 { // one
 		parentFilter = "e.parent_id = :baseDNID"
-		q.Params["baseDNID"] = baseDNID
+		q.Params["baseDNID"] = fetchedDN.ID
 
-	} else if scope == 2 {
-		childrenDNIDs = append(childrenDNIDs, baseDNID)
-		in, params := expandIn(childrenDNIDs)
-		parentFilter = "(e.id = :baseDNID OR e.parent_id IN (" + in + "))"
-		q.Params["baseDNID"] = baseDNID
-		for k, v := range params {
-			q.Params[k] = v
+	} else if scope == 2 { // sub
+		containers, err := r.FindContainerByDN(nil, fetchedDN, scope)
+		if err != nil {
+			return "", err
 		}
 
-	} else if scope == 3 {
-		childrenDNIDs = append(childrenDNIDs, baseDNID)
-		in, params := expandIn(childrenDNIDs)
-		parentFilter = "e.parent_id IN (" + in + ")"
+		if len(containers) > 0 {
+			// Cache
+			for _, c := range containers {
+				q.IdToDNOrigCache[c.ID] = c.DNOrig
+			}
+
+			in, params := expandContainersIn(containers)
+			parentFilter = "(e.id = :baseDNID OR e.parent_id IN (" + in + "))"
+			for k, v := range params {
+				q.Params[k] = v
+			}
+		} else {
+			parentFilter = "(e.id = :baseDNID)"
+		}
+		q.Params["baseDNID"] = fetchedDN.ID
+
+	} else if scope == 3 { // children
+		containers, err := r.FindContainerByDN(nil, fetchedDN, scope)
+		if err != nil {
+			return "", err
+		}
+
+		// Cache
+		for _, c := range containers {
+			q.IdToDNOrigCache[c.ID] = c.DNOrig
+		}
+
+		in, params := expandContainersIn(containers)
+		parentFilter = "e.parent_id = :baseDNID OR e.parent_id IN (" + in + ")"
+		q.Params["baseDNID"] = fetchedDN.ID
 		for k, v := range params {
 			q.Params[k] = v
 		}
@@ -685,77 +772,4 @@ func appenScopeFilter(scope int, q *Query, baseDNID int64, childrenDNIDs []int64
 	}
 
 	return fmt.Sprintf("%s %s", parentFilter, query), nil
-}
-
-func (r *Repository) collectParentIDs(baseDN *DN, scope int, dnOrigCache map[int64]string) (int64, []int64, error) {
-	// Collect parent ID(s) based on baseDN
-	var baseDNID int64 = -1
-
-	// No result case
-	if !baseDN.IsContainer() && (scope == 1 || scope == 3) {
-		// Need to return success response
-		return 0, nil, NewSuccess()
-	}
-
-	// 0: base
-	// 1: one
-	// 2: sub
-	// 3: children
-	if scope == 0 || scope == 1 || !baseDN.IsContainer() {
-		if baseDN.IsDC() {
-			entry, err := getDCDNOrig(nil)
-			if err != nil {
-				return 0, nil, err
-			}
-			baseDNID = entry.ID
-			dnOrigCache[entry.ID] = entry.DNOrig
-			return baseDNID, []int64{}, nil
-		}
-
-		// baseDN points to entry or container.
-		entry, err := r.FindByDN(nil, baseDN, &FindOption{Lock: false})
-		if err != nil {
-			if isNoResult(err) {
-				return 0, nil, NewSuccess()
-			}
-			return 0, nil, err
-		}
-		baseDNID = entry.ID
-		dnOrigCache[entry.ID] = entry.DNOrig
-
-		return baseDNID, []int64{}, nil
-	}
-
-	stmt, params, err := r.PrepareFindTreeByDN(baseDN)
-	if err != nil {
-		return 0, nil, err
-	}
-
-	rows, err := stmt.Queryx(params)
-	if err != nil {
-		return 0, nil, err
-	}
-	defer rows.Close()
-
-	cid := []int64{}
-
-	var id int64
-	var dnOrig string
-	for rows.Next() {
-		err := rows.Scan(&id, &dnOrig)
-		if err != nil {
-			return 0, nil, xerrors.Errorf("Failed to scan id, dnOrig. err: %w", err)
-		}
-		cid = append(cid, id)
-		dnOrigCache[id] = dnOrig
-	}
-
-	if len(cid) == 0 {
-		// Need to return success response
-		return 0, nil, NewSuccess()
-	}
-	if len(cid) == 1 {
-		return cid[0], []int64{}, nil
-	}
-	return cid[0], cid[1:], nil
 }

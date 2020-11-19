@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -157,7 +158,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "\nUsage:\n\n  %s [options]\n\nOptions:\n\n", exe)
 		fs.PrintDefaults()
 	}
-	fs.Parse(os.Args[1:])
+	if err := fs.Parse(os.Args[1:]); err != nil {
+		log.Fatalf("error: Cannot parse the args: %v, err: %s", os.Args[1:], err)
+	}
 
 	if len(os.Args) == 1 {
 		fs.Usage()
@@ -198,5 +201,6 @@ func main() {
 		PProfServer:       *pprofServer,
 		GoMaxProcs:        *gomaxprocs,
 		MigrationEnabled:  *migrationEnabled,
+		QueryTranslator:   "default",
 	}).Start()
 }

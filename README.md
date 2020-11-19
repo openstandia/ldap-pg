@@ -1,4 +1,4 @@
-# ldap-pg 
+# ldap-pg
 
 [![GoDoc](https://godoc.org/github.com/openstandia/ldap-pg?status.svg)](https://godoc.org/github.com/openstandia/ldap-pg)
 
@@ -8,45 +8,46 @@
 
 ## Features
 
-* Basic LDAP operations 
-  * Bind
-    * [x] PLAIN
-    * [x] SSHA
-    * [x] SSHA256
-    * [x] SSHA512
-    * [x] Pass-through authentication (Support `{SASL}foo@domain`)
-  * Search
-    * [x] base
-    * [x] one
-    * [x] sub
-    * [x] children
-  * [x] Add
-  * [x] Modify
-  * [x] Delete
-  * ModifyDN
-    * [x] Rename RDN
-    * [ ] Support deleteoldrdn with 0
-    * [ ] Support newsuperior
-  * [ ] Compare
-  * [ ] Extended
-* LDAP Controls
-  * [x] Simple Paged Results Control
-* Support member/memberOf association (like OpenLDAP memberOf overlay)
-  * [x] Return memberOf attribute as operational attribute
-  * [x] Maintain member/memberOf
-  * [x] Search filter using memberOf
-* Schema
-  * [x] Basic schema processing
-  * [ ] More schema processing
-  * [x] User defined schema
-* Network
-  * [ ] SSL/StartTLS
-* [ ] Prometheus metrics
-* [ ] Auto create/migrate table for PostgreSQL 
+- Basic LDAP operations
+  - Bind
+    - [x] PLAIN
+    - [x] SSHA
+    - [x] SSHA256
+    - [x] SSHA512
+    - [x] Pass-through authentication (Support `{SASL}foo@domain`)
+  - Search
+    - [x] base
+    - [x] one
+    - [x] sub
+    - [x] children
+  - [x] Add
+  - [x] Modify
+  - [x] Delete
+  - ModifyDN
+    - [x] Rename RDN
+    - [x] Support deleteoldrdn
+    - [x] Support newsuperior
+  - [ ] Compare
+  - [ ] Extended
+- LDAP Controls
+  - [x] Simple Paged Results Control
+- Support member/memberOf association (like OpenLDAP memberOf overlay)
+  - [x] Return memberOf attribute as operational attribute
+  - [x] Maintain member/memberOf
+  - [x] Search filter using memberOf
+- Schema
+  - [x] Basic schema processing
+  - [ ] More schema processing
+  - [x] User defined schema
+  - [ ] Multiple RDNs
+- Network
+  - [ ] SSL/StartTLS
+- [ ] Prometheus metrics
+- [ ] Auto create/migrate table for PostgreSQL
 
 ## Requirement
 
-PostgreSQL 10 or later.
+PostgreSQL 12 or later.
 
 ## Install
 
@@ -56,7 +57,7 @@ Please download it from [release page](../../releases).
 
 ### From source
 
-`ldap-pg` is written by Golang. Install Golang then build `ldap-pg`:  
+`ldap-pg` is written by Golang. Install Golang then build `ldap-pg`:
 
 ```
 make
@@ -65,10 +66,6 @@ make
 You can find the binary in `./bin/` directory.
 
 ## Usage
-
-### Init table
-
-Currently, `ldap-pg` doesn't support creating DB table automatically. You need to create table manually. Please use [sample.sql](/misc/sample.sql). 
 
 ### Start `ldap-pg`
 
@@ -94,7 +91,7 @@ Options:
   -h string
         DB Hostname (default "localhost")
   -log-level string
-        Log level, on of: debug, info, warn, error, fatal (default "info")
+        Log level, on of: debug, info, warn, error, alert (default "info")
   -migration
         Enable migration mode which means LDAP server accepts add/modify operational attributes (Default: false)
   -p int
@@ -121,6 +118,8 @@ Options:
         Root dn for the LDAP
   -root-pw string
         Root password for the LDAP
+  -s string
+        DB Schema
   -schema value
         Additional/overwriting custom schema
   -suffix string
@@ -134,15 +133,54 @@ Options:
 #### Example
 
 ```
-ldap-pg -h localhost -u testuser -w testpass -d testdb \
- -suffix dc=example,dc=com -root-dn cn=Manager -root-pw secret \
+ldap-pg -h localhost -u testuser -w testpass -d testdb -s public \
+ -suffix dc=example,dc=com -root-dn cn=Manager,dc=example,dc=com -root-pw secret \
  -log-level info
 
 [  info ] 2019/10/03 15:13:37 main.go:169: Setup GOMAXPROCS with NumCPU: 8
 [  info ] 2019/10/03 15:13:37 main.go:234: Starting ldap-pg on 127.0.0.1:8389
 ```
 
+`ldap-pg` creates required tables and indexes into PostgreSQL if not exists.
+You can import your LDIF file by using standard LDAP tools like `ldapadd` command.
+
+```
+$ cat << EOS > base.ldif
+
+dn: dc=com
+objectClass: top
+objectClass: dcObject
+objectClass: organization
+o: com
+dc: com
+
+dn: dc=example,dc=com
+objectClass: top
+objectClass: dcObject
+objectClass: organization
+o: Example Inc.
+dc: example
+
+dn: ou=Users,dc=example,dc=com
+objectClass: organizationalUnit
+ou: Users
+
+dn: ou=Groups,dc=example,dc=com
+objectClass: organizationalUnit
+ou: Group
+
+EOS
+
+$ ldapadd -H ldap://localhost:8389 -x -D cn=manager,dc=example,dc=com -w secret -f base.ldif
+adding new entry "dc=com"
+
+adding new entry "dc=example,dc=com"
+
+adding new entry "ou=Users,dc=example,dc=com"
+
+adding new entry "ou=Groups,dc=example,dc=com"
+```
+
 ## License
 
 Licensed under the [GPL](/LICENSE) license.
-

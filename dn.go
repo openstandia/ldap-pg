@@ -1,94 +1,201 @@
 package main
 
 import (
+	"log"
+	"strconv"
 	"strings"
 
-	goldap "github.com/go-ldap/ldap/v3"
+	"github.com/jmoiron/sqlx/types"
 )
 
 type DN struct {
-	dn        *goldap.DN
-	dnNorm    []string
-	dnOrig    []string
-	suffix    []string
+	RDNs      []*RelativeDN
 	cachedRDN map[string]string
 }
 
-var anonymousDN = &DN{
-	dn:     &goldap.DN{RDNs: nil},
-	dnNorm: nil,
-	dnOrig: nil,
-	suffix: nil,
+type FetchedDN struct {
+	ID       int64  `db:"id"`
+	ParentID int64  `db:"parent_id"`
+	Path     string `db:"path"`
+	DNOrig   string `db:"dn_orig"`
+	HasSub   bool   `db:"has_sub"`
+	dnNorm   string // not fetched from DB, it's computed
 }
 
-func NormalizeDN(suffix []string, dn string) (*DN, error) {
+type FetchedEntry struct {
+	FetchedDN
+	AttrsOrig types.JSONText `db:"attrs_orig"`
+}
+
+func (e *FetchedEntry) GetAttrsOrig() map[string][]string {
+	if len(e.AttrsOrig) > 0 {
+		jsonMap := make(map[string][]string)
+		if err := e.AttrsOrig.Unmarshal(&jsonMap); err != nil {
+			log.Printf("error: Unexpected unmarshal error. err: %s", err)
+		}
+
+		return jsonMap
+	}
+	return nil
+}
+
+func (f *FetchedDN) IsRoot() bool {
+	return !strings.Contains(f.Path, ".")
+}
+
+func (f *FetchedDN) DNNorm() string {
+	if f.dnNorm == "" {
+		dn, err := NormalizeDN(f.DNOrig)
+		if err != nil {
+			log.Printf("error: Invalid DN: %s, err: %v", f.DNOrig, err)
+			return ""
+		}
+		// Cached
+		f.dnNorm = dn.DNNormStr()
+	}
+	return f.dnNorm
+}
+
+func (f *FetchedDN) ParentDN() *FetchedDN {
+	if f.IsRoot() {
+		return nil
+	}
+
+	path := strings.Split(f.Path, ".")
+	parentPath := strings.Join(path[:len(path)-2], ".")
+	parentID, err := strconv.ParseInt(path[len(path)-1], 10, 64)
+	if err != nil {
+		log.Printf("error: Invalid path: %s, err: %v", f.Path, err)
+		return nil
+	}
+	dn, err := NormalizeDN(f.DNOrig)
+	if err != nil {
+		log.Printf("error: Invalid DN: %s, err: %v", f.DNOrig, err)
+		return nil
+	}
+	parentDN := dn.ParentDN()
+
+	return &FetchedDN{
+		ID:     parentID,
+		Path:   parentPath,
+		DNOrig: parentDN.DNOrigStr(),
+		dnNorm: parentDN.DNNormStr(),
+		HasSub: true,
+	}
+}
+
+type RelativeDN struct {
+	Attributes []*AttributeTypeAndValue
+}
+
+func (r *RelativeDN) OrigStr() string {
+	var b strings.Builder
+	b.Grow(128)
+	for i, attr := range r.Attributes {
+		if i > 0 {
+			b.WriteString("+")
+		}
+		b.WriteString(attr.TypeOrig)
+		b.WriteString("=")
+		b.WriteString(attr.ValueOrig)
+	}
+	return b.String()
+}
+
+func (r *RelativeDN) NormStr() string {
+	var b strings.Builder
+	b.Grow(128)
+	for i, attr := range r.Attributes {
+		if i > 0 {
+			b.WriteString("+")
+		}
+		b.WriteString(attr.TypeNorm)
+		b.WriteString("=")
+		b.WriteString(attr.ValueNorm)
+	}
+	return b.String()
+}
+
+type AttributeTypeAndValue struct {
+	// TypeOrig is the original attribute type
+	TypeOrig string
+	// TypeNorm is the normalized attribute type
+	TypeNorm string
+	// Value is the original attribute value
+	ValueOrig string
+	// Value is the normalized attribute value
+	ValueNorm string
+}
+
+var anonymousDN = &DN{
+	RDNs: nil,
+}
+
+func NormalizeDN(dn string) (*DN, error) {
 	// Anonymous
 	if dn == "" {
 		return anonymousDN, nil
 	}
 
-	d, dnNorm, dnOrig, err := parseDN(dn)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(dnNorm)-len(suffix) < 0 {
-		// return nil, xerrors.Errorf("Invalid DN. It must have suffix. DN: %s", dn)
-		return &DN{
-			dn:     d,
-			dnNorm: dnNorm,
-			dnOrig: dnOrig,
-			suffix: suffix,
-		}, nil
-	}
-
-	for i, s := range suffix {
-		if dnNorm[len(dnNorm)-len(suffix)+i] != s {
-			return &DN{
-				dn:     d,
-				dnNorm: dnNorm,
-				dnOrig: dnOrig,
-				suffix: suffix,
-			}, nil
-		}
-	}
-
-	// Remove suffix DN
-	d.RDNs = d.RDNs[:len(d.RDNs)-len(suffix)]
-	dnNorm = dnNorm[:len(dnNorm)-len(suffix)]
-	dnOrig = dnOrig[:len(dnOrig)-len(suffix)]
-
-	return &DN{
-		dn:     d,
-		dnNorm: dnNorm,
-		dnOrig: dnOrig,
-		suffix: suffix,
-	}, nil
+	return ParseDN(dn)
 }
 
 func (d *DN) DNNormStr() string {
-	return strings.Join(d.dnNorm, ",")
+	var b strings.Builder
+	b.Grow(256)
+	for i, rdn := range d.RDNs {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString(rdn.NormStr())
+	}
+	return b.String()
 }
 
 func (d *DN) DNOrigStr() string {
-	return strings.Join(d.dnOrig, ",")
+	var b strings.Builder
+	b.Grow(256)
+	for i, rdn := range d.RDNs {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString(rdn.OrigStr())
+	}
+	return b.String()
 }
 
 func (d *DN) RDNNormStr() string {
-	if d.IsDC() {
-		return ""
+	var b strings.Builder
+	b.Grow(128)
+	for i, attr := range d.RDNs[0].Attributes {
+		if i > 0 {
+			b.WriteString("+")
+		}
+		b.WriteString(attr.TypeNorm)
+		b.WriteString("=")
+		b.WriteString(attr.ValueNorm)
 	}
-	return d.dnNorm[0]
+	return b.String()
 }
 
 func (d *DN) RDNOrigStr() string {
-	if d.IsDC() {
-		return ""
+	var b strings.Builder
+	b.Grow(128)
+	for i, attr := range d.RDNs[0].Attributes {
+		if i > 0 {
+			b.WriteString("+")
+		}
+		b.WriteString(attr.TypeOrig)
+		b.WriteString("=")
+		b.WriteString(attr.ValueOrig)
 	}
-	return d.dnOrig[0]
+	return b.String()
 }
 
 func (d *DN) Equal(o *DN) bool {
+	if d == nil {
+		return o == nil
+	}
 	return d.DNNormStr() == o.DNNormStr()
 }
 
@@ -98,14 +205,14 @@ func (d *DN) RDN() map[string]string {
 	}
 
 	// Check DC case
-	if len(d.dn.RDNs) == 0 {
+	if len(d.RDNs) == 0 {
 		return map[string]string{}
 	}
 
-	m := make(map[string]string, len(d.dn.RDNs[0].Attributes))
+	m := make(map[string]string, len(d.RDNs[0].Attributes))
 
-	for _, a := range d.dn.RDNs[0].Attributes {
-		m[a.Type] = a.Value
+	for _, a := range d.RDNs[0].Attributes {
+		m[a.TypeNorm] = a.ValueNorm
 	}
 
 	d.cachedRDN = m
@@ -113,51 +220,69 @@ func (d *DN) RDN() map[string]string {
 	return m
 }
 
-func (d *DN) ModifyRDN(newRDN string) (*DN, error) {
-	nd := make([]string, len(d.dnOrig))
-	for i, v := range d.dnOrig {
+func (d *DN) ModifyRDN(newRDN string, deleteOld bool) (*DN, *RelativeDN, error) {
+	newDN, err := ParseDN(newRDN)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Clone and apply the change
+	newRDNs := make([]*RelativeDN, len(d.RDNs))
+	var oldRDN *RelativeDN
+	for i, v := range d.RDNs {
 		if i == 0 {
-			nd[i] = newRDN
+			if !deleteOld {
+				oldRDN = v
+			}
+			newRDNs[i] = newDN.RDNs[0]
 		} else {
-			nd[i] = v
+			newRDNs[i] = v
 		}
 	}
-	nd = append(nd, d.suffix...)
 
-	return NormalizeDN(d.suffix, strings.Join(nd, ","))
+	return &DN{
+		RDNs: newRDNs,
+	}, oldRDN, nil
 }
 
 func (d *DN) Move(newParentDN *DN) (*DN, error) {
-	newDN := d.RDNOrigStr() + "," + newParentDN.DNOrigStr()
-	return NormalizeDN(d.suffix, newDN)
+	leaf := d.RDNs[0]
+
+	// Clone and apply the change
+	newRDNs := make([]*RelativeDN, len(newParentDN.RDNs)+1)
+	newRDNs[0] = leaf
+	for i, v := range newParentDN.RDNs {
+		newRDNs[i+1] = v
+	}
+
+	return &DN{
+		RDNs: newRDNs,
+	}, nil
 }
 
 func (d *DN) ParentDN() *DN {
-	if d.IsDC() {
+	if d.IsRoot() {
 		return nil
 	}
-	var p *DN
-	if len(d.dnOrig) == 1 {
-		// Parent is DC
-		p, _ = NormalizeDN(d.suffix, strings.Join(d.suffix, ","))
+
+	return &DN{
+		RDNs: d.RDNs[1:],
 	}
+}
 
-	nd := d.dnOrig[1:]
-	nd = append(nd, d.suffix...)
-	p, _ = NormalizeDN(d.suffix, strings.Join(nd, ","))
-
-	return p
+func (d *DN) IsRoot() bool {
+	return len(d.RDNs) == 1
 }
 
 func (d *DN) IsDC() bool {
-	return len(d.suffix) > 0 && len(d.dnNorm) == 0
-}
-
-func (d *DN) IsContainer() bool {
-	// TODO Check other container?
-	return d.IsDC() || strings.HasPrefix(d.dnNorm[0], "ou=")
+	for _, attr := range d.RDNs[0].Attributes {
+		if attr.TypeNorm == "dc" {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *DN) IsAnonymous() bool {
-	return len(d.suffix) == 0 && len(d.dnNorm) == 0
+	return len(d.RDNs) == 0
 }

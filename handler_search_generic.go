@@ -74,22 +74,8 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	// TODO optimize collecting all container DN orig
-	dnOrigCache, err := collectAllNodeOrig(nil)
-	if err != nil {
-		log.Printf("warn: Failed to collect all node orig. err: %+v", err)
-		responseSearchError(w, err)
-		return
-	}
-	// create cache and hold it in query object for using in query filter process
-	parentIDCache := make(map[string]int64, len(dnOrigCache))
-	for k, v := range dnOrigCache {
-		dn, _ := s.NormalizeDN(v)
-		parentIDCache[dn.DNNormStr()] = k
-	}
-
 	// Phase 3: filter converting
-	q, err := ToQuery(schemaMap, r.Filter(), dnOrigCache, parentIDCache)
+	q, err := ToQuery(s, schemaMap, r.Filter())
 	if err != nil {
 		log.Printf("info: query error: %#v", err)
 
@@ -166,20 +152,12 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	} else {
 		w.Write(res)
 	}
-
-	return
 }
 
 func responseEntry(s *Server, w ldap.ResponseWriter, r message.SearchRequest, searchEntry *SearchEntry) {
 	log.Printf("Response Entry: %+v", searchEntry)
 
-	var dn string
-	if searchEntry.DNOrigStr() == "" {
-		dn = s.SuffixOrigStr()
-	} else {
-		dn = searchEntry.DNOrigStr() + "," + s.SuffixOrigStr()
-	}
-	e := ldap.NewSearchResultEntry(dn)
+	e := ldap.NewSearchResultEntry(searchEntry.DNOrigStr())
 
 	sentAttrs := map[string]struct{}{}
 
@@ -244,7 +222,7 @@ func responseEntry(s *Server, w ldap.ResponseWriter, r message.SearchRequest, se
 func responseSearchError(w ldap.ResponseWriter, err error) {
 	var ldapErr *LDAPError
 	if ok := xerrors.As(err, &ldapErr); ok {
-		if ldapErr.Code != ldap.LDAPResultSuccess {
+		if ldapErr.Code != ldap.LDAPResultSuccess && !ldapErr.IsNoSuchObjectError() {
 			log.Printf("warn: Search LDAP error. err: %+v", err)
 		}
 
@@ -259,14 +237,14 @@ func responseSearchError(w ldap.ResponseWriter, err error) {
 	}
 }
 
-func expandIn(cid []int64) (string, map[string]int64) {
-	s := make([]string, len(cid))
-	m := make(map[string]int64, len(cid))
+func expandContainersIn(containers []*FetchedDNOrig) (string, map[string]int64) {
+	s := make([]string, len(containers))
+	m := make(map[string]int64, len(containers))
 
-	for i, id := range cid {
+	for i, c := range containers {
 		k := "parent_id_" + strconv.Itoa(i)
 		s[i] = ":" + k
-		m[k] = id
+		m[k] = c.ID
 	}
 	return strings.Join(s, ","), m
 }

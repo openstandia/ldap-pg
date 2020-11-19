@@ -21,6 +21,10 @@ func (e *LDAPError) Unwrap() error {
 	return e.err
 }
 
+func (e *LDAPError) IsNoSuchObjectError() bool {
+	return e.Code == ldap.LDAPResultNoSuchObject
+}
+
 func NewSuccess() *LDAPError {
 	return &LDAPError{
 		Code: ldap.LDAPResultSuccess,

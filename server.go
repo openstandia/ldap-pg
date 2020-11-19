@@ -18,16 +18,14 @@ import (
 	"github.com/jsimonetti/pwscheme/ssha512"
 
 	//"github.com/hashicorp/logutils"
-	"github.com/jmoiron/sqlx"
+
 	_ "github.com/lib/pq"
 	ldap "github.com/openstandia/ldapserver"
 )
 
 var (
-	db        *sqlx.DB
 	schemaMap SchemaMap
 	mapper    *Mapper
-	rootDN    *DN
 )
 
 type ServerConfig struct {
@@ -48,6 +46,7 @@ type ServerConfig struct {
 	PProfServer       string
 	GoMaxProcs        int
 	MigrationEnabled  bool
+	QueryTranslator   string
 }
 
 type Server struct {
@@ -186,7 +185,7 @@ func (s *Server) Start() {
 		Label("Search - ROOT DSE")
 
 	routes.Search(NewHandler(s, handleSearchRootDN)).
-		BaseDn(s.rootDN.DNOrigStr() + "," + s.GetSuffix()).
+		BaseDn(s.rootDN.DNOrigStr()).
 		Scope(ldap.SearchRequestScopeBaseObject).
 		Label("Search - root DN")
 
@@ -379,5 +378,5 @@ func (s *Server) GetRootPW() string {
 }
 
 func (s *Server) NormalizeDN(dn string) (*DN, error) {
-	return NormalizeDN(s.SuffixNorm(), dn)
+	return NormalizeDN(dn)
 }

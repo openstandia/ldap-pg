@@ -1,21 +1,18 @@
 package main
 
 import (
-	"fmt"
 	"log"
-	"strconv"
-	"strings"
 
 	"github.com/jmoiron/sqlx"
 	"golang.org/x/xerrors"
 )
 
 func (r *Repository) Update(tx *sqlx.Tx, oldEntry, newEntry *ModifyEntry) error {
-	if newEntry.dbEntryId == 0 {
+	if newEntry.dbEntryID == 0 {
 		return xerrors.Errorf("Invalid dbEntryId for update DBEntry.")
 	}
 
-	dbEntry, err := mapper.ModifyEntryToDBEntry(newEntry)
+	dbEntry, err := mapper.ModifyEntryToDBEntry(tx, newEntry)
 	if err != nil {
 		return err
 	}
@@ -30,182 +27,182 @@ func (r *Repository) Update(tx *sqlx.Tx, oldEntry, newEntry *ModifyEntry) error 
 		return xerrors.Errorf("Failed to update entry. entry: %v, err: %w", newEntry, err)
 	}
 
-	if oldEntry != nil {
-		// TODO move to schema
-		memberAttrs := []string{"member", "uniqueMember"}
-		for _, ma := range memberAttrs {
-			diff := calcDiffAttr(oldEntry, newEntry, ma)
-
-			err := r.addMembers(tx, dbEntry.ID, ma, diff.add)
-			if err != nil {
-				return err
-			}
-
-			err = r.deleteMembers(tx, dbEntry.ID, ma, diff.del)
-			if err != nil {
-				return err
-			}
-		}
-	}
-
 	return nil
 }
 
-func (r *Repository) addMembers(tx *sqlx.Tx, id int64, attrNameNorm string, dnNorms []string) error {
-	if len(dnNorms) == 0 {
-		return nil
-	}
-
-	nodeNormCache, err := collectAllNodeNorm()
-	if err != nil {
-		return err
-	}
-
-	where := make([]string, len(dnNorms))
-	params := make(map[string]interface{}, len(dnNorms)*2+2)
-	params["member_id"] = id
-	params["attr_name_norm"] = attrNameNorm
-
-	for i, dnNorm := range dnNorms {
-		dn, err := r.server.NormalizeDN(dnNorm)
-		if err != nil {
-			return NewInvalidDNSyntax()
-		}
-
-		parentID, ok := nodeNormCache[dn.ParentDN().DNNormStr()]
-		if !ok {
-			return NewInvalidDNSyntax()
-		}
-
-		key1 := "parent_id_" + strconv.Itoa(i)
-		key2 := "rdn_norm_" + strconv.Itoa(i)
-
-		where[i] = fmt.Sprintf("(parent_id = :%s AND rdn_norm = :%s)", key1, key2)
-		params[key1] = parentID
-		params[key2] = dn.RDNNormStr()
-	}
-
-	q := fmt.Sprintf(`INSERT INTO ldap_member (member_id, attr_name_norm, member_of_id)
-		SELECT :member_id ::::BIGINT, :attr_name_norm, id FROM ldap_entry WHERE %s`, strings.Join(where, " OR "))
-
-	log.Printf("addMemberQuery: %s, params: %v", q, params)
-
-	_, err = tx.NamedExec(q, params)
-	if err != nil {
-		return xerrors.Errorf("Failed to add member. id: %d, attr: %s, dnNorms: %v, err: %w", id, attrNameNorm, dnNorms, err)
-	}
-	return nil
-}
-
-func (r *Repository) deleteMembers(tx *sqlx.Tx, id int64, attrNameNorm string, dnNorms []string) error {
-	if len(dnNorms) == 0 {
-		return nil
-	}
-
-	nodeNormCache, err := collectAllNodeNorm()
-	if err != nil {
-		return err
-	}
-
-	where := make([]string, len(dnNorms))
-	params := make(map[string]interface{}, len(dnNorms)*2+2)
-	params["member_id"] = id
-	params["attr_name_norm"] = attrNameNorm
-
-	for i, dnNorm := range dnNorms {
-		dn, err := r.server.NormalizeDN(dnNorm)
-		if err != nil {
-			return NewInvalidDNSyntax()
-		}
-
-		parentID, ok := nodeNormCache[dn.ParentDN().DNNormStr()]
-		if !ok {
-			return NewInvalidDNSyntax()
-		}
-
-		key1 := "parent_id_" + strconv.Itoa(i)
-		key2 := "rdn_norm_" + strconv.Itoa(i)
-
-		where[i] = fmt.Sprintf("(parent_id = :%s AND rdn_norm = :%s)", key1, key2)
-		params[key1] = parentID
-		params[key2] = dn.RDNNormStr()
-	}
-
-	q := fmt.Sprintf(`DELETE FROM ldap_member WHERE member_id = :member_id AND attr_name_norm = :attr_name_norm AND member_of_id IN (
-		SELECT id FROM ldap_entry
-			WHERE %s
-	)`, strings.Join(where, " OR "))
-
-	log.Printf("deleteMemberQuery: %s, params: %v", q, params)
-
-	_, err = tx.NamedExec(q, params)
-	if err != nil {
-		return xerrors.Errorf("Failed to delete member. id: %d, attr: %s, dnNorms: %v, err: %w", id, attrNameNorm, dnNorms, err)
-	}
-	return nil
-}
-
-func (r *Repository) UpdateDN(oldDN, newDN *DN, deleteOld bool) error {
+func (r *Repository) UpdateDN(oldDN, newDN *DN, oldRDN *RelativeDN) error {
 	tx := r.db.MustBegin()
-	err := r.updateDN(tx, oldDN, newDN, deleteOld)
+
+	err := r.updateDN(tx, oldDN, newDN, oldRDN)
 	if err != nil {
-		tx.Rollback()
+		rollback(tx)
 		return err
 	}
 
-	err = tx.Commit()
-
-	return err
+	return commit(tx)
 }
 
-func (r *Repository) updateDN(tx *sqlx.Tx, oldDN, newDN *DN, deleteOld bool) error {
-	oldEntry, err := r.FindByDNWithLock(tx, oldDN)
+func (r *Repository) updateDN(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *RelativeDN) error {
+	// Lock the entry
+	oldEntry, err := r.FindEntryByDN(tx, oldDN, true)
 	if err != nil {
+		log.Printf("debug: Failed to fetch the entry by DN: %v, err: %v", oldDN, err)
 		return NewNoSuchObject()
 	}
 
-	parentID := oldEntry.dbParentID
 	if !oldDN.ParentDN().Equal(newDN.ParentDN()) {
-		p, err := r.FindByDNWithLock(tx, newDN.ParentDN())
+		// Move or copy onto the new parent case
+		return r.updateDNOntoNewParent(tx, oldDN, newDN, oldRDN, oldEntry)
+	} else {
+		// Update rdn only case
+		return r.updateRDN(tx, oldDN, newDN, oldRDN, oldEntry)
+	}
+}
+
+func (r *Repository) updateDNOntoNewParent(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *RelativeDN, oldEntry *ModifyEntry) error {
+	oldParentDN := oldDN.ParentDN()
+	newParentDN := newDN.ParentDN()
+
+	newParentID := oldEntry.dbParentID
+	var oldParentID int64 = -1
+
+	if !oldParentDN.Equal(newParentDN) {
+		// Lock the old/new parent entry
+		newParentFetchedDN, err := r.FindDNByDNWithLock(tx, newParentDN, true)
 		if err != nil {
+			log.Printf("debug: Failed to fetch the new parent by DN: %s, err: %v", newParentDN.DNOrigStr(), err)
 			return NewNoSuchObject()
 		}
-		parentID = p.dbEntryId
+		oldParentFetchedDN, err := r.FindDNByDNWithLock(tx, oldParentDN, true)
+		if err != nil {
+			log.Printf("debug: Failed to fetch the old parent by DN: %s, err: %v", oldParentDN.DNOrigStr(), err)
+			return NewNoSuchObject()
+		}
+
+		newParentID = newParentFetchedDN.ID
+		oldParentID = oldParentFetchedDN.ID
+
+		if !newParentFetchedDN.HasSub {
+			// If the parent doesn't have any sub, need to insert tree entry first.
+			// Also, need to lock the parent entry of the parent before it.
+			newGrandParentDN := newParentDN.ParentDN()
+			if newGrandParentDN != nil {
+				_, err := r.FindDNByDNWithLock(tx, newParentDN.ParentDN(), true)
+				if err != nil {
+					return NewNoSuchObject()
+				}
+			}
+
+			// Register as container
+			err = r.insertTree(tx, newParentFetchedDN.ID, newParentFetchedDN.IsRoot())
+			if err != nil {
+				return err
+			}
+		}
+
+		// Move tree if the operation is for tree which means the old entry has children
+		if oldEntry.hasSub {
+			if err := r.moveTree(tx, oldEntry.path, newParentFetchedDN.Path); err != nil {
+				return err
+			}
+		}
 	}
 
 	newEntry := oldEntry.ModifyRDN(newDN)
-	dbEntry, err := mapper.ModifyEntryToDBEntry(newEntry)
+
+	if oldRDN != nil {
+		for _, attr := range oldRDN.Attributes {
+			if err := newEntry.Add(attr.TypeOrig, []string{attr.ValueOrig}); err != nil {
+				log.Printf("warn: Failed to remain old RDN, err: %s", err)
+				return err
+			}
+		}
+	}
+
+	dbEntry, err := mapper.ModifyEntryToDBEntry(tx, newEntry)
 	if err != nil {
 		return err
 	}
 
 	_, err = tx.NamedStmt(updateDNByIdStmt).Exec(map[string]interface{}{
-		"id":           oldEntry.dbEntryId,
-		"parent_id":    parentID,
-		"updated":      dbEntry.Updated,
+		"id":           oldEntry.dbEntryID,
+		"parent_id":    newParentID,
+		"new_rdn_norm": newDN.RDNNormStr(),
+		"new_rdn_orig": newDN.RDNOrigStr(),
+		"attrs_norm":   dbEntry.AttrsNorm,
+		"attrs_orig":   dbEntry.AttrsOrig,
+	})
+	if err != nil {
+		return xerrors.Errorf("Failed to update entry DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
+	}
+
+	if !oldParentDN.Equal(newParentDN) {
+		// Check if the old parent entry still has children
+		hasSub, err := r.hasSub(tx, oldParentID)
+		if err != nil {
+			return err
+		}
+
+		// Delete the tree entry if the old parent doesn't have any children now
+		if !hasSub {
+			if err := r.deleteTreeByID(tx, oldParentID); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (r *Repository) updateRDN(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *RelativeDN, oldEntry *ModifyEntry) error {
+	// Update the entry even if it's same RDN to update modifyTimestamp
+	newEntry := oldEntry.ModifyRDN(newDN)
+
+	if oldRDN != nil {
+		for _, attr := range oldRDN.Attributes {
+			if err := newEntry.Add(attr.TypeOrig, []string{attr.ValueOrig}); err != nil {
+				log.Printf("info: Schema error but ignore it. err: %s", err)
+			}
+		}
+	}
+
+	dbEntry, err := mapper.ModifyEntryToDBEntry(tx, newEntry)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.NamedStmt(updateRDNByIdStmt).Exec(map[string]interface{}{
+		"id":           oldEntry.dbEntryID,
 		"new_rdn_norm": newDN.RDNNormStr(),
 		"new_rdn_orig": newDN.RDNOrigStr(),
 		"attrs_norm":   dbEntry.AttrsNorm,
 		"attrs_orig":   dbEntry.AttrsOrig,
 	})
 
-	if !deleteOld {
-		add, err := mapper.ModifyEntryToAddEntry(oldEntry)
-		if err != nil {
-			return err
-		}
-		_, err = r.insertWithTx(tx, add)
-		if err != nil {
-			return err
-		}
+	if err != nil {
+		return xerrors.Errorf("Failed to update entry DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
 	}
 
+	return nil
+
+}
+
+func (r *Repository) moveTree(tx *sqlx.Tx, sourcePath, newParentPath string) error {
+	// http://patshaughnessy.net/2017/12/14/manipulating-trees-using-sql-and-the-postgres-ltree-extension
+	// update tree set path = DESTINATION_PATH || subpath(path, nlevel(SOURCE_PATH)-1) where path <@ SOURCE_PATH;
+
+	q := `
+		UPDATE ldap_tree SET path = :dest_path || subpath(path, nlevel(:source_path)-1)
+		WHERE path <@ :source_path
+	`
+
+	_, err := tx.NamedExec(q, map[string]interface{}{
+		"dest_path":   newParentPath,
+		"source_path": sourcePath,
+	})
+
 	if err != nil {
-		if strings.Contains(err.Error(), "duplicate key value violates unique constraint") {
-			log.Printf("warn: Failed to update entry DN because of already exists. oldDN: %s newDN: %s err: %+v", oldDN.DNNormStr(), newDN.DNNormStr(), err)
-			return NewAlreadyExists()
-		}
-		return xerrors.Errorf("Failed to update entry DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
+		return xerrors.Errorf("Failed to move tree, sourcePath: %s, destPath: %s, err: %w", sourcePath, newParentPath, err)
 	}
 
 	return nil

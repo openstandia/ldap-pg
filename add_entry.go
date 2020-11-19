@@ -41,8 +41,8 @@ func (j *AddEntry) SetDN(dn *DN) {
 	}
 }
 
-func (j *AddEntry) IsContainer() bool {
-	return j.dn.IsContainer()
+func (j *AddEntry) IsRoot() bool {
+	return j.dn.IsRoot()
 }
 
 func (j *AddEntry) Member() []*MemberEntry {
@@ -64,16 +64,10 @@ func (j *AddEntry) Member() []*MemberEntry {
 }
 
 func (j *AddEntry) RDNNorm() string {
-	if j.dn.IsDC() {
-		return ""
-	}
 	return j.dn.RDNNormStr()
 }
 
 func (j *AddEntry) RDNOrig() string {
-	if j.dn.IsDC() {
-		return ""
-	}
 	return j.dn.RDNOrigStr()
 }
 
@@ -119,7 +113,9 @@ func (j *AddEntry) addsv(value *SchemaValue) error {
 	current, ok := j.attributes[name]
 	if !ok {
 		j.attributes[name] = value
+		return nil
 	} else {
+		// TODO
 		current.Add(value)
 	}
 	return nil

@@ -25,7 +25,8 @@ func TestParallel(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
-		AddDC(),
+		AddDC("com"),
+		AddDC("example", "dc=com"),
 		AddOU("Users"),
 		Parallel{
 			100,
@@ -150,7 +151,8 @@ func TestBind(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
-		AddDC(),
+		AddDC("com"),
+		AddDC("example", "dc=com"),
 		AddOU("Users"),
 		Add{
 			"uid=user1", "ou=Users",
@@ -240,7 +242,8 @@ func TestSearch(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
-		AddDC(),
+		AddDC("com"),
+		AddDC("example", "dc=com"),
 		AddOU("Users"),
 		Add{
 			"uid=user1", "ou=Users",
@@ -352,7 +355,8 @@ func TestScopeSearch(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
-		AddDC(),
+		AddDC("com"),
+		AddDC("example", "dc=com"),
 		AddOU("Users"),
 		AddOU("SubUsers", "ou=Users"),
 		Add{
@@ -615,8 +619,10 @@ func TestBasicCRUD(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
-		AddDC(),
+		AddDC("com"),
+		AddDC("example", "dc=com"),
 		AddOU("Users"),
+		AddOU("Groups"),
 		Add{
 			"uid=user1", "ou=Users",
 			M{
@@ -692,16 +698,72 @@ func TestBasicCRUD(t *testing.T) {
 			},
 			&AssertEntry{},
 		},
+		// Rename with old delete
 		ModifyDN{
 			"uid=user1", "ou=Users",
 			"uid=user1-rename",
 			true,
 			"",
+			false,
+			&AssertRename{},
+		},
+		// Rename without old delete
+		ModifyDN{
+			"uid=user1-rename", "ou=Users",
+			"uid=user1-rename2",
+			false,
+			"",
+			false,
+			&AssertRename{},
+		},
+		// No rename without old delete
+		ModifyDN{
+			"uid=user1-rename2", "ou=Users",
+			"uid=user1-rename2",
+			false,
+			"",
+			false,
+			&AssertRename{},
+		},
+		// No rename with old delete
+		ModifyDN{
+			"uid=user1-rename2", "ou=Users",
+			"uid=user1-rename2",
+			true,
+			"",
+			false,
+			&AssertRename{},
+		},
+		// Change parent of the leaf case
+		ModifyDN{
+			"uid=user1-rename2", "ou=Users",
+			"uid=user1-rename2",
+			true,
+			"ou=Groups",
+			false,
 			&AssertRename{},
 		},
 		Delete{
-			"uid=user1-rename", "ou=Users",
+			"uid=user1-rename2", "ou=Groups",
 			&AssertNoEntry{},
+		},
+		Add{
+			"uid=user1", "ou=Users",
+			M{
+				"objectClass":  A{"inetOrgPerson"},
+				"sn":           A{"user1"},
+				"userPassword": A{SSHA("password1")},
+			},
+			&AssertEntry{},
+		},
+		// Move tree case
+		ModifyDN{
+			"ou=Users", "",
+			"ou=Users",
+			true,
+			"ou=Groups",
+			true,
+			&AssertRename{},
 		},
 	}
 
@@ -718,7 +780,8 @@ func TestOperationalAttributes(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
-		AddDC(),
+		AddDC("com"),
+		AddDC("example", "dc=com"),
 		AddOU("Users"),
 		Add{
 			"uid=user1", "ou=Users",
@@ -747,7 +810,8 @@ func TestOperationalAttributesMigration(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
-		AddDC(),
+		AddDC("com"),
+		AddDC("example", "dc=com"),
 		AddOU("Users"),
 		Add{
 			"uid=user1", "ou=Users",
@@ -786,7 +850,8 @@ func TestMemberOf(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
-		AddDC(),
+		AddDC("com"),
+		AddDC("example", "dc=com"),
 		AddOU("Groups"),
 		AddOU("Users"),
 		Add{
