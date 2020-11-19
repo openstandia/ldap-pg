@@ -43,7 +43,8 @@
 - Network
   - [ ] SSL/StartTLS
 - [ ] Prometheus metrics
-- [ ] Auto create/migrate table for PostgreSQL
+- [x] Auto create table for PostgreSQL
+- [ ] Auto migrate table for PostgreSQL
 
 ## Requirement
 
