@@ -118,7 +118,7 @@ func (m *Mapper) dnArrayToIDArray(tx *sqlx.Tx, norm map[string]interface{}, attr
 
 		memberNorm := make([]int64, len(members))
 		for i, v := range members {
-			dn, err := NormalizeDN(nil, v)
+			dn, err := NormalizeDN(v)
 			if err != nil {
 				return NewInvalidPerSyntax(attrName, i)
 			}

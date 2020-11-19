@@ -45,10 +45,6 @@ func (j *AddEntry) IsRoot() bool {
 	return j.dn.IsRoot()
 }
 
-func (j *AddEntry) IsContainer() bool {
-	return j.dn.IsContainer()
-}
-
 func (j *AddEntry) Member() []*MemberEntry {
 	list := []*MemberEntry{}
 

@@ -10,7 +10,6 @@ import (
 
 type DN struct {
 	RDNs      []*RelativeDN
-	suffix    []string
 	cachedRDN map[string]string
 }
 
@@ -44,7 +43,7 @@ func (f *FetchedDN) IsRoot() bool {
 
 func (f *FetchedDN) DNNorm() string {
 	if f.dnNorm == "" {
-		dn, err := NormalizeDN(nil, f.DNOrig)
+		dn, err := NormalizeDN(f.DNOrig)
 		if err != nil {
 			log.Printf("error: Invalid DN: %s, err: %v", f.DNOrig, err)
 			return ""
@@ -67,7 +66,7 @@ func (f *FetchedDN) ParentDN() *FetchedDN {
 		log.Printf("error: Invalid path: %s, err: %v", f.Path, err)
 		return nil
 	}
-	dn, err := NormalizeDN(nil, f.DNOrig)
+	dn, err := NormalizeDN(f.DNOrig)
 	if err != nil {
 		log.Printf("error: Invalid DN: %s, err: %v", f.DNOrig, err)
 		return nil
@@ -127,11 +126,10 @@ type AttributeTypeAndValue struct {
 }
 
 var anonymousDN = &DN{
-	RDNs:   nil,
-	suffix: nil,
+	RDNs: nil,
 }
 
-func NormalizeDN(suffix []string, dn string) (*DN, error) {
+func NormalizeDN(dn string) (*DN, error) {
 	// Anonymous
 	if dn == "" {
 		return anonymousDN, nil
@@ -234,8 +232,7 @@ func (d *DN) ModifyRDN(newRDN string) (*DN, error) {
 	}
 
 	return &DN{
-		RDNs:   newRDNs,
-		suffix: d.suffix,
+		RDNs: newRDNs,
 	}, nil
 }
 
@@ -250,8 +247,7 @@ func (d *DN) Move(newParentDN *DN) (*DN, error) {
 	}
 
 	return &DN{
-		RDNs:   newRDNs,
-		suffix: newParentDN.suffix,
+		RDNs: newRDNs,
 	}, nil
 }
 
@@ -261,8 +257,7 @@ func (d *DN) ParentDN() *DN {
 	}
 
 	return &DN{
-		RDNs:   d.RDNs[1:],
-		suffix: d.suffix,
+		RDNs: d.RDNs[1:],
 	}
 }
 
@@ -279,18 +274,6 @@ func (d *DN) IsDC() bool {
 	return false
 }
 
-func (d *DN) GetDCOrig() string {
-	if len(d.suffix) > 0 {
-		return d.suffix[0]
-	}
-	return ""
-}
-
-func (d *DN) IsContainer() bool {
-	// TODO Can't implment here
-	return d.IsDC()
-}
-
 func (d *DN) IsAnonymous() bool {
-	return len(d.suffix) == 0 && len(d.RDNs) == 0
+	return len(d.RDNs) == 0
 }

@@ -213,7 +213,7 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []st
 	if len(q.PendingParams) > 0 {
 		// Create contaner DN cache
 		for k, v := range q.IdToDNOrigCache {
-			dn, err := NormalizeDN(r.server.suffixOrig, v)
+			dn, err := NormalizeDN(v)
 			if err != nil {
 				log.Printf("error: Failed to normalize DN fetched from DB, err: %s", err)
 				return 0, 0, NewUnavailable()

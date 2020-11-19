@@ -234,7 +234,7 @@ func normalize(s *Schema, value string) (string, error) {
 	case "caseIgnoreMatch":
 		return strings.ToLower(normalizeSpace(value)), nil
 	case "distinguishedNameMatch":
-		return normalizeDistinguishedName(s.server.SuffixNorm(), value)
+		return normalizeDistinguishedName(value)
 	case "caseExactIA5Match":
 		return normalizeSpace(value), nil
 	case "caseIgnoreIA5Match":
@@ -250,7 +250,7 @@ func normalize(s *Schema, value string) (string, error) {
 	case "UUIDMatch":
 		return normalizeUUID(value)
 	case "uniqueMemberMatch":
-		nv, err := normalizeDistinguishedName(s.server.SuffixNorm(), value)
+		nv, err := normalizeDistinguishedName(value)
 		if err != nil {
 			// fallback
 			return strings.ToLower(normalizeSpace(value)), nil
@@ -471,8 +471,8 @@ func ParseDN(str string) (*DN, error) {
 	return dn, nil
 }
 
-func normalizeDistinguishedName(suffix []string, value string) (string, error) {
-	dn, err := NormalizeDN(suffix, value)
+func normalizeDistinguishedName(value string) (string, error) {
+	dn, err := NormalizeDN(value)
 	if err != nil {
 		return "", err
 	}
