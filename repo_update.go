@@ -33,15 +33,14 @@ func (r *Repository) Update(tx *sqlx.Tx, oldEntry, newEntry *ModifyEntry) error 
 
 func (r *Repository) UpdateDN(oldDN, newDN *DN, deleteOld bool) error {
 	tx := r.db.MustBegin()
+
 	err := r.updateDN(tx, oldDN, newDN, deleteOld)
 	if err != nil {
-		tx.Rollback()
+		rollback(tx)
 		return err
 	}
 
-	err = tx.Commit()
-
-	return err
+	return commit(tx)
 }
 
 func (r *Repository) updateDN(tx *sqlx.Tx, oldDN, newDN *DN, deleteOld bool) error {

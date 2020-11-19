@@ -118,7 +118,7 @@ type FetchedDNOrig struct {
 func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []string,
 	reqMemberOf, isHasSubordinatesRequested bool, handler func(entry *SearchEntry) error) (int32, int32, error) {
 
-	fetchedDN, err := r.FindPathByDN(nil, baseDN)
+	fetchedDN, err := r.FindDNByDNWithLock(nil, baseDN, false)
 	if err != nil {
 		log.Printf("debug: Failed to find DN by DN. err: %+v", err)
 		return 0, 0, err
@@ -247,7 +247,7 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []st
 			}
 			// No cache, need to full search...
 
-			dn, err := r.FindPathByDN(nil, pendingDN)
+			dn, err := r.FindDNByDNWithLock(nil, pendingDN, false)
 			if err != nil {
 				log.Printf("debug: Can't find the DN by DN: %s, err: %s", pendingDN.DNNormStr(), err)
 				continue
@@ -346,22 +346,6 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []st
 	return maxCount, count, nil
 }
 
-func getDC(tx *sqlx.Tx) (*FetchedDBEntry, error) {
-	var err error
-	dest := FetchedDBEntry{}
-
-	if tx != nil {
-		err = tx.NamedStmt(getDCStmt).Get(&dest, map[string]interface{}{})
-	} else {
-		err = getDCStmt.Get(&dest, map[string]interface{}{})
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	return &dest, nil
-}
-
 type FindOption struct {
 	Lock       bool
 	FetchAttrs bool
@@ -397,36 +381,6 @@ func (r *Repository) PrepareFindDNByDN(dn *DN, opt *FindOption) (*sqlx.NamedStmt
 
 	return stmt, params, nil
 }
-func (r *Repository) PrepareFindPathByDN(dn *DN) (*sqlx.NamedStmt, map[string]interface{}, error) {
-	//  Key for stmt cache
-	key := fmt.Sprintf("PrepareFindPathByDN/DEPTH:%d",
-		len(dn.RDNs))
-
-	// make params
-	params := createFindTreePathByDNParams(dn)
-
-	if stmt, ok := treeStmtCache.Get(key); ok {
-		// Already cached
-		return stmt, params, nil
-	}
-
-	// Not cached yet, create query and params, then cache the stmt
-	q, err := createFindTreePathByDNSQL(dn)
-	// q, err := createFindBasePathByDNSQL(dn, opt)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	log.Printf("debug: createFindTreePathByDNSQL: %s\nparams: %v", q, params)
-
-	stmt, err := r.db.PrepareNamed(q)
-	if err != nil {
-		return nil, nil, err
-	}
-	treeStmtCache.Put(key, stmt)
-
-	return stmt, params, nil
-}
 
 func createFindTreePathByDNParams(baseDN *DN) map[string]interface{} {
 	if baseDN == nil {
@@ -444,7 +398,7 @@ func createFindTreePathByDNParams(baseDN *DN) map[string]interface{} {
 	return params
 }
 
-// createFindBasePathByDNSQL returns a SQL which selects id, parent_id, path and dn_orig.
+// createFindBasePathByDNSQL returns a SQL which selects id, parent_id, path, dn_orig and has_sub.
 func createFindBasePathByDNSQL(baseDN *DN, opt *FindOption) (string, error) {
 	if len(baseDN.RDNs) == 0 {
 		return "", xerrors.Errorf("Invalid DN, it's anonymous")
@@ -468,7 +422,8 @@ func createFindBasePathByDNSQL(baseDN *DN, opt *FindOption) (string, error) {
 				e0.parent_id,
 				` + fetchAttrsCols + `
 				` + fetchCredCols + `
-				e0.id::ltree as path
+				e0.id::ltree as path,
+				COALESCE((SELECT true FROM ldap_tree t WHERE t.id = e0.id), false) as has_sub
 			FROM
 				ldap_entry e0 
 			WHERE
@@ -476,28 +431,34 @@ func createFindBasePathByDNSQL(baseDN *DN, opt *FindOption) (string, error) {
 		`, nil
 	}
 
+	// Caution: We can't use out join when locking because it causes the following error.
+	// ERROR:  FOR UPDATE cannot be applied to the nullable side of an outer join
+	// Instead of it, use sub query in projection.
+
 	/*
 		SELECT
 			e2.rdn_orig || ',' || e1.rdn_orig || ',' || e0.rdn_orig,
 			e2.id,
 			e2.parent_id,
-			(e0.id || '.' || e1.id || '.' || e2.id) as path
+			(e0.id || '.' || e1.id || '.' || e2.id) as path,
+			COALESCE((SELECT true FROM ldap_tree t WHERE t.id = e2.id), false) as has_sub
 		FROM
 			ldap_entry e0, ldap_entry e1, ldap_entry e2
 		WHERE
 			e0.rdn_norm = 'dc=com' AND e1.rdn_norm = 'dc=example' AND e2.rdn_norm = 'ou=users'
 			AND e0.parent_id is NULL AND e1.parent_id = e0.id AND e2.parent_id = e1.id
-			;
+
 				?column?          | id | parent_id | path  | has_sub
 		----------------------------+----+-----------+-------+---------
-		ou=Users,dc=Example,dc=com |  2 |         1 | 0.1.2 |       1
+		ou=Users,dc=Example,dc=com |  2 |         1 | 0.1.2 |      t
 
 
 		SELECT
 			e3.rdn_orig || ',' || e2.rdn_orig || ',' || e1.rdn_orig || ',' || e0.rdn_orig,
 			e3.id,
 			e3.parent_id,
-			(e0.id || '.' || e1.id || '.' || e2.id || '.' || e3.id) as path
+			(e0.id || '.' || e1.id || '.' || e2.id || '.' || e3.id) as path,
+			COALESCE((SELECT true FROM ldap_tree t WHERE t.id = e3.id), false) as has_sub
 		FROM
 			ldap_entry e0, ldap_entry e1, ldap_entry e2, ldap_entry e3
 		WHERE
@@ -506,7 +467,7 @@ func createFindBasePathByDNSQL(baseDN *DN, opt *FindOption) (string, error) {
 
 						?column?                | id | parent_id |  path   | has_sub
 		----------------------------------------+----+-----------+---------+---------
-		uid=u000001,ou=Users,dc=Example,dc=com |  4 |         2 | 0.1.2.4 |       0
+		uid=u000001,ou=Users,dc=Example,dc=com |  4 |         2 | 0.1.2.4 |       f
 
 	*/
 	lastIndex := len(baseDN.RDNs) - 1
@@ -548,7 +509,8 @@ func createFindBasePathByDNSQL(baseDN *DN, opt *FindOption) (string, error) {
 	  e` + lastIndexStr + `.parent_id, 
 	  ` + fetchAttrsCols + `
 	  ` + fetchCredCols + `
-	  ` + strings.Join(proj2, " || '.' || ") + ` as path
+	  ` + strings.Join(proj2, " || '.' || ") + ` as path,
+	  COALESCE((SELECT true FROM ldap_tree t WHERE t.id = e` + lastIndexStr + `.id), false) as has_sub
 	FROM
 	  ` + strings.Join(table, ", ") + `
 	WHERE
@@ -563,145 +525,7 @@ func createFindBasePathByDNSQL(baseDN *DN, opt *FindOption) (string, error) {
 	return sql, nil
 }
 
-// createFindTreePathByDNSQL returns a SQL which selects id, parent_id, dn_orig, path and has_sub.
-// This sql can't offer lock version since it uses outer join.
-func createFindTreePathByDNSQL(baseDN *DN) (string, error) {
-	if len(baseDN.RDNs) == 0 {
-		return "", xerrors.Errorf("Invalid DN, it's anonymous")
-	}
-
-	if baseDN.IsRoot() {
-		return `
-			SELECT
-				e0.rdn_orig as dn_orig,
-				e0.id,
-				e0.parent_id,
-				e0.id::ltree as path,
-				(CASE WHEN t0.id IS NOT NULL THEN 1 ELSE 0 END) as has_sub
-			FROM
-				ldap_entry e0 
-				LEFT JOIN ldap_tree t0 ON t0.id = e0.id
-			WHERE
-				e0.rdn_norm = :rdn_norm0 AND e0.parent_id is NULL
-		`, nil
-	}
-
-	/*
-		SELECT
-			e2.rdn_orig || ',' || e1.rdn_orig || ',' || e0.rdn_orig,
-			e2.id,
-			e2.parent_id,
-			(e0.id || '.' || e1.id || '.' || e2.id) as path,
-			(CASE WHEN t0.id IS NOT NULL THEN 1 ELSE 0 END) as has_sub
-		FROM
-			ldap_entry e0, ldap_entry e1, ldap_entry e2
-			LEFT JOIN ldap_tree t0 ON t0.id = e2.id
-		WHERE
-			e0.rdn_norm = 'dc=com' AND e1.rdn_norm = 'dc=example' AND e2.rdn_norm = 'ou=users'
-			AND e0.parent_id is NULL AND e1.parent_id = e0.id AND e2.parent_id = e1.id
-			;
-				?column?          | id | parent_id | path  | has_sub
-		----------------------------+----+-----------+-------+---------
-		ou=Users,dc=Example,dc=com |  2 |         1 | 0.1.2 |       1
-
-
-		SELECT
-			e3.rdn_orig || ',' || e2.rdn_orig || ',' || e1.rdn_orig || ',' || e0.rdn_orig,
-			e3.id,
-			e3.parent_id,
-			(e0.id || '.' || e1.id || '.' || e2.id || '.' || e3.id) as path,
-			(CASE WHEN t0.id IS NOT NULL THEN 1 ELSE 0 END) as has_sub
-		FROM
-			ldap_entry e0, ldap_entry e1, ldap_entry e2, ldap_entry e3
-			LEFT JOIN ldap_tree t0 ON t0.id = e3.id
-		WHERE
-			e0.rdn_norm = 'dc=com' AND e1.rdn_norm = 'dc=example' AND e2.rdn_norm = 'ou=users' AND e3.rdn_norm = 'uid=u000001'
-			AND e0.parent_id is NULL AND e1.parent_id = e0.id AND e2.parent_id = e1.id AND e3.parent_id = e2.id
-
-						?column?                | id | parent_id |  path   | has_sub
-		----------------------------------------+----+-----------+---------+---------
-		uid=u000001,ou=Users,dc=Example,dc=com |  4 |         2 | 0.1.2.4 |       0
-
-	*/
-	lastIndex := len(baseDN.RDNs) - 1
-	lastIndexStr := strconv.Itoa(lastIndex)
-
-	// var fetchAttrs string
-	// if opt.FetchAttrs {
-	// 	fetchAttrs = `e` + strconv.Itoa(lastIndex) + `.attrs_orig, e` + lastIndexStr + `.attrs_orig,`
-	// }
-
-	proj := []string{}
-	proj2 := []string{}
-	table := []string{}
-	where := []string{}
-	where2 := []string{}
-	for index := range baseDN.RDNs {
-		proj = append(proj, fmt.Sprintf("e%d.rdn_orig", lastIndex-index))
-		proj2 = append(proj2, fmt.Sprintf("e%d.id", index))
-		table = append(table, fmt.Sprintf("ldap_entry e%d", index))
-		where = append(where, fmt.Sprintf("e%d.rdn_norm = :rdn_norm%d", index, index))
-		if index == 0 {
-			where2 = append(where2, fmt.Sprintf("e%d.parent_id is NULL", index))
-		} else {
-			where2 = append(where2, fmt.Sprintf("e%d.parent_id = e%d.id", index, index-1))
-		}
-	}
-
-	sql := `
-	SELECT
-	  ` + strings.Join(proj, " || ',' || ") + ` as dn_orig,
-	  e` + lastIndexStr + `.id, 
-	  e` + lastIndexStr + `.parent_id, 
-	  ` + strings.Join(proj2, " || '.' || ") + ` as path,
-	  (CASE WHEN t0.id IS NOT NULL THEN 1 ELSE 0 END) as has_sub
-	FROM
-	  ` + strings.Join(table, ", ") + `
-	  LEFT JOIN ldap_tree t0 ON t0.id = e` + lastIndexStr + `.id
-	WHERE
-	  ` + strings.Join(where, " AND ") + ` 
-	  AND
-	  ` + strings.Join(where2, " AND ") + ` 
-	`
-
-	log.Printf("debug: createFindTreePathSQL: %s", sql)
-
-	return sql, nil
-}
-
-func namedStmt(tx *sqlx.Tx, stmt *sqlx.NamedStmt) *sqlx.NamedStmt {
-	if tx != nil {
-		return tx.NamedStmt(stmt)
-	}
-	return stmt
-}
-
-func txLabel(tx *sqlx.Tx) string {
-	if tx == nil {
-		return "non-tx"
-	}
-	return "tx"
-}
-
-// FindPathByDN returns FetchedDN object from database by DN search.
-func (r *Repository) FindPathByDN(tx *sqlx.Tx, dn *DN) (*FetchedDN, error) {
-	stmt, params, err := r.PrepareFindPathByDN(dn)
-	if err != nil {
-		return nil, xerrors.Errorf("Failed to prepare FindDNByDN: %v, err: %w", dn, err)
-	}
-
-	var dest FetchedDN
-	err = namedStmt(tx, stmt).Get(&dest, params)
-	if err != nil {
-		if isNoResult(err) {
-			return nil, NewNoSuchObject()
-		}
-		return nil, xerrors.Errorf("Failed to fetch FindDNByDN in %s: %v, err: %w", txLabel(tx), dn, err)
-	}
-
-	return &dest, nil
-}
-
+// FindDNByDNWithLock returns FetchedDN object from database by DN search.
 func (r *Repository) FindDNByDNWithLock(tx *sqlx.Tx, dn *DN, lock bool) (*FetchedDN, error) {
 	stmt, params, err := r.PrepareFindDNByDN(dn, &FindOption{Lock: lock})
 	if err != nil {

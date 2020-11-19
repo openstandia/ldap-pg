@@ -13,21 +13,13 @@ import (
 
 var (
 	// repo_create
-	insertTreeStmt    *sqlx.NamedStmt
-	insertDCStmt      *sqlx.NamedStmt
-	insertUnderDCStmt *sqlx.NamedStmt
 
 	// repo_read
 	findContainerByPathStmt        *sqlx.NamedStmt
 	findIDByParentIDAndRDNNormStmt *sqlx.NamedStmt
 
-	collectNodeOrigByParentIDStmt *sqlx.NamedStmt
-	collectNodeNormByParentIDStmt *sqlx.NamedStmt
-	getDCStmt                     *sqlx.NamedStmt
-	getDCDNOrigStmt               *sqlx.NamedStmt
-	filterStmtMap                 StmtCache
-	treeStmtCache                 StmtCache
-	findByDNStmtCache             StmtCache
+	filterStmtMap StmtCache
+	treeStmtCache StmtCache
 
 	// repo_update
 	updateAttrsByIdStmt *sqlx.NamedStmt

@@ -501,9 +501,32 @@ func isNoResult(err error) bool {
 	return err == sql.ErrNoRows
 }
 
+func namedStmt(tx *sqlx.Tx, stmt *sqlx.NamedStmt) *sqlx.NamedStmt {
+	if tx != nil {
+		return tx.NamedStmt(stmt)
+	}
+	return stmt
+}
+
+func txLabel(tx *sqlx.Tx) string {
+	if tx == nil {
+		return "non-tx"
+	}
+	return "tx"
+}
+
 func rollback(tx *sqlx.Tx) {
 	err := tx.Rollback()
 	if err != nil {
 		log.Printf("warn: Detect error when rollback, ignore it. err: %v", err)
 	}
+}
+
+func commit(tx *sqlx.Tx) error {
+	err := tx.Commit()
+	if err != nil {
+		log.Printf("warn: Detect error when commit, do rollback. err: %v", err)
+		rollback(tx)
+	}
+	return err
 }

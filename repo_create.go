@@ -69,7 +69,9 @@ func (r *Repository) insertEntry(tx *sqlx.Tx, entry *AddEntry) (int64, int64, er
 	params["attrs_norm"] = dbEntry.AttrsNorm
 	params["attrs_orig"] = dbEntry.AttrsOrig
 
-	findParentDNByDN, err := createFindTreePathByDNSQL(entry.ParentDN())
+	// When inserting new entry, we need to lock the parent DN entry while the processing
+	// because there is a chance other thread deletes the parent DN entry before the inserting if no lock.
+	findParentDNByDN, err := createFindBasePathByDNSQL(entry.ParentDN(), &FindOption{Lock: true})
 	if err != nil {
 		return 0, 0, xerrors.Errorf("Failed to create findTreePathByDN sql, err: %w", err)
 	}
