@@ -8,7 +8,7 @@ type ModifyEntry struct {
 	schemaMap  *SchemaMap
 	dn         *DN
 	attributes map[string]*SchemaValue
-	dbEntryId  int64
+	dbEntryID  int64
 	dbParentID int64
 	add        []*SchemaValue
 	replace    []*SchemaValue
@@ -270,7 +270,7 @@ func (e *ModifyEntry) Clone() *ModifyEntry {
 		schemaMap:  e.schemaMap,
 		dn:         e.dn,
 		attributes: map[string]*SchemaValue{},
-		dbEntryId:  e.dbEntryId,
+		dbEntryID:  e.dbEntryID,
 	}
 	for k, v := range e.attributes {
 		clone.attributes[k] = v.Clone()

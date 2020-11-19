@@ -45,7 +45,7 @@ func (r *Repository) insertEntryAndTree(tx *sqlx.Tx, entry *AddEntry) (int64, in
 		return 0, 0, err
 	}
 
-	err = r.insertTree(tx, newID, parentId)
+	err = r.insertTree(tx, parentId)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -113,7 +113,7 @@ func (r *Repository) insertEntry(tx *sqlx.Tx, entry *AddEntry) (int64, int64, er
 	return id, parentId, nil
 }
 
-func (r *Repository) insertTree(tx *sqlx.Tx, newID, parentId int64) error {
+func (r *Repository) insertTree(tx *sqlx.Tx, id int64) error {
 	q := `
 		INSERT INTO ldap_tree (id, path)
 		SELECT :id, p.path || :id as path
@@ -131,7 +131,7 @@ func (r *Repository) insertTree(tx *sqlx.Tx, newID, parentId int64) error {
 		RETURNING id, path
 	`
 	params := map[string]interface{}{}
-	params["id"] = parentId
+	params["id"] = id
 
 	log.Printf("insert tree query:\n%s\nparams:\n%v", q, params)
 
@@ -146,16 +146,16 @@ func (r *Repository) insertTree(tx *sqlx.Tx, newID, parentId int64) error {
 	}
 	defer rows.Close()
 
-	var id int64
+	var newTreeID int64
 	var path string
 	if rows.Next() {
-		err := rows.Scan(&id, &path)
+		err := rows.Scan(&newTreeID, &path)
 		if err != nil {
-			return xerrors.Errorf("Failed to scan. id: %d, err: %w", parentId, err)
+			return xerrors.Errorf("Failed to scan. id: %d, err: %w", id, err)
 		}
-		log.Printf("debug: Inserted new tree entry. id: %d, path: %s", id, path)
+		log.Printf("debug: Inserted new tree entry. id: %d, path: %s", newTreeID, path)
 	} else {
-		log.Printf("debug: The tree entry already exists. id: %d", parentId)
+		log.Printf("debug: The tree entry already exists. id: %d", id)
 	}
 
 	return nil

@@ -191,6 +191,9 @@ func (d *DN) RDNOrigStr() string {
 }
 
 func (d *DN) Equal(o *DN) bool {
+	if d == nil {
+		return o == nil
+	}
 	return d.DNNormStr() == o.DNNormStr()
 }
 
@@ -215,16 +218,20 @@ func (d *DN) RDN() map[string]string {
 	return m
 }
 
-func (d *DN) ModifyRDN(newRDN string) (*DN, error) {
+func (d *DN) ModifyRDN(newRDN string, deleteOld bool) (*DN, *RelativeDN, error) {
 	newDN, err := ParseDN(newRDN)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Clone and apply the change
 	newRDNs := make([]*RelativeDN, len(d.RDNs))
+	var oldRDN *RelativeDN
 	for i, v := range d.RDNs {
 		if i == 0 {
+			if !deleteOld {
+				oldRDN = v
+			}
 			newRDNs[i] = newDN.RDNs[0]
 		} else {
 			newRDNs[i] = v
@@ -233,7 +240,7 @@ func (d *DN) ModifyRDN(newRDN string) (*DN, error) {
 
 	return &DN{
 		RDNs: newRDNs,
-	}, nil
+	}, oldRDN, nil
 }
 
 func (d *DN) Move(newParentDN *DN) (*DN, error) {

@@ -24,6 +24,7 @@ var (
 	// repo_update
 	updateAttrsByIdStmt *sqlx.NamedStmt
 	updateDNByIdStmt    *sqlx.NamedStmt
+	updateRDNByIdStmt   *sqlx.NamedStmt
 
 	// repo_delete
 	deleteTreeByIDStmt         *sqlx.NamedStmt
@@ -117,6 +118,14 @@ func (r *Repository) initStmt(db *sqlx.DB) error {
 		rdn_orig = :new_rdn_orig, rdn_norm = :new_rdn_norm,
 		attrs_norm = :attrs_norm, attrs_orig = :attrs_orig,
 		parent_id = :parent_id
+		WHERE id = :id`)
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
+
+	updateRDNByIdStmt, err = db.PrepareNamed(`UPDATE ldap_entry SET
+		rdn_orig = :new_rdn_orig, rdn_norm = :new_rdn_norm,
+		attrs_norm = :attrs_norm, attrs_orig = :attrs_orig
 		WHERE id = :id`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)

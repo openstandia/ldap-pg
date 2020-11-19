@@ -24,7 +24,7 @@ func handleModifyDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	newDN, err := dn.ModifyRDN(string(r.NewRDN()))
+	newDN, oldRDN, err := dn.ModifyRDN(string(r.NewRDN()), bool(r.DeleteOldRDN()))
 
 	if err != nil {
 		// TODO return correct error
@@ -43,6 +43,7 @@ func handleModifyDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 			responseModifyDNError(w, NewInvalidDNSyntax())
 			return
 		}
+
 		newDN, err = newDN.Move(newParentDN)
 		if err != nil {
 			// TODO return correct error
@@ -51,7 +52,7 @@ func handleModifyDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		}
 	}
 
-	err = s.Repo().UpdateDN(dn, newDN, bool(r.DeleteOldRDN()))
+	err = s.Repo().UpdateDN(dn, newDN, oldRDN)
 	if err != nil {
 
 		log.Printf("warn: Failed to modify dn: %s err: %s", dn.DNNormStr(), err)

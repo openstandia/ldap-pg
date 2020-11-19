@@ -167,7 +167,7 @@ func (m *Mapper) ModifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry) (*DBEntry
 	bOrig, _ := json.Marshal(orig)
 
 	dbEntry := &DBEntry{
-		ID:        entry.dbEntryId,
+		ID:        entry.dbEntryID,
 		Updated:   updated,
 		AttrsNorm: types.JSONText(string(bNorm)),
 		AttrsOrig: types.JSONText(string(bOrig)),
@@ -243,7 +243,7 @@ func (m *Mapper) FetchedEntryToModifyEntry(dbEntry *FetchedEntry) (*ModifyEntry,
 	if err != nil {
 		return nil, err
 	}
-	entry.dbEntryId = dbEntry.ID
+	entry.dbEntryID = dbEntry.ID
 	entry.dbParentID = dbEntry.ParentID
 
 	return entry, nil
@@ -260,7 +260,7 @@ func (m *Mapper) FetchedDBEntryToModifyEntry(dbEntry *FetchedDBEntry) (*ModifyEn
 	if err != nil {
 		return nil, err
 	}
-	entry.dbEntryId = dbEntry.ID
+	entry.dbEntryID = dbEntry.ID
 	entry.dbParentID = dbEntry.ParentID
 
 	return entry, nil
