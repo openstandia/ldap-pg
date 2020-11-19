@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"strings"
 
 	"github.com/openstandia/goldap/message"
 )
@@ -15,24 +16,25 @@ func (t *FullJsonQueryTranslator) Translate(schemaMap SchemaMap, packet message.
 	paramKey := "filter"
 	q.Query += "e.attrs_norm @@ :" + paramKey
 
-	jsonpath := make([]byte, 0, 128)
+	var jsonpath strings.Builder
+	jsonpath.Grow(128)
 
 	err := t.internalTranslate(schemaMap, packet, q, &jsonpath)
 	if err != nil {
 		return err
 	}
 
-	q.Params[paramKey] = string(jsonpath)
+	q.Params[paramKey] = jsonpath.String()
 
 	return nil
 }
 
-func (t *FullJsonQueryTranslator) internalTranslate(schemaMap SchemaMap, packet message.Filter, q *Query, jsonpath *[]byte) (err error) {
+func (t *FullJsonQueryTranslator) internalTranslate(schemaMap SchemaMap, packet message.Filter, q *Query, jsonpath *strings.Builder) (err error) {
 	err = nil
 
 	switch f := packet.(type) {
 	case message.FilterAnd:
-		*jsonpath = append(*jsonpath, "("...)
+		jsonpath.WriteString("(")
 		for i, child := range f {
 			err = t.internalTranslate(schemaMap, child, q, jsonpath)
 
@@ -40,12 +42,12 @@ func (t *FullJsonQueryTranslator) internalTranslate(schemaMap SchemaMap, packet 
 				return
 			}
 			if i < len(f)-1 {
-				*jsonpath = append(*jsonpath, " && "...)
+				jsonpath.WriteString(" && ")
 			}
 		}
-		*jsonpath = append(*jsonpath, ")"...)
+		jsonpath.WriteString(")")
 	case message.FilterOr:
-		*jsonpath = append(*jsonpath, "("...)
+		jsonpath.WriteString("(")
 		for i, child := range f {
 			err = t.internalTranslate(schemaMap, child, q, jsonpath)
 
@@ -53,18 +55,18 @@ func (t *FullJsonQueryTranslator) internalTranslate(schemaMap SchemaMap, packet 
 				return
 			}
 			if i < len(f)-1 {
-				*jsonpath = append(*jsonpath, " || "...)
+				jsonpath.WriteString(" || ")
 			}
 		}
-		*jsonpath = append(*jsonpath, ")"...)
+		jsonpath.WriteString(")")
 	case message.FilterNot:
-		*jsonpath = append(*jsonpath, "(!("...)
+		jsonpath.WriteString("(!(")
 		err = t.internalTranslate(schemaMap, f.Filter, q, jsonpath)
 
 		if err != nil {
 			return
 		}
-		*jsonpath = append(*jsonpath, "))"...)
+		jsonpath.WriteString("))")
 	case message.FilterSubstrings:
 		for i, fs := range f.Substrings() {
 			attrName := string(f.Type_())
@@ -81,12 +83,12 @@ func (t *FullJsonQueryTranslator) internalTranslate(schemaMap SchemaMap, packet 
 				t.StartsWithMatch(s, q, jsonpath, string(fsv), i)
 			case message.SubstringAny:
 				if i > 0 {
-					*jsonpath = append(*jsonpath, " && "...)
+					jsonpath.WriteString(" && ")
 				}
 				t.AnyMatch(s, q, jsonpath, string(fsv), i)
 			case message.SubstringFinal:
 				if i > 0 {
-					*jsonpath = append(*jsonpath, " || "...)
+					jsonpath.WriteString(" || ")
 				}
 				t.EndsMatch(s, q, jsonpath, string(fsv), i)
 			}
@@ -116,7 +118,7 @@ func (t *FullJsonQueryTranslator) internalTranslate(schemaMap SchemaMap, packet 
 	return
 }
 
-func (t *FullJsonQueryTranslator) StartsWithMatch(s *Schema, q *Query, jsonpath *[]byte, val string, i int) {
+func (t *FullJsonQueryTranslator) StartsWithMatch(s *Schema, q *Query, jsonpath *strings.Builder, val string, i int) {
 	sv, err := NewSchemaValue(s.Name, []string{val})
 	if err != nil {
 		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
@@ -124,14 +126,14 @@ func (t *FullJsonQueryTranslator) StartsWithMatch(s *Schema, q *Query, jsonpath 
 	}
 
 	// attrs_norm @@ '$.cn starts with "foo"';
-	*jsonpath = append(*jsonpath, `$.`...)
-	*jsonpath = append(*jsonpath, s.Name...)
-	*jsonpath = append(*jsonpath, ` starts with "`...)
-	*jsonpath = append(*jsonpath, escape(sv.Norm()[0])...)
-	*jsonpath = append(*jsonpath, `"`...)
+	jsonpath.WriteString(`$.`)
+	jsonpath.WriteString(s.Name)
+	jsonpath.WriteString(` starts with "`)
+	jsonpath.WriteString(escape(sv.Norm()[0]))
+	jsonpath.WriteString(`"`)
 }
 
-func (t *FullJsonQueryTranslator) AnyMatch(s *Schema, q *Query, jsonpath *[]byte, val string, i int) {
+func (t *FullJsonQueryTranslator) AnyMatch(s *Schema, q *Query, jsonpath *strings.Builder, val string, i int) {
 	sv, err := NewSchemaValue(s.Name, []string{val})
 	if err != nil {
 		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
@@ -139,14 +141,14 @@ func (t *FullJsonQueryTranslator) AnyMatch(s *Schema, q *Query, jsonpath *[]byte
 	}
 
 	// attrs_norm @@ '$.cn like_regex ".*foo.*"';
-	*jsonpath = append(*jsonpath, `$.`...)
-	*jsonpath = append(*jsonpath, s.Name...)
-	*jsonpath = append(*jsonpath, ` like_regex ".*`...)
-	*jsonpath = append(*jsonpath, escapeRegex(sv.Norm()[0])...)
-	*jsonpath = append(*jsonpath, `".*`...)
+	jsonpath.WriteString(`$.`)
+	jsonpath.WriteString(s.Name)
+	jsonpath.WriteString(` like_regex ".*`)
+	jsonpath.WriteString(escapeRegex(sv.Norm()[0]))
+	jsonpath.WriteString(`".*`)
 }
 
-func (t *FullJsonQueryTranslator) EndsMatch(s *Schema, q *Query, jsonpath *[]byte, val string, i int) {
+func (t *FullJsonQueryTranslator) EndsMatch(s *Schema, q *Query, jsonpath *strings.Builder, val string, i int) {
 	sv, err := NewSchemaValue(s.Name, []string{val})
 	if err != nil {
 		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
@@ -154,14 +156,14 @@ func (t *FullJsonQueryTranslator) EndsMatch(s *Schema, q *Query, jsonpath *[]byt
 	}
 
 	// attrs_norm @@ '$.cn like_regex ".*foo.*"';
-	*jsonpath = append(*jsonpath, `$.`...)
-	*jsonpath = append(*jsonpath, s.Name...)
-	*jsonpath = append(*jsonpath, ` like_regex ".*`...)
-	*jsonpath = append(*jsonpath, escapeRegex(sv.Norm()[0])...)
-	*jsonpath = append(*jsonpath, `"$`...)
+	jsonpath.WriteString(`$.`)
+	jsonpath.WriteString(s.Name)
+	jsonpath.WriteString(` like_regex ".*`)
+	jsonpath.WriteString(escapeRegex(sv.Norm()[0]))
+	jsonpath.WriteString(`"$`)
 }
 
-func (t *FullJsonQueryTranslator) EqualityMatch(s *Schema, q *Query, jsonpath *[]byte, val string) {
+func (t *FullJsonQueryTranslator) EqualityMatch(s *Schema, q *Query, jsonpath *strings.Builder, val string) {
 	paramKey := q.nextParamKey(s.Name)
 
 	sv, err := NewSchemaValue(s.Name, []string{val})
@@ -182,11 +184,11 @@ func (t *FullJsonQueryTranslator) EqualityMatch(s *Schema, q *Query, jsonpath *[
 		q.PendingParams[reqDN] = paramKey
 
 		// attrs_norm @@ '$.member[*] == "uid=u000001,ou=Users,dc=example,dc=com"';
-		*jsonpath = append(*jsonpath, `$.`...)
-		*jsonpath = append(*jsonpath, s.Name...)
-		*jsonpath = append(*jsonpath, ` == :`...)
-		*jsonpath = append(*jsonpath, paramKey...) // replace using pending params later before executing query
-		*jsonpath = append(*jsonpath, ``...)
+		jsonpath.WriteString(`$.`)
+		jsonpath.WriteString(s.Name)
+		jsonpath.WriteString(` == :`)
+		jsonpath.WriteString(paramKey) // replace using pending params later before executing query
+		jsonpath.WriteString(``)
 	} else if s.IsUseMemberOfTable {
 		reqDN, err := s.server.NormalizeDN(val)
 		if err != nil {
@@ -198,22 +200,22 @@ func (t *FullJsonQueryTranslator) EqualityMatch(s *Schema, q *Query, jsonpath *[
 		q.PendingParams[reqDN] = paramKey
 
 		// attrs_norm @@ '$.memberof[*] == "cn=g000001,ou=Groups,dc=example,dc=com"';
-		*jsonpath = append(*jsonpath, `$.`...)
-		*jsonpath = append(*jsonpath, s.Name...)
-		*jsonpath = append(*jsonpath, ` == :`...)
-		*jsonpath = append(*jsonpath, paramKey...) // replace using pending params later before executing query
-		*jsonpath = append(*jsonpath, ``...)
+		jsonpath.WriteString(`$.`)
+		jsonpath.WriteString(s.Name)
+		jsonpath.WriteString(` == :`)
+		jsonpath.WriteString(paramKey) // replace using pending params later before executing query
+		jsonpath.WriteString(``)
 	} else {
 		// attrs_norm @@ '$.cn == "foo"';
-		*jsonpath = append(*jsonpath, `$.`...)
-		*jsonpath = append(*jsonpath, s.Name...)
-		*jsonpath = append(*jsonpath, ` == "`...)
-		*jsonpath = append(*jsonpath, escape(sv.Norm()[0])...)
-		*jsonpath = append(*jsonpath, `"`...)
+		jsonpath.WriteString(`$.`)
+		jsonpath.WriteString(s.Name)
+		jsonpath.WriteString(` == "`)
+		jsonpath.WriteString(escape(sv.Norm()[0]))
+		jsonpath.WriteString(`"`)
 	}
 }
 
-func (t *FullJsonQueryTranslator) GreaterOrEqualMatch(s *Schema, q *Query, jsonpath *[]byte, val string) {
+func (t *FullJsonQueryTranslator) GreaterOrEqualMatch(s *Schema, q *Query, jsonpath *strings.Builder, val string) {
 	sv, err := NewSchemaValue(s.Name, []string{val})
 	if err != nil {
 		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
@@ -223,14 +225,14 @@ func (t *FullJsonQueryTranslator) GreaterOrEqualMatch(s *Schema, q *Query, jsonp
 	// TODO escape check
 
 	// attrs_norm @@ '$.cn == "foo"';
-	*jsonpath = append(*jsonpath, `$.`...)
-	*jsonpath = append(*jsonpath, s.Name...)
-	*jsonpath = append(*jsonpath, ` >= `...)
-	*jsonpath = append(*jsonpath, escape(sv.Norm()[0])...)
-	*jsonpath = append(*jsonpath, ``...)
+	jsonpath.WriteString(`$.`)
+	jsonpath.WriteString(s.Name)
+	jsonpath.WriteString(` >= `)
+	jsonpath.WriteString(escape(sv.Norm()[0]))
+	jsonpath.WriteString(``)
 }
 
-func (t *FullJsonQueryTranslator) LessOrEqualMatch(s *Schema, q *Query, jsonpath *[]byte, val string) {
+func (t *FullJsonQueryTranslator) LessOrEqualMatch(s *Schema, q *Query, jsonpath *strings.Builder, val string) {
 	sv, err := NewSchemaValue(s.Name, []string{val})
 	if err != nil {
 		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
@@ -240,21 +242,21 @@ func (t *FullJsonQueryTranslator) LessOrEqualMatch(s *Schema, q *Query, jsonpath
 	// TODO escape check
 
 	// attrs_norm @@ '$.cn == "foo"';
-	*jsonpath = append(*jsonpath, `$.`...)
-	*jsonpath = append(*jsonpath, s.Name...)
-	*jsonpath = append(*jsonpath, ` <= `...)
-	*jsonpath = append(*jsonpath, escape(sv.Norm()[0])...)
-	*jsonpath = append(*jsonpath, ``...)
+	jsonpath.WriteString(`$.`)
+	jsonpath.WriteString(s.Name)
+	jsonpath.WriteString(` <= `)
+	jsonpath.WriteString(escape(sv.Norm()[0]))
+	jsonpath.WriteString(``)
 }
 
-func (t *FullJsonQueryTranslator) PresentMatch(s *Schema, q *Query, jsonpath *[]byte) {
+func (t *FullJsonQueryTranslator) PresentMatch(s *Schema, q *Query, jsonpath *strings.Builder) {
 	// attrs_norm @@ '$.cn == "foo"';
-	*jsonpath = append(*jsonpath, `exists($.`...)
-	*jsonpath = append(*jsonpath, escape(s.Name)...)
-	*jsonpath = append(*jsonpath, `)`...)
+	jsonpath.WriteString(`exists($.`)
+	jsonpath.WriteString(escape(s.Name))
+	jsonpath.WriteString(`)`)
 }
 
-func (t *FullJsonQueryTranslator) ApproxMatch(s *Schema, q *Query, jsonpath *[]byte, val string) {
+func (t *FullJsonQueryTranslator) ApproxMatch(s *Schema, q *Query, jsonpath *strings.Builder, val string) {
 	sv, err := NewSchemaValue(s.Name, []string{val})
 	if err != nil {
 		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
@@ -263,9 +265,9 @@ func (t *FullJsonQueryTranslator) ApproxMatch(s *Schema, q *Query, jsonpath *[]b
 
 	// TODO
 	// attrs_norm @@ '$.cn like_regex ".*foo.*"';
-	*jsonpath = append(*jsonpath, `$.`...)
-	*jsonpath = append(*jsonpath, s.Name...)
-	*jsonpath = append(*jsonpath, ` like_regex ".*`...)
-	*jsonpath = append(*jsonpath, escapeRegex(sv.Norm()[0])...)
-	*jsonpath = append(*jsonpath, `"$`...)
+	jsonpath.WriteString(`$.`)
+	jsonpath.WriteString(s.Name)
+	jsonpath.WriteString(` like_regex ".*`)
+	jsonpath.WriteString(escapeRegex(sv.Norm()[0]))
+	jsonpath.WriteString(`"$`)
 }

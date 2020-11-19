@@ -671,21 +671,22 @@ var testPGPort int = 35432
 func setupLDAPServer() *Server {
 	go func() {
 		server = NewServer(&ServerConfig{
-			DBHostName:     "localhost",
-			DBPort:         testPGPort,
-			DBName:         "ldap",
-			DBSchema:       "public",
-			DBUser:         "dev",
-			DBPassword:     "dev",
-			DBMaxOpenConns: 2,
-			DBMaxIdleConns: 1,
-			Suffix:         "dc=example,dc=com",
-			RootDN:         "cn=Manager,dc=example,dc=com",
-			RootPW:         "secret",
-			BindAddress:    "127.0.0.1:8389",
-			LogLevel:       "warn",
-			PProfServer:    "127.0.0.1:10000",
-			GoMaxProcs:     0,
+			DBHostName:      "localhost",
+			DBPort:          testPGPort,
+			DBName:          "ldap",
+			DBSchema:        "public",
+			DBUser:          "dev",
+			DBPassword:      "dev",
+			DBMaxOpenConns:  2,
+			DBMaxIdleConns:  1,
+			Suffix:          "dc=example,dc=com",
+			RootDN:          "cn=Manager,dc=example,dc=com",
+			RootPW:          "secret",
+			BindAddress:     "127.0.0.1:8389",
+			LogLevel:        "warn",
+			PProfServer:     "127.0.0.1:10000",
+			GoMaxProcs:      0,
+			QueryTranslator: "default",
 		})
 		server.Start()
 	}()
