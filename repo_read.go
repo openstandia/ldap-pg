@@ -167,23 +167,27 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []st
 	var memberJoin string
 	var groupBy string
 	if len(reqMemberAttrs) > 0 {
-		cb := make([]byte, 128)
-		jb := make([]byte, 128)
+		var cb strings.Builder
+		var jb strings.Builder
+
+		cb.Grow(128)
+		jb.Grow(128)
+
 		for i, attr := range reqMemberAttrs {
 			index := strconv.Itoa(i)
 
-			cb = append(cb, `
+			cb.WriteString(`
 			, JSON_AGG(
-				JSONB_BUILD_ARRAY(me`+index+`.parent_id::::text, me`+index+`.rdn_orig) ORDER BY mdn`+index+`.ord ASC
-			) FILTER (WHERE me`+index+`.parent_id IS NOT NULL) AS `+attr+`
-			`...)
-			jb = append(jb, `
-				LEFT JOIN JSONB_ARRAY_ELEMENTS(e.attrs_norm->'`+attr+`') WITH ORDINALITY mdn`+index+`(id, ord) ON TRUE
-				LEFT JOIN ldap_entry me`+index+` ON mdn`+index+`.id::::bigint = me`+index+`.id  
-			`...)
+				JSONB_BUILD_ARRAY(me` + index + `.parent_id::::text, me` + index + `.rdn_orig) ORDER BY mdn` + index + `.ord ASC
+			) FILTER (WHERE me` + index + `.parent_id IS NOT NULL) AS ` + attr + `
+			`)
+			jb.WriteString(`
+				LEFT JOIN JSONB_ARRAY_ELEMENTS(e.attrs_norm->'` + attr + `') WITH ORDINALITY mdn` + index + `(id, ord) ON TRUE
+				LEFT JOIN ldap_entry me` + index + ` ON mdn` + index + `.id::::bigint = me` + index + `.id  
+			`)
 		}
-		memberCol = strings.ReplaceAll(string(cb), "\x00", "")
-		memberJoin = strings.ReplaceAll(string(jb), "\x00", "")
+		memberCol = cb.String()
+		memberJoin = jb.String()
 		groupBy = `GROUP BY e.id`
 	}
 
@@ -191,8 +195,9 @@ func (r *Repository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []st
 	var memberOfJoin string
 	if reqMemberOf {
 		var cb strings.Builder
-		cb.Grow(128)
 		var jb strings.Builder
+
+		cb.Grow(128)
 		jb.Grow(128)
 
 		cb.WriteString(`
