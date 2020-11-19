@@ -46,9 +46,7 @@ func ToQuery(s *Server, schemaMap SchemaMap, packet message.Filter) (*Query, err
 	}
 
 	var f QueryTranslator
-	if s.config.QueryTranslator == "subjson" {
-		f = &SubJsonQueryTranslator{}
-	} else {
+	if s.config.QueryTranslator == "default" {
 		f = &FullJsonQueryTranslator{}
 	}
 

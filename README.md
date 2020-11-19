@@ -25,7 +25,7 @@
   - [x] Delete
   - ModifyDN
     - [x] Rename RDN
-    - [x] Support deleteoldrdn with 0
+    - [x] Support deleteoldrdn
     - [x] Support newsuperior
   - [ ] Compare
   - [ ] Extended
@@ -39,6 +39,7 @@
   - [x] Basic schema processing
   - [ ] More schema processing
   - [x] User defined schema
+  - [ ] Multiple RDNs
 - Network
   - [ ] SSL/StartTLS
 - [ ] Prometheus metrics
@@ -66,10 +67,6 @@ You can find the binary in `./bin/` directory.
 
 ## Usage
 
-### Init table
-
-Currently, `ldap-pg` doesn't support creating DB table automatically. You need to create table manually. Please use [sample.sql](/misc/sample.sql).
-
 ### Start `ldap-pg`
 
 ```
@@ -94,7 +91,7 @@ Options:
   -h string
         DB Hostname (default "localhost")
   -log-level string
-        Log level, on of: debug, info, warn, error, fatal (default "info")
+        Log level, on of: debug, info, warn, error, alert (default "info")
   -migration
         Enable migration mode which means LDAP server accepts add/modify operational attributes (Default: false)
   -p int
@@ -121,6 +118,8 @@ Options:
         Root dn for the LDAP
   -root-pw string
         Root password for the LDAP
+  -s string
+        DB Schema
   -schema value
         Additional/overwriting custom schema
   -suffix string

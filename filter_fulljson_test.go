@@ -21,7 +21,7 @@ type ToQueryTestByFullJsonData struct {
 func TestToQueryByFullJson(t *testing.T) {
 	server := NewServer(&ServerConfig{
 		Suffix:          "dc=example,dc=com",
-		QueryTranslator: "fulljson",
+		QueryTranslator: "default",
 	})
 	schemaMap = InitSchemaMap(server)
 	for i, test := range getToQueryByFullTestData() {

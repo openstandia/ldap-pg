@@ -31,7 +31,7 @@ func TestCreateFindTreePathSQL(t *testing.T) {
 		},
 		{
 			"dc=com",
-			"SELECT e0.rdn_orig as dn_orig, e0.id, e0.parent_id, e0.id::ltree as path, COALESCE((SELECT true FROM ldap_tree t WHERE t.id = e0.id), false) as has_sub FROM ldap_entry e0 WHERE e0.rdn_norm = :rdn_norm0 AND e0.parent_id is NULL",
+			"SELECT e0.rdn_orig as dn_orig, e0.id, e0.parent_id, e0.id as path, COALESCE((SELECT true FROM ldap_tree t WHERE t.id = e0.id), false) as has_sub FROM ldap_entry e0 WHERE e0.rdn_norm = :rdn_norm0 AND e0.parent_id is NULL",
 			"",
 		},
 		{
