@@ -4,6 +4,7 @@ import (
 	// "fmt"
 	"encoding/json"
 	"log"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -54,7 +55,7 @@ func (m *Mapper) LDAPMessageToAddEntry(dn *DN, ldapAttrs message.AttributeList) 
 // AddEntryToDBEntry converts LDAP entry object to DB entry object.
 // It handles metadata such as createTimistamp, modifyTimestamp and entryUUID.
 // Also, it handles member and uniqueMember attributes.
-func (m *Mapper) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*DBEntry, error) {
+func (m *Mapper) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*DBEntry, []string, error) {
 	norm, orig := entry.Attrs()
 
 	created := time.Now()
@@ -83,12 +84,14 @@ func (m *Mapper) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*DBEntry, erro
 	// Remove attributes to reduce attrs_orig column size
 	removeComputedAttrs(orig)
 
+	memberOf := []int64{}
+
 	// Convert the value of member and uniqueMamber attributes, DN => int64
-	if err := m.dnArrayToIDArray(tx, norm, "member"); err != nil {
-		return nil, err
+	if err := m.dnArrayToIDArray(tx, norm, "member", &memberOf); err != nil {
+		return nil, nil, err
 	}
-	if err := m.dnArrayToIDArray(tx, norm, "uniqueMember"); err != nil {
-		return nil, err
+	if err := m.dnArrayToIDArray(tx, norm, "uniqueMember", &memberOf); err != nil {
+		return nil, nil, err
 	}
 
 	bNorm, _ := json.Marshal(norm)
@@ -101,7 +104,7 @@ func (m *Mapper) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*DBEntry, erro
 		AttrsOrig: types.JSONText(string(bOrig)),
 	}
 
-	return dbEntry, nil
+	return dbEntry, uniqueIDs(memberOf), nil
 }
 
 // TODO move to schema?
@@ -113,50 +116,85 @@ func removeComputedAttrs(orig map[string][]string) {
 	// delete(orig, "entryUUID")
 }
 
-func (m *Mapper) dnArrayToIDArray(tx *sqlx.Tx, norm map[string]interface{}, attrName string) error {
+func (m *Mapper) dnArrayToIDArray(tx *sqlx.Tx, norm map[string]interface{}, attrName string, memberOf *[]int64) error {
 	if members, ok := norm[attrName].([]string); ok && len(members) > 0 {
 
-		memberNorm := make([]int64, len(members))
+		rdnGroup := map[string][]string{}
 		for i, v := range members {
 			dn, err := NormalizeDN(v)
 			if err != nil {
+				log.Printf("warn: Failed to normalize DN: %s", v)
 				return NewInvalidPerSyntax(attrName, i)
 			}
 
-			// TODO Optimize converting DN to id
-			fetchedDN, err := m.server.repo.FindDNByDNWithLock(tx, dn, true)
+			parentDNNorm := dn.ParentDN().DNNormStr()
+			rdnGroup[parentDNNorm] = append(rdnGroup[parentDNNorm], dn.RDNNormStr())
+		}
+
+		memberIDs := []int64{}
+
+		for k, v := range rdnGroup {
+			parentDN, err := NormalizeDN(k)
+			if err != nil {
+				log.Printf("error: Unexpected normalize DN error. DN: %s, err: %v", k, err)
+				return NewUnavailable()
+			}
+			fetchedParentDN, err := m.server.repo.FindDNByDNWithLock(tx, parentDN, true)
 			if err != nil {
 				if lerr, ok := err.(*LDAPError); ok {
 					if lerr.IsNoSuchObjectError() {
+						log.Printf("warn: No such object: %s", parentDN.DNNormStr())
 						// TODO should be return error or special handling?
-						return NewInvalidPerSyntax(attrName, i)
+						return NewInvalidPerSyntax(attrName, 0)
 					}
 				}
 				// System error
 				return NewUnavailable()
 			}
 
-			memberNorm[i] = fetchedDN.ID
+			ids, err := m.server.repo.FindIDsByParentIDAndRDNNorms(tx, fetchedParentDN.ID, v)
+			if err != nil {
+				return err
+			}
+
+			memberIDs = append(memberIDs, ids...)
+			*memberOf = append(*memberOf, ids...)
 		}
 
 		// Replace with id member
-		norm[attrName] = memberNorm
+		norm[attrName] = memberIDs
 	}
 	return nil
 }
 
-func (m *Mapper) ModifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry) (*DBEntry, error) {
+func uniqueIDs(target []int64) []string {
+	m := map[int64]bool{}
+	result := []string{}
+
+	for _, v := range target {
+		if !m[v] {
+			m[v] = true
+			result = append(result, strconv.FormatInt(v, 10))
+		}
+	}
+
+	return result
+}
+
+func (m *Mapper) ModifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry) (*DBEntry, []string, error) {
 	norm, orig := entry.GetAttrs()
 
 	// Remove attributes to reduce attrs_orig column size
 	removeComputedAttrs(orig)
 
+	var memberOf []int64
+
 	// Convert the value of member and uniqueMamber attributes, DN => int64
-	if err := m.dnArrayToIDArray(tx, norm, "member"); err != nil {
-		return nil, err
+	if err := m.dnArrayToIDArray(tx, norm, "member", &memberOf); err != nil {
+		return nil, nil, err
 	}
-	if err := m.dnArrayToIDArray(tx, norm, "uniqueMember"); err != nil {
-		return nil, err
+	if err := m.dnArrayToIDArray(tx, norm, "uniqueMember", &memberOf); err != nil {
+		return nil, nil, err
 	}
 
 	updated := time.Now()
@@ -173,7 +211,7 @@ func (m *Mapper) ModifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry) (*DBEntry
 		AttrsOrig: types.JSONText(string(bOrig)),
 	}
 
-	return dbEntry, nil
+	return dbEntry, uniqueIDs(memberOf), nil
 }
 
 func (m *Mapper) ModifyEntryToAddEntry(entry *ModifyEntry) (*AddEntry, error) {

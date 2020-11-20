@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"log"
+	"strconv"
+	"strings"
 
 	"github.com/jmoiron/sqlx"
 	"golang.org/x/xerrors"
@@ -60,7 +62,7 @@ func (r *Repository) insertEntry(tx *sqlx.Tx, entry *AddEntry) (int64, int64, er
 		return 0, 0, xerrors.Errorf("Invalid entry, it should not be root DN. DN: %v", entry.dn)
 	}
 
-	dbEntry, err := mapper.AddEntryToDBEntry(tx, entry)
+	dbEntry, memberOf, err := mapper.AddEntryToDBEntry(tx, entry)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -110,6 +112,39 @@ func (r *Repository) insertEntry(tx *sqlx.Tx, entry *AddEntry) (int64, int64, er
 	} else {
 		log.Printf("debug: The new entry already exists. parentId: %d, rdn_norm: %s", parentId, entry.RDNNorm())
 		return 0, 0, NewAlreadyExists()
+	}
+	rows.Close()
+
+	// Add memberOf
+	if len(memberOf) > 0 {
+		uq := `
+			UPDATE ldap_entry
+				SET attrs_norm = attrs_norm || jsonb_build_object('memberOf', COALESCE(attrs_norm->'memberOf', '[]') || :id)
+			WHERE id IN (` + strings.Join(memberOf, ",") + `)
+		`
+
+		log.Printf("debug: Update memberOf query: %s", uq)
+
+		stmt, err := tx.PrepareNamed(uq)
+		if err != nil {
+			return 0, 0, xerrors.Errorf("Failed to update memberOf for id: %d. err: %w", id, err)
+		}
+
+		result, err := tx.NamedStmt(stmt).Exec(map[string]interface{}{
+			"id": strconv.FormatInt(id, 10),
+		})
+		if err != nil {
+			return 0, 0, xerrors.Errorf("Failed to update memberOf for id: %d. err: %w", id, err)
+		}
+
+		count, err := result.RowsAffected()
+		if err != nil {
+			return 0, 0, xerrors.Errorf("Failed to get rows affected for id: %d. err: %w", id, err)
+		}
+
+		if count != int64(len(memberOf)) {
+			return 0, 0, xerrors.Errorf("Unexpected update memberOf count. expected: %d, got: %d", len(memberOf), count)
+		}
 	}
 
 	return id, parentId, nil
@@ -179,8 +214,12 @@ func (r *Repository) insertRootEntry(tx *sqlx.Tx, entry *AddEntry) (int64, error
 	if !entry.DN().IsRoot() {
 		return 0, xerrors.Errorf("Invalid entry, it should be root DN. DN: %v", entry.dn)
 	}
+	if !entry.DN().IsDC() {
+		return 0, xerrors.Errorf("Invalid entry, it should be dc for rootDN. DN: %v", entry.dn)
+	}
 
-	dbEntry, err := mapper.AddEntryToDBEntry(tx, entry)
+	// Root entry (DC) doesn't have member, ignore it
+	dbEntry, _, err := mapper.AddEntryToDBEntry(tx, entry)
 	if err != nil {
 		return 0, err
 	}

@@ -16,6 +16,8 @@ var (
 
 	// repo_read
 	findDNByIDStmt                 *sqlx.NamedStmt
+	findRDNByIDStmt                *sqlx.NamedStmt
+	findRDNsByIDsStmt              *sqlx.NamedStmt
 	findContainerByPathStmt        *sqlx.NamedStmt
 	findIDByParentIDAndRDNNormStmt *sqlx.NamedStmt
 
@@ -131,6 +133,28 @@ func (r *Repository) initStmt(db *sqlx.DB) error {
 		WHERE
 			e.id = :id
 		GROUP BY e.id`)
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
+
+	findRDNByIDStmt, err = db.PrepareNamed(`SELECT
+		e.rdn_orig, e.parent_id
+		FROM
+			ldap_entry e
+		WHERE
+			e.id = :id
+		`)
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
+
+	findRDNsByIDsStmt, err = db.PrepareNamed(`SELECT
+		e.rdn_orig, e.parent_id
+		FROM
+			ldap_entry e
+		WHERE
+			e.id in (:id)
+		`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}

@@ -12,7 +12,7 @@ func (r *Repository) Update(tx *sqlx.Tx, oldEntry, newEntry *ModifyEntry) error 
 		return xerrors.Errorf("Invalid dbEntryId for update DBEntry.")
 	}
 
-	dbEntry, err := mapper.ModifyEntryToDBEntry(tx, newEntry)
+	dbEntry, _, err := mapper.ModifyEntryToDBEntry(tx, newEntry)
 	if err != nil {
 		return err
 	}
@@ -119,7 +119,8 @@ func (r *Repository) updateDNOntoNewParent(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN
 		}
 	}
 
-	dbEntry, err := mapper.ModifyEntryToDBEntry(tx, newEntry)
+	// ModifyDN doesn't affect the member, ignore it
+	dbEntry, _, err := mapper.ModifyEntryToDBEntry(tx, newEntry)
 	if err != nil {
 		return err
 	}
@@ -166,7 +167,8 @@ func (r *Repository) updateRDN(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *RelativeDN
 		}
 	}
 
-	dbEntry, err := mapper.ModifyEntryToDBEntry(tx, newEntry)
+	// Modify RDN doesn't affect the member, ignore it
+	dbEntry, _, err := mapper.ModifyEntryToDBEntry(tx, newEntry)
 	if err != nil {
 		return err
 	}
