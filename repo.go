@@ -61,7 +61,7 @@ func (r *DBRepository) BeginTx() *sqlx.Tx {
 	return r.db.MustBegin()
 }
 
-func NewRepository(server *Server) (RepositoryHandler, error) {
+func NewRepository(server *Server) (Repository, error) {
 	// Init DB Connection
 	db, err := sqlx.Connect("postgres", fmt.Sprintf("host=%s port=%d user=%s dbname=%s password=%s sslmode=disable search_path=%s",
 		server.config.DBHostName, server.config.DBPort, server.config.DBUser, server.config.DBName,
@@ -91,7 +91,7 @@ func NewRepository(server *Server) (RepositoryHandler, error) {
 	return repo, nil
 }
 
-type RepositoryHandler interface {
+type Repository interface {
 	InitTables(db *sqlx.DB) error
 	InitStmt(db *sqlx.DB) error
 

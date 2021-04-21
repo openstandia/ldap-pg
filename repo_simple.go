@@ -798,7 +798,7 @@ func (r *SimpleRepository) execRemoveAssociatio(tx *sqlx.Tx, id int64, stmt *sql
 // SEARCH operation
 //////////////////////////////////////////
 
-func (e *FetchedDBEntry) Member(repo RepositoryHandler, IdToDNOrigCache map[int64]string) ([]string, error) {
+func (e *FetchedDBEntry) Member(repo Repository, IdToDNOrigCache map[int64]string) ([]string, error) {
 	if len(e.RawMember) == 0 {
 		return nil, nil
 	}
@@ -838,7 +838,7 @@ func (e *FetchedDBEntry) Member(repo RepositoryHandler, IdToDNOrigCache map[int6
 	return results, nil
 }
 
-func (e *FetchedDBEntry) Member2(repo RepositoryHandler, IdToDNOrigCache map[int64]string) ([]string, error) {
+func (e *FetchedDBEntry) Member2(repo Repository, IdToDNOrigCache map[int64]string) ([]string, error) {
 	if len(e.RawMember) == 0 {
 		return nil, nil
 	}
@@ -863,7 +863,7 @@ func (e *FetchedDBEntry) Member2(repo RepositoryHandler, IdToDNOrigCache map[int
 	return results, nil
 }
 
-func (e *FetchedDBEntry) MemberOf(repo RepositoryHandler, IdToDNOrigCache map[int64]string) ([]string, error) {
+func (e *FetchedDBEntry) MemberOf(repo Repository, IdToDNOrigCache map[int64]string) ([]string, error) {
 	if len(e.RawMemberOf) == 0 {
 		return nil, nil
 	}
@@ -903,7 +903,7 @@ func (e *FetchedDBEntry) MemberOf(repo RepositoryHandler, IdToDNOrigCache map[in
 	return results, nil
 }
 
-func (e *FetchedDBEntry) MemberOf2(repo RepositoryHandler, IdToDNOrigCache map[int64]string) ([]string, error) {
+func (e *FetchedDBEntry) MemberOf2(repo Repository, IdToDNOrigCache map[int64]string) ([]string, error) {
 	if len(e.RawMemberOf) == 0 {
 		return nil, nil
 	}
