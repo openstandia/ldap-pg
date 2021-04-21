@@ -4,10 +4,8 @@ import (
 	"fmt"
 	"log"
 	"sync"
-	"time"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/jmoiron/sqlx/types"
 )
 
 var (
@@ -54,7 +52,8 @@ func (m *StmtCache) Put(key string, value *sqlx.NamedStmt) {
 }
 
 type DBRepository struct {
-	db *sqlx.DB
+	server *Server
+	db     *sqlx.DB
 }
 
 func (r *DBRepository) BeginTx() *sqlx.Tx {
@@ -76,6 +75,7 @@ func NewRepository(server *Server) (Repository, error) {
 
 	// TODO: Enable to switch another implementation
 	repo := &SimpleRepository{}
+	repo.server = server
 	repo.db = db
 
 	err = repo.Init()
@@ -118,31 +118,4 @@ type Repository interface {
 
 	// DeleteByDN deletes the entry by specified DN.
 	DeleteByDN(dn *DN) error
-}
-
-type DBEntry struct {
-	ID        int64          `db:"id"`
-	DNNorm    string         `db:"dn_norm"`
-	DNOrig    string         `db:"dn_orig"`
-	EntryUUID string         `db:"uuid"`
-	Created   time.Time      `db:"created"`
-	Updated   time.Time      `db:"updated"`
-	AttrsNorm types.JSONText `db:"attrs_norm"`
-	AttrsOrig types.JSONText `db:"attrs_orig"`
-	Count     int32          `db:"count"`    // No real column in the table
-	MemberOf  types.JSONText `db:"memberof"` // No real column in the table
-}
-
-type FetchedDBEntry struct {
-	ID              int64          `db:"id"`
-	ParentID        int64          `db:"parent_id"`
-	RDNOrig         string         `db:"rdn_orig"`
-	RawAttrsOrig    types.JSONText `db:"attrs_orig"`
-	RawMember       types.JSONText `db:"member"`          // No real column in the table
-	RawUniqueMember types.JSONText `db:"uniquemember"`    // No real column in the table
-	RawMemberOf     types.JSONText `db:"member_of"`       // No real column in the table
-	HasSubordinates string         `db:"hassubordinates"` // No real column in the table
-	DNOrig          string         `db:"dn_orig"`         // No real clumn in t he table
-	Count           int32          `db:"count"`           // No real column in the table
-	ParentDNOrig    string         // No real column in the table
 }

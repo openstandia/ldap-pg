@@ -36,7 +36,7 @@ func (q *Query) nextParamKey(name string) string {
 	return fmt.Sprintf("%d_%s", len(q.Params), name)
 }
 
-func ToQuery(s *Server, schemaMap SchemaMap, packet message.Filter) (*Query, error) {
+func ToQuery(s *Server, packet message.Filter) (*Query, error) {
 	q := &Query{
 		Query:           "",
 		Params:          map[string]interface{}{},
@@ -50,7 +50,7 @@ func ToQuery(s *Server, schemaMap SchemaMap, packet message.Filter) (*Query, err
 		f = &FullJsonQueryTranslator{}
 	}
 
-	err := f.Translate(schemaMap, packet, q)
+	err := f.Translate(s.schemaMap, packet, q)
 	if err != nil {
 		return nil, errors.Wrap(err, "Query translating error")
 	}
@@ -61,10 +61,10 @@ func ToQuery(s *Server, schemaMap SchemaMap, packet message.Filter) (*Query, err
 }
 
 type QueryTranslator interface {
-	Translate(schemaMap SchemaMap, packet message.Filter, q *Query) error
+	Translate(schemaMap *SchemaMap, packet message.Filter, q *Query) error
 }
 
-func findSchema(schemaMap SchemaMap, attrName string) (*Schema, bool) {
+func findSchema(schemaMap *SchemaMap, attrName string) (*Schema, bool) {
 	var s *Schema
 	s, ok := schemaMap.Get(attrName)
 	if !ok {

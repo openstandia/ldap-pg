@@ -43,10 +43,10 @@ func TestCreateFindTreePathSQL(t *testing.T) {
 	server := NewServer(&ServerConfig{
 		Suffix: "dc=example,dc=com",
 	})
-	schemaMap = InitSchemaMap(server)
+	schemaMap := InitSchemaMap(server)
 
 	for i, tc := range testcases {
-		baseDN, err := NormalizeDN(tc.DN)
+		baseDN, err := NormalizeDN(schemaMap, tc.DN)
 		if err != nil {
 			t.Errorf("Unexpected error on %d:\ngot error '%s'\n", i, err)
 		}

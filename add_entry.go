@@ -11,9 +11,9 @@ type MemberEntry struct {
 	MemberOfDNNorm string
 }
 
-func NewAddEntry(dn *DN) *AddEntry {
+func NewAddEntry(schemaMap *SchemaMap, dn *DN) *AddEntry {
 	entry := &AddEntry{
-		schemaMap:  &schemaMap,
+		schemaMap:  schemaMap,
 		attributes: map[string]*SchemaValue{},
 	}
 	entry.SetDN(dn)
@@ -22,7 +22,7 @@ func NewAddEntry(dn *DN) *AddEntry {
 }
 
 func (j *AddEntry) HasAttr(attrName string) bool {
-	s, ok := schemaMap.Get(attrName)
+	s, ok := j.schemaMap.Get(attrName)
 	if !ok {
 		return false
 	}
@@ -37,7 +37,7 @@ func (j *AddEntry) SetDN(dn *DN) {
 	rdn := dn.RDN()
 	for k, v := range rdn {
 		// rdn is validated already
-		j.attributes[k], _ = NewSchemaValue(k, []string{v})
+		j.attributes[k], _ = NewSchemaValue(j.schemaMap, k, []string{v})
 	}
 }
 
@@ -97,7 +97,7 @@ func (j *AddEntry) Add(attrName string, attrValue []string) error {
 	if len(attrValue) == 0 {
 		return nil
 	}
-	sv, err := NewSchemaValue(attrName, attrValue)
+	sv, err := NewSchemaValue(j.schemaMap, attrName, attrValue)
 	if err != nil {
 		return err
 	}

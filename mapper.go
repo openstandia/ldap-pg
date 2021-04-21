@@ -14,19 +14,17 @@ import (
 )
 
 type Mapper struct {
-	server    *Server
-	schemaMap SchemaMap
+	server *Server
 }
 
-func NewMapper(server *Server, s SchemaMap) *Mapper {
+func NewMapper(server *Server) *Mapper {
 	return &Mapper{
-		server:    server,
-		schemaMap: s,
+		server: server,
 	}
 }
 
 func (m *Mapper) LDAPMessageToAddEntry(dn *DN, ldapAttrs message.AttributeList) (*AddEntry, error) {
-	entry := NewAddEntry(dn)
+	entry := NewAddEntry(m.server.schemaMap, dn)
 
 	for _, attr := range ldapAttrs {
 		k := attr.Type_()
@@ -55,7 +53,7 @@ func (m *Mapper) LDAPMessageToAddEntry(dn *DN, ldapAttrs message.AttributeList) 
 // AddEntryToDBEntry converts LDAP entry object to DB entry object.
 // It handles metadata such as createTimistamp, modifyTimestamp and entryUUID.
 // Also, it handles member and uniqueMember attributes.
-func (m *Mapper) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*DBEntry, []string, error) {
+func (m *Mapper) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*SimpleDBEntry, []string, error) {
 	norm, orig := entry.Attrs()
 
 	created := time.Now()
@@ -97,7 +95,7 @@ func (m *Mapper) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*DBEntry, []st
 	bNorm, _ := json.Marshal(norm)
 	bOrig, _ := json.Marshal(orig)
 
-	dbEntry := &DBEntry{
+	dbEntry := &SimpleDBEntry{
 		DNNorm:    entry.DN().DNNormStr(),
 		DNOrig:    entry.DN().DNOrigStr(),
 		AttrsNorm: types.JSONText(string(bNorm)),
@@ -121,7 +119,7 @@ func (m *Mapper) dnArrayToIDArray(tx *sqlx.Tx, norm map[string]interface{}, attr
 
 		rdnGroup := map[string][]string{}
 		for i, v := range members {
-			dn, err := NormalizeDN(v)
+			dn, err := NormalizeDN(m.server.schemaMap, v)
 			if err != nil {
 				log.Printf("warn: Failed to normalize DN: %s", v)
 				return NewInvalidPerSyntax(attrName, i)
@@ -134,7 +132,7 @@ func (m *Mapper) dnArrayToIDArray(tx *sqlx.Tx, norm map[string]interface{}, attr
 		memberIDs := []int64{}
 
 		for k, v := range rdnGroup {
-			parentDN, err := NormalizeDN(k)
+			parentDN, err := NormalizeDN(m.server.schemaMap, k)
 			if err != nil {
 				log.Printf("error: Unexpected normalize DN error. DN: %s, err: %v", k, err)
 				return NewUnavailable()
@@ -181,7 +179,7 @@ func uniqueIDs(target []int64) []string {
 	return result
 }
 
-func (m *Mapper) ModifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry) (*DBEntry, []string, error) {
+func (m *Mapper) ModifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry) (*SimpleDBEntry, []string, error) {
 	norm, orig := entry.GetAttrs()
 
 	// Remove attributes to reduce attrs_orig column size
@@ -204,7 +202,7 @@ func (m *Mapper) ModifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry) (*DBEntry
 	bNorm, _ := json.Marshal(norm)
 	bOrig, _ := json.Marshal(orig)
 
-	dbEntry := &DBEntry{
+	dbEntry := &SimpleDBEntry{
 		ID:        entry.dbEntryID,
 		Updated:   updated,
 		AttrsNorm: types.JSONText(string(bNorm)),
@@ -215,14 +213,14 @@ func (m *Mapper) ModifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry) (*DBEntry
 }
 
 func (m *Mapper) ModifyEntryToAddEntry(entry *ModifyEntry) (*AddEntry, error) {
-	add := NewAddEntry(entry.DN())
+	add := NewAddEntry(m.server.schemaMap, entry.DN())
 
 	// TODO
 
 	return add, nil
 }
 
-func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry, IdToDNOrigCache map[int64]string) (*SearchEntry, error) {
+func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *SimpleFetchedDBEntry, IdToDNOrigCache map[int64]string) (*SearchEntry, error) {
 	if dbEntry.DNOrig == "" {
 		log.Printf("error: Invalid state. FetchedDBEntiry mush have DNOrig always...")
 		return nil, NewUnavailable()
@@ -265,7 +263,7 @@ func (m *Mapper) FetchedDBEntryToSearchEntry(dbEntry *FetchedDBEntry, IdToDNOrig
 		orig["hasSubordinates"] = []string{dbEntry.HasSubordinates}
 	}
 
-	readEntry := NewSearchEntry(dn, orig)
+	readEntry := NewSearchEntry(m.server.schemaMap, dn, orig)
 
 	return readEntry, nil
 }
@@ -277,7 +275,7 @@ func (m *Mapper) FetchedEntryToModifyEntry(dbEntry *FetchedEntry) (*ModifyEntry,
 	}
 	orig := dbEntry.GetAttrsOrig()
 
-	entry, err := NewModifyEntry(dn, orig)
+	entry, err := NewModifyEntry(m.server.schemaMap, dn, orig)
 	if err != nil {
 		return nil, err
 	}

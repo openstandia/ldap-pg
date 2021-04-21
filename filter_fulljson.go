@@ -11,7 +11,7 @@ import (
 type FullJsonQueryTranslator struct {
 }
 
-func (t *FullJsonQueryTranslator) Translate(schemaMap SchemaMap, packet message.Filter, q *Query) error {
+func (t *FullJsonQueryTranslator) Translate(schemaMap *SchemaMap, packet message.Filter, q *Query) error {
 
 	paramKey := "filter"
 	q.Query += "e.attrs_norm @@ :" + paramKey
@@ -29,7 +29,7 @@ func (t *FullJsonQueryTranslator) Translate(schemaMap SchemaMap, packet message.
 	return nil
 }
 
-func (t *FullJsonQueryTranslator) internalTranslate(schemaMap SchemaMap, packet message.Filter, q *Query, jsonpath *strings.Builder) (err error) {
+func (t *FullJsonQueryTranslator) internalTranslate(schemaMap *SchemaMap, packet message.Filter, q *Query, jsonpath *strings.Builder) (err error) {
 	err = nil
 
 	switch f := packet.(type) {
@@ -119,7 +119,7 @@ func (t *FullJsonQueryTranslator) internalTranslate(schemaMap SchemaMap, packet 
 }
 
 func (t *FullJsonQueryTranslator) StartsWithMatch(s *Schema, q *Query, jsonpath *strings.Builder, val string, i int) {
-	sv, err := NewSchemaValue(s.Name, []string{val})
+	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
 	if err != nil {
 		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
 		return
@@ -134,7 +134,7 @@ func (t *FullJsonQueryTranslator) StartsWithMatch(s *Schema, q *Query, jsonpath 
 }
 
 func (t *FullJsonQueryTranslator) AnyMatch(s *Schema, q *Query, jsonpath *strings.Builder, val string, i int) {
-	sv, err := NewSchemaValue(s.Name, []string{val})
+	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
 	if err != nil {
 		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
 		return
@@ -149,7 +149,7 @@ func (t *FullJsonQueryTranslator) AnyMatch(s *Schema, q *Query, jsonpath *string
 }
 
 func (t *FullJsonQueryTranslator) EndsMatch(s *Schema, q *Query, jsonpath *strings.Builder, val string, i int) {
-	sv, err := NewSchemaValue(s.Name, []string{val})
+	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
 	if err != nil {
 		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
 		return
@@ -166,7 +166,7 @@ func (t *FullJsonQueryTranslator) EndsMatch(s *Schema, q *Query, jsonpath *strin
 func (t *FullJsonQueryTranslator) EqualityMatch(s *Schema, q *Query, jsonpath *strings.Builder, val string) {
 	paramKey := q.nextParamKey(s.Name)
 
-	sv, err := NewSchemaValue(s.Name, []string{val})
+	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
 	if err != nil {
 		// TODO error no entry response
 		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s, err: %+v", s.Name, val, err)
@@ -216,7 +216,7 @@ func (t *FullJsonQueryTranslator) EqualityMatch(s *Schema, q *Query, jsonpath *s
 }
 
 func (t *FullJsonQueryTranslator) GreaterOrEqualMatch(s *Schema, q *Query, jsonpath *strings.Builder, val string) {
-	sv, err := NewSchemaValue(s.Name, []string{val})
+	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
 	if err != nil {
 		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
 		return
@@ -233,7 +233,7 @@ func (t *FullJsonQueryTranslator) GreaterOrEqualMatch(s *Schema, q *Query, jsonp
 }
 
 func (t *FullJsonQueryTranslator) LessOrEqualMatch(s *Schema, q *Query, jsonpath *strings.Builder, val string) {
-	sv, err := NewSchemaValue(s.Name, []string{val})
+	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
 	if err != nil {
 		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
 		return
@@ -257,7 +257,7 @@ func (t *FullJsonQueryTranslator) PresentMatch(s *Schema, q *Query, jsonpath *st
 }
 
 func (t *FullJsonQueryTranslator) ApproxMatch(s *Schema, q *Query, jsonpath *strings.Builder, val string) {
-	sv, err := NewSchemaValue(s.Name, []string{val})
+	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
 	if err != nil {
 		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
 		return

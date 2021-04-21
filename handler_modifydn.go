@@ -24,7 +24,7 @@ func handleModifyDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	newDN, oldRDN, err := dn.ModifyRDN(string(r.NewRDN()), bool(r.DeleteOldRDN()))
+	newDN, oldRDN, err := dn.ModifyRDN(s.schemaMap, string(r.NewRDN()), bool(r.DeleteOldRDN()))
 
 	if err != nil {
 		// TODO return correct error

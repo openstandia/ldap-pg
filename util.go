@@ -215,7 +215,7 @@ func normalize(s *Schema, value string) (string, error) {
 	case "caseIgnoreMatch":
 		return strings.ToLower(normalizeSpace(value)), nil
 	case "distinguishedNameMatch":
-		return normalizeDistinguishedName(value)
+		return normalizeDistinguishedName(s.server.schemaMap, value)
 	case "caseExactIA5Match":
 		return normalizeSpace(value), nil
 	case "caseIgnoreIA5Match":
@@ -231,7 +231,7 @@ func normalize(s *Schema, value string) (string, error) {
 	case "UUIDMatch":
 		return normalizeUUID(value)
 	case "uniqueMemberMatch":
-		nv, err := normalizeDistinguishedName(value)
+		nv, err := normalizeDistinguishedName(s.server.schemaMap, value)
 		if err != nil {
 			// fallback
 			return strings.ToLower(normalizeSpace(value)), nil
@@ -269,7 +269,7 @@ func removeAllSpace(value string) string {
 // ParseDN returns a distinguishedName or an error.
 // The function respects https://tools.ietf.org/html/rfc4514
 // This function based on go-ldap/ldap/v3.
-func ParseDN(str string) (*DN, error) {
+func ParseDN(schemaMap *SchemaMap, str string) (*DN, error) {
 	dn := new(DN)
 	dn.RDNs = make([]*RelativeDN, 0)
 	rdn := new(RelativeDN)
@@ -289,7 +289,7 @@ func ParseDN(str string) (*DN, error) {
 	stringValueFromBuffer := func(t string) (string, string, error) {
 		orig := stringTypeFromBuffer()
 
-		sv, err := NewSchemaValue(t, []string{orig})
+		sv, err := NewSchemaValue(schemaMap, t, []string{orig})
 		if err != nil {
 			log.Printf("warn: Invalid DN syntax. Not found in schema. dn: %s err: %+v", str, err)
 			return "", "", NewInvalidDNSyntax()
@@ -406,8 +406,8 @@ func ParseDN(str string) (*DN, error) {
 	return dn, nil
 }
 
-func normalizeDistinguishedName(value string) (string, error) {
-	dn, err := NormalizeDN(value)
+func normalizeDistinguishedName(schemaMap *SchemaMap, value string) (string, error) {
+	dn, err := NormalizeDN(schemaMap, value)
 	if err != nil {
 		return "", err
 	}

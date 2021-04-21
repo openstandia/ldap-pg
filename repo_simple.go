@@ -5,6 +5,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/jmoiron/sqlx/types"
@@ -177,6 +178,33 @@ func (r *SimpleRepository) Init() error {
 	}
 
 	return nil
+}
+
+type SimpleDBEntry struct {
+	ID        int64          `db:"id"`
+	DNNorm    string         `db:"dn_norm"`
+	DNOrig    string         `db:"dn_orig"`
+	EntryUUID string         `db:"uuid"`
+	Created   time.Time      `db:"created"`
+	Updated   time.Time      `db:"updated"`
+	AttrsNorm types.JSONText `db:"attrs_norm"`
+	AttrsOrig types.JSONText `db:"attrs_orig"`
+	Count     int32          `db:"count"`    // No real column in the table
+	MemberOf  types.JSONText `db:"memberof"` // No real column in the table
+}
+
+type SimpleFetchedDBEntry struct {
+	ID              int64          `db:"id"`
+	ParentID        int64          `db:"parent_id"`
+	RDNOrig         string         `db:"rdn_orig"`
+	RawAttrsOrig    types.JSONText `db:"attrs_orig"`
+	RawMember       types.JSONText `db:"member"`          // No real column in the table
+	RawUniqueMember types.JSONText `db:"uniquemember"`    // No real column in the table
+	RawMemberOf     types.JSONText `db:"member_of"`       // No real column in the table
+	HasSubordinates string         `db:"hassubordinates"` // No real column in the table
+	DNOrig          string         `db:"dn_orig"`         // No real clumn in t he table
+	Count           int32          `db:"count"`           // No real column in the table
+	ParentDNOrig    string         // No real column in the table
 }
 
 //////////////////////////////////////////
@@ -796,7 +824,7 @@ func (r *SimpleRepository) execRemoveAssociatio(tx *sqlx.Tx, id int64, stmt *sql
 // SEARCH operation
 //////////////////////////////////////////
 
-func (e *FetchedDBEntry) Member(repo Repository, IdToDNOrigCache map[int64]string) ([]string, error) {
+func (e *SimpleFetchedDBEntry) Member(repo Repository, IdToDNOrigCache map[int64]string) ([]string, error) {
 	if len(e.RawMember) == 0 {
 		return nil, nil
 	}
@@ -836,7 +864,7 @@ func (e *FetchedDBEntry) Member(repo Repository, IdToDNOrigCache map[int64]strin
 	return results, nil
 }
 
-func (e *FetchedDBEntry) Member2(repo Repository, IdToDNOrigCache map[int64]string) ([]string, error) {
+func (e *SimpleFetchedDBEntry) Member2(repo Repository, IdToDNOrigCache map[int64]string) ([]string, error) {
 	if len(e.RawMember) == 0 {
 		return nil, nil
 	}
@@ -861,7 +889,7 @@ func (e *FetchedDBEntry) Member2(repo Repository, IdToDNOrigCache map[int64]stri
 	return results, nil
 }
 
-func (e *FetchedDBEntry) MemberOf(repo Repository, IdToDNOrigCache map[int64]string) ([]string, error) {
+func (e *SimpleFetchedDBEntry) MemberOf(repo Repository, IdToDNOrigCache map[int64]string) ([]string, error) {
 	if len(e.RawMemberOf) == 0 {
 		return nil, nil
 	}
@@ -901,7 +929,7 @@ func (e *FetchedDBEntry) MemberOf(repo Repository, IdToDNOrigCache map[int64]str
 	return results, nil
 }
 
-func (e *FetchedDBEntry) MemberOf2(repo Repository, IdToDNOrigCache map[int64]string) ([]string, error) {
+func (e *SimpleFetchedDBEntry) MemberOf2(repo Repository, IdToDNOrigCache map[int64]string) ([]string, error) {
 	if len(e.RawMemberOf) == 0 {
 		return nil, nil
 	}
@@ -926,7 +954,7 @@ func (e *FetchedDBEntry) MemberOf2(repo Repository, IdToDNOrigCache map[int64]st
 	return results, nil
 }
 
-func (e *FetchedDBEntry) AttrsOrig() map[string][]string {
+func (e *SimpleFetchedDBEntry) AttrsOrig() map[string][]string {
 	if len(e.RawAttrsOrig) > 0 {
 		jsonMap := make(map[string][]string)
 		if err := e.RawAttrsOrig.Unmarshal(&jsonMap); err != nil {
@@ -946,7 +974,7 @@ func (e *FetchedDBEntry) AttrsOrig() map[string][]string {
 	return nil
 }
 
-func (e *FetchedDBEntry) Clear() {
+func (e *SimpleFetchedDBEntry) Clear() {
 	e.ID = 0
 	e.DNOrig = ""
 	e.RawAttrsOrig = nil
@@ -1025,7 +1053,7 @@ func (r *SimpleRepository) Search(baseDN *DN, scope int, q *Query, reqMemberAttr
 	if len(q.PendingParams) > 0 {
 		// Create contaner DN cache
 		for k, v := range q.IdToDNOrigCache {
-			dn, err := NormalizeDN(v)
+			dn, err := NormalizeDN(r.server.schemaMap, v)
 			if err != nil {
 				log.Printf("error: Failed to normalize DN fetched from DB, err: %s", err)
 				return 0, 0, NewUnavailable()
@@ -1071,15 +1099,15 @@ func (r *SimpleRepository) Search(baseDN *DN, scope int, q *Query, reqMemberAttr
 			q.DNNormToIdCache[dnNorm] = dn.ID
 			// Update cache with the parent DN
 			if _, ok := q.DNNormToIdCache[parentDNNorm]; !ok {
-				parentDN := dn.ParentDN()
+				parentDN := dn.ParentDN(r.server.schemaMap)
 				for parentDN != nil {
-					if _, ok := q.DNNormToIdCache[parentDN.DNNorm()]; ok {
+					if _, ok := q.DNNormToIdCache[parentDN.DNNorm(r.server.schemaMap)]; ok {
 						break
 					}
-					q.DNNormToIdCache[parentDN.DNNorm()] = parentDN.ID
+					q.DNNormToIdCache[parentDN.DNNorm(r.server.schemaMap)] = parentDN.ID
 
 					// Next parent
-					parentDN = parentDN.ParentDN()
+					parentDN = parentDN.ParentDN(r.server.schemaMap)
 				}
 			}
 		}
@@ -1105,7 +1133,7 @@ func (r *SimpleRepository) Search(baseDN *DN, scope int, q *Query, reqMemberAttr
 	}
 	defer rows.Close()
 
-	dbEntry := FetchedDBEntry{}
+	dbEntry := SimpleFetchedDBEntry{}
 	var maxCount int32 = 0
 	var count int32 = 0
 

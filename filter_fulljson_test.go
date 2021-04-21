@@ -23,9 +23,10 @@ func TestToQueryByFullJson(t *testing.T) {
 		Suffix:          "dc=example,dc=com",
 		QueryTranslator: "default",
 	})
-	schemaMap = InitSchemaMap(server)
+	server.LoadSchema()
+
 	for i, test := range getToQueryByFullTestData() {
-		q, err := ToQuery(server, test.schemaMap, test.filter)
+		q, err := ToQuery(server, test.filter)
 		if err == nil {
 			if test.out == nil {
 				t.Errorf("#%d: %s\nEXPECTED ERROR MESSAGE:\n%s\nGOT A STRUCT INSTEAD:\n%#+v", i, test.label, test.err, q)

@@ -17,10 +17,10 @@ type ModifyEntry struct {
 	del        []*SchemaValue
 }
 
-func NewModifyEntry(dn *DN, valuesOrig map[string][]string) (*ModifyEntry, error) {
+func NewModifyEntry(schemaMap *SchemaMap, dn *DN, valuesOrig map[string][]string) (*ModifyEntry, error) {
 	// TODO
 	modifyEntry := &ModifyEntry{
-		schemaMap:  &schemaMap,
+		schemaMap:  schemaMap,
 		dn:         dn,
 		attributes: map[string]*SchemaValue{},
 	}
@@ -46,7 +46,7 @@ func (j *ModifyEntry) HasKey(s *Schema) bool {
 }
 
 func (j *ModifyEntry) HasAttr(attrName string) bool {
-	s, ok := schemaMap.Get(attrName)
+	s, ok := j.schemaMap.Get(attrName)
 	if !ok {
 		return false
 	}
@@ -61,7 +61,7 @@ func (j *ModifyEntry) SetDN(dn *DN) {
 	rdn := dn.RDN()
 	for k, v := range rdn {
 		// rdn is validated already, ignore error
-		sv, _ := NewSchemaValue(k, []string{v})
+		sv, _ := NewSchemaValue(j.schemaMap, k, []string{v})
 		j.attributes[sv.Name()] = sv
 	}
 }
@@ -89,7 +89,7 @@ func (j *ModifyEntry) Validate() error {
 
 // Append to current value(s).
 func (j *ModifyEntry) Add(attrName string, attrValue []string) error {
-	sv, err := NewSchemaValue(attrName, attrValue)
+	sv, err := NewSchemaValue(j.schemaMap, attrName, attrValue)
 	if err != nil {
 		return err
 	}
@@ -107,7 +107,7 @@ func (j *ModifyEntry) Add(attrName string, attrValue []string) error {
 }
 
 func (j *ModifyEntry) AddNoCheck(attrName string, attrValue []string) error {
-	sv, err := NewSchemaValue(attrName, attrValue)
+	sv, err := NewSchemaValue(j.schemaMap, attrName, attrValue)
 	if err != nil {
 		return err
 	}
@@ -135,7 +135,7 @@ func (j *ModifyEntry) addsv(value *SchemaValue) error {
 
 // Replace with the value(s).
 func (j *ModifyEntry) Replace(attrName string, attrValue []string) error {
-	sv, err := NewSchemaValue(attrName, attrValue)
+	sv, err := NewSchemaValue(j.schemaMap, attrName, attrValue)
 	if err != nil {
 		return err
 	}
@@ -165,7 +165,7 @@ func (j *ModifyEntry) replacesv(value *SchemaValue) error {
 
 // Delete from current value(s) if the value matchs.
 func (j *ModifyEntry) Delete(attrName string, attrValue []string) error {
-	sv, err := NewSchemaValue(attrName, attrValue)
+	sv, err := NewSchemaValue(j.schemaMap, attrName, attrValue)
 	if err != nil {
 		return err
 	}

@@ -24,8 +24,7 @@ import (
 )
 
 var (
-	schemaMap SchemaMap
-	mapper    *Mapper
+	mapper *Mapper
 )
 
 type ServerConfig struct {
@@ -56,6 +55,7 @@ type Server struct {
 	suffixOrig []string
 	suffixNorm []string
 	repo       Repository
+	schemaMap  *SchemaMap
 }
 
 func NewServer(c *ServerConfig) *Server {
@@ -147,7 +147,7 @@ func (s *Server) Start() {
 	s.LoadSchema()
 
 	// Init mapper
-	mapper = NewMapper(s, schemaMap)
+	mapper = NewMapper(s)
 
 	// Init rootDN
 	s.rootDN, err = s.NormalizeDN(s.config.RootDN)
@@ -189,7 +189,7 @@ func (s *Server) Start() {
 		Scope(ldap.SearchRequestScopeBaseObject).
 		Label("Search - root DN")
 
-	routes.Search(handleSearchSubschema).
+	routes.Search(NewHandler(s, handleSearchSubschema)).
 		BaseDn("cn=Subschema").
 		Scope(ldap.SearchRequestScopeBaseObject).
 		Filter("(objectclass=*)").
@@ -219,7 +219,7 @@ func (s *Server) Start() {
 }
 
 func (s *Server) LoadSchema() {
-	schemaMap = InitSchemaMap(s)
+	schemaMap := InitSchemaMap(s)
 	if s, ok := schemaMap.Get("entryUUID"); ok {
 		s.UseIndependentColumn("uuid")
 	}
@@ -239,6 +239,8 @@ func (s *Server) LoadSchema() {
 	if s, ok := schemaMap.Get("memberOf"); ok {
 		s.UseMemberOfTable(true)
 	}
+
+	s.schemaMap = schemaMap
 }
 
 func (s *Server) Stop() {
@@ -378,5 +380,5 @@ func (s *Server) GetRootPW() string {
 }
 
 func (s *Server) NormalizeDN(dn string) (*DN, error) {
-	return NormalizeDN(dn)
+	return NormalizeDN(s.schemaMap, dn)
 }

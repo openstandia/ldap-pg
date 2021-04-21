@@ -85,7 +85,7 @@ type Schema struct {
 	NoUserModification bool
 }
 
-func InitSchemaMap(server *Server) SchemaMap {
+func InitSchemaMap(server *Server) *SchemaMap {
 	m := SchemaMap{}
 
 	mergedSchema = mergeSchema(SCHEMA_OPENLDAP24, customSchema)
@@ -96,7 +96,7 @@ func InitSchemaMap(server *Server) SchemaMap {
 		log.Printf("error: Resolving schema error. %+v", err)
 	}
 
-	return m
+	return &m
 }
 
 var (
@@ -333,7 +333,7 @@ type SchemaValue struct {
 	cachedNormIndex map[string]struct{}
 }
 
-func NewSchemaValue(attrName string, attrValue []string) (*SchemaValue, error) {
+func NewSchemaValue(schemaMap *SchemaMap, attrName string, attrValue []string) (*SchemaValue, error) {
 	// TODO refactoring
 	s, ok := schemaMap.Get(attrName)
 	if !ok {

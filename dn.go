@@ -43,9 +43,9 @@ func (f *FetchedDN) IsRoot() bool {
 	return !strings.Contains(f.Path, ".")
 }
 
-func (f *FetchedDN) DNNorm() string {
+func (f *FetchedDN) DNNorm(schemaMap *SchemaMap) string {
 	if f.dnNorm == "" {
-		dn, err := NormalizeDN(f.DNOrig)
+		dn, err := NormalizeDN(schemaMap, f.DNOrig)
 		if err != nil {
 			log.Printf("error: Invalid DN: %s, err: %v", f.DNOrig, err)
 			return ""
@@ -56,7 +56,7 @@ func (f *FetchedDN) DNNorm() string {
 	return f.dnNorm
 }
 
-func (f *FetchedDN) ParentDN() *FetchedDN {
+func (f *FetchedDN) ParentDN(schemaMap *SchemaMap) *FetchedDN {
 	if f.IsRoot() {
 		return nil
 	}
@@ -68,7 +68,7 @@ func (f *FetchedDN) ParentDN() *FetchedDN {
 		log.Printf("error: Invalid path: %s, err: %v", f.Path, err)
 		return nil
 	}
-	dn, err := NormalizeDN(f.DNOrig)
+	dn, err := NormalizeDN(schemaMap, f.DNOrig)
 	if err != nil {
 		log.Printf("error: Invalid DN: %s, err: %v", f.DNOrig, err)
 		return nil
@@ -131,13 +131,13 @@ var anonymousDN = &DN{
 	RDNs: nil,
 }
 
-func NormalizeDN(dn string) (*DN, error) {
+func NormalizeDN(schemaMap *SchemaMap, dn string) (*DN, error) {
 	// Anonymous
 	if dn == "" {
 		return anonymousDN, nil
 	}
 
-	return ParseDN(dn)
+	return ParseDN(schemaMap, dn)
 }
 
 func (d *DN) DNNormStr() string {
@@ -220,8 +220,8 @@ func (d *DN) RDN() map[string]string {
 	return m
 }
 
-func (d *DN) ModifyRDN(newRDN string, deleteOld bool) (*DN, *RelativeDN, error) {
-	newDN, err := ParseDN(newRDN)
+func (d *DN) ModifyRDN(schemaMap *SchemaMap, newRDN string, deleteOld bool) (*DN, *RelativeDN, error) {
+	newDN, err := ParseDN(schemaMap, newRDN)
 	if err != nil {
 		return nil, nil, err
 	}

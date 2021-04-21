@@ -32,10 +32,10 @@ func TestNewSchemaValue(t *testing.T) {
 	server := NewServer(&ServerConfig{
 		Suffix: "dc=example,dc=com",
 	})
-	schemaMap = InitSchemaMap(server)
+	schemaMap := InitSchemaMap(server)
 
 	for i, tc := range testcases {
-		sv, err := NewSchemaValue(tc.Name, tc.Value)
+		sv, err := NewSchemaValue(schemaMap, tc.Name, tc.Value)
 		if err != nil {
 			t.Errorf("Unexpected error on %d:\nSchema: %s\n'%s' -> '%s' expected, got error %v\n", i, tc.Name, tc.Value, tc.ExpectedNorm, err)
 			continue
@@ -82,20 +82,20 @@ func TestSchemaValueOp(t *testing.T) {
 	server := NewServer(&ServerConfig{
 		Suffix: "dc=example,dc=com",
 	})
-	schemaMap = InitSchemaMap(server)
+	schemaMap := InitSchemaMap(server)
 
 	var sv *SchemaValue
 	var err error
 
 	for i, tc := range testcases {
 		if sv == nil {
-			sv, err = NewSchemaValue(tc.Name, tc.Value)
+			sv, err = NewSchemaValue(schemaMap, tc.Name, tc.Value)
 			if err != nil {
 				t.Errorf("Unexpected error on %d:\nSchema: %s\n'%v' -> '%v' / '%v' expected, got error %v\n", i, tc.Name, tc.Value, tc.ExpectedNorm, tc.ExpectedOrig, err)
 				continue
 			}
 		} else {
-			op, err := NewSchemaValue(tc.Name, tc.Value)
+			op, err := NewSchemaValue(schemaMap, tc.Name, tc.Value)
 			if err != nil {
 				t.Errorf("Unexpected error on %d:\nSchema: %s\n'%v' -> '%v' / '%v' expected, got error %v\n", i, tc.Name, tc.Value, tc.ExpectedNorm, tc.ExpectedOrig, err)
 				continue

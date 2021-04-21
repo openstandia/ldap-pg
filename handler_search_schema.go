@@ -8,7 +8,7 @@ import (
 	ldap "github.com/openstandia/ldapserver"
 )
 
-func handleSearchSubschema(w ldap.ResponseWriter, m *ldap.Message) {
+func handleSearchSubschema(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	r := m.GetSearchRequest()
 
 	log.Printf("handleSearchSubschema")
@@ -28,12 +28,12 @@ func handleSearchSubschema(w ldap.ResponseWriter, m *ldap.Message) {
 
 	e := ldap.NewSearchResultEntry(string(r.BaseObject()))
 
-	searchEntry := NewSearchEntry(nil, map[string][]string{
+	searchEntry := NewSearchEntry(s.schemaMap, nil, map[string][]string{
 		"objectClass": {"top", "subentry", "subschema", "extensibleObject"},
 		"cn":          {"Subschema"},
 	})
 
-	lines := strings.Split(schemaMap.Dump(), "\n")
+	lines := strings.Split(s.schemaMap.Dump(), "\n")
 
 	valuesMap := map[string][]string{}
 

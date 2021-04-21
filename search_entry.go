@@ -1,12 +1,14 @@
 package main
 
 type SearchEntry struct {
+	schemaMap  *SchemaMap
 	dn         *DN
 	attributes map[string][]string
 }
 
-func NewSearchEntry(dn *DN, valuesOrig map[string][]string) *SearchEntry {
+func NewSearchEntry(schemaMap *SchemaMap, dn *DN, valuesOrig map[string][]string) *SearchEntry {
 	readEntry := &SearchEntry{
+		schemaMap:  schemaMap,
 		dn:         dn,
 		attributes: valuesOrig,
 	}
@@ -26,7 +28,7 @@ func (j *SearchEntry) GetAttrsOrig() map[string][]string {
 }
 
 func (j *SearchEntry) GetAttrOrig(attrName string) (string, []string, bool) {
-	s, ok := schemaMap.Get(attrName)
+	s, ok := j.schemaMap.Get(attrName)
 	if !ok {
 		return "", nil, false
 	}
@@ -41,7 +43,7 @@ func (j *SearchEntry) GetAttrOrig(attrName string) (string, []string, bool) {
 func (j *SearchEntry) GetAttrsOrigWithoutOperationalAttrs() map[string][]string {
 	m := map[string][]string{}
 	for k, v := range j.attributes {
-		if s, ok := schemaMap.Get(k); ok {
+		if s, ok := j.schemaMap.Get(k); ok {
 			if !s.IsOperationalAttribute() {
 				m[k] = v
 			}
@@ -53,7 +55,7 @@ func (j *SearchEntry) GetAttrsOrigWithoutOperationalAttrs() map[string][]string 
 func (j *SearchEntry) GetOperationalAttrsOrig() map[string][]string {
 	m := map[string][]string{}
 	for k, v := range j.attributes {
-		if s, ok := schemaMap.Get(k); ok {
+		if s, ok := j.schemaMap.Get(k); ok {
 			if s.IsOperationalAttribute() {
 				m[k] = v
 			}
