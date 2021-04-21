@@ -96,19 +96,16 @@ type Repository interface {
 	// This is used for BIND operation.
 	FindCredByDN(dn *DN) ([]string, error)
 
-	FindRDNsByIDs(tx *sqlx.Tx, id []int64, lock bool) ([]*FetchedRDNOrig, error)
-	FindDNByID(tx *sqlx.Tx, id int64, lock bool) (*FetchedDNOrig, error)
-	// FindDNByDNWithLock returns FetchedDN object from database by DN search.
-	FindDNByDNWithLock(tx *sqlx.Tx, dn *DN, lock bool) (*FetchedDN, error)
-	FindIDsByParentIDAndRDNNorms(tx *sqlx.Tx, parentID int64, rdnNorms []string) ([]int64, error)
+	// Search handles search request by filter.
+	// This is used for SEARCH operation.
 	Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []string,
 		reqMemberOf, isHasSubordinatesRequested bool, handler func(entry *SearchEntry) error) (int32, int32, error)
-	FindDNsByIDs(tx *sqlx.Tx, id []int64, lock bool) ([]*FetchedDNOrig, error)
 
+	// FindEntryByDN returns FetchedDBEntry object from database by DN search.
+	// This is used for MOD operation to before updating.
+	FindEntryByDN(tx *sqlx.Tx, dn *DN, lock bool) (*ModifyEntry, error)
 	// Update modifies the entry by specified change data.
 	Update(tx *sqlx.Tx, oldEntry, newEntry *ModifyEntry) error
-	// FindEntryByDN returns FetchedDBEntry object from database by DN search.
-	FindEntryByDN(tx *sqlx.Tx, dn *DN, lock bool) (*ModifyEntry, error)
 
 	// UpdateDN modifies the entry DN by specified change data.
 	UpdateDN(oldDN, newDN *DN, oldRDN *RelativeDN) error

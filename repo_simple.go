@@ -1,12 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/jmoiron/sqlx/types"
 	"golang.org/x/xerrors"
@@ -263,7 +265,7 @@ func (r *SimpleRepository) insertEntry(tx *sqlx.Tx, entry *AddEntry) (int64, int
 		return 0, 0, xerrors.Errorf("Invalid entry, it should not be root DN. DN: %v", entry.dn)
 	}
 
-	dbEntry, memberOf, err := mapper.AddEntryToDBEntry(tx, entry)
+	dbEntry, memberOf, err := r.AddEntryToDBEntry(tx, entry)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -420,7 +422,7 @@ func (r *SimpleRepository) insertRootEntry(tx *sqlx.Tx, entry *AddEntry) (int64,
 	}
 
 	// Root entry (DC) doesn't have member, ignore it
-	dbEntry, _, err := mapper.AddEntryToDBEntry(tx, entry)
+	dbEntry, _, err := r.AddEntryToDBEntry(tx, entry)
 	if err != nil {
 		return 0, err
 	}
@@ -475,7 +477,7 @@ func (r *SimpleRepository) Update(tx *sqlx.Tx, oldEntry, newEntry *ModifyEntry) 
 		return xerrors.Errorf("Invalid dbEntryId for update DBEntry.")
 	}
 
-	dbEntry, _, err := mapper.ModifyEntryToDBEntry(tx, newEntry)
+	dbEntry, _, err := r.modifyEntryToDBEntry(tx, newEntry)
 	if err != nil {
 		return err
 	}
@@ -531,12 +533,12 @@ func (r *SimpleRepository) updateDNOntoNewParent(tx *sqlx.Tx, oldDN, newDN *DN, 
 
 	if !oldParentDN.Equal(newParentDN) {
 		// Lock the old/new parent entry
-		newParentFetchedDN, err := r.FindDNByDNWithLock(tx, newParentDN, true)
+		newParentFetchedDN, err := r.findDNByDNWithLock(tx, newParentDN, true)
 		if err != nil {
 			log.Printf("debug: Failed to fetch the new parent by DN: %s, err: %v", newParentDN.DNOrigStr(), err)
 			return NewNoSuchObject()
 		}
-		oldParentFetchedDN, err := r.FindDNByDNWithLock(tx, oldParentDN, true)
+		oldParentFetchedDN, err := r.findDNByDNWithLock(tx, oldParentDN, true)
 		if err != nil {
 			log.Printf("debug: Failed to fetch the old parent by DN: %s, err: %v", oldParentDN.DNOrigStr(), err)
 			return NewNoSuchObject()
@@ -550,7 +552,7 @@ func (r *SimpleRepository) updateDNOntoNewParent(tx *sqlx.Tx, oldDN, newDN *DN, 
 			// Also, need to lock the parent entry of the parent before it.
 			newGrandParentDN := newParentDN.ParentDN()
 			if newGrandParentDN != nil {
-				_, err := r.FindDNByDNWithLock(tx, newParentDN.ParentDN(), true)
+				_, err := r.findDNByDNWithLock(tx, newParentDN.ParentDN(), true)
 				if err != nil {
 					return NewNoSuchObject()
 				}
@@ -583,7 +585,7 @@ func (r *SimpleRepository) updateDNOntoNewParent(tx *sqlx.Tx, oldDN, newDN *DN, 
 	}
 
 	// ModifyDN doesn't affect the member, ignore it
-	dbEntry, _, err := mapper.ModifyEntryToDBEntry(tx, newEntry)
+	dbEntry, _, err := r.modifyEntryToDBEntry(tx, newEntry)
 	if err != nil {
 		return err
 	}
@@ -631,7 +633,7 @@ func (r *SimpleRepository) updateRDN(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *Rela
 	}
 
 	// Modify RDN doesn't affect the member, ignore it
-	dbEntry, _, err := mapper.ModifyEntryToDBEntry(tx, newEntry)
+	dbEntry, _, err := r.modifyEntryToDBEntry(tx, newEntry)
 	if err != nil {
 		return err
 	}
@@ -681,7 +683,7 @@ func (r SimpleRepository) DeleteByDN(dn *DN) error {
 	tx := r.db.MustBegin()
 
 	// First, fetch the target entry with lock
-	fetchedDN, err := r.FindDNByDNWithLock(tx, dn, true)
+	fetchedDN, err := r.findDNByDNWithLock(tx, dn, true)
 	if err != nil {
 		rollback(tx)
 		return err
@@ -835,7 +837,7 @@ func (e *SimpleFetchedDBEntry) Member(repo Repository, IdToDNOrigCache map[int64
 		return nil, err
 	}
 
-	dns, err := repo.FindRDNsByIDs(nil, jsonArray, false)
+	dns, err := e.findRDNsByIDs(nil, jsonArray, false)
 	if err != nil {
 		return nil, err
 	}
@@ -848,7 +850,7 @@ func (e *SimpleFetchedDBEntry) Member(repo Repository, IdToDNOrigCache map[int64
 		parentDNOrig, ok := IdToDNOrigCache[parentId]
 		if !ok {
 			// TODO optimize
-			parentDN, err := repo.FindDNByID(nil, parentId, false)
+			parentDN, err := e.findDNByID(nil, parentId, false)
 			if err != nil {
 				// TODO ignore no result
 				return nil, xerrors.Errorf("Failed to fetch by parent_id: %s, err: %w", parentId, err)
@@ -875,8 +877,7 @@ func (e *SimpleFetchedDBEntry) Member2(repo Repository, IdToDNOrigCache map[int6
 		return nil, err
 	}
 
-	// dns, err := repo.FindRDNsByIDs(nil, jsonArray, false)
-	dns, err := repo.FindDNsByIDs(nil, jsonArray, false)
+	dns, err := e.findDNsByIDs(nil, jsonArray, false)
 	if err != nil {
 		return nil, err
 	}
@@ -900,7 +901,7 @@ func (e *SimpleFetchedDBEntry) MemberOf(repo Repository, IdToDNOrigCache map[int
 		return nil, err
 	}
 
-	dns, err := repo.FindRDNsByIDs(nil, jsonArray, false)
+	dns, err := e.findRDNsByIDs(nil, jsonArray, false)
 	if err != nil {
 		return nil, err
 	}
@@ -913,7 +914,7 @@ func (e *SimpleFetchedDBEntry) MemberOf(repo Repository, IdToDNOrigCache map[int
 		parentDNOrig, ok := IdToDNOrigCache[parentId]
 		if !ok {
 			// TODO optimize
-			parentDN, err := repo.FindDNByID(nil, parentId, false)
+			parentDN, err := e.findDNByID(nil, parentId, false)
 			if err != nil {
 				// TODO ignore no result
 				return nil, xerrors.Errorf("Failed to fetch by parent_id: %s, err: %w", parentId, err)
@@ -940,8 +941,7 @@ func (e *SimpleFetchedDBEntry) MemberOf2(repo Repository, IdToDNOrigCache map[in
 		return nil, err
 	}
 
-	// dns, err := repo.FindRDNsByIDs(nil, jsonArray, false)
-	dns, err := repo.FindDNsByIDs(nil, jsonArray, false)
+	dns, err := e.findDNsByIDs(nil, jsonArray, false)
 	if err != nil {
 		return nil, err
 	}
@@ -995,7 +995,7 @@ type FetchedDNOrig struct {
 func (r *SimpleRepository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []string,
 	reqMemberOf, isHasSubordinatesRequested bool, handler func(entry *SearchEntry) error) (int32, int32, error) {
 
-	fetchedDN, err := r.FindDNByDNWithLock(nil, baseDN, false)
+	fetchedDN, err := r.findDNByDNWithLock(nil, baseDN, false)
 	if err != nil {
 		log.Printf("debug: Failed to find DN by DN. err: %+v", err)
 		return 0, 0, err
@@ -1072,7 +1072,7 @@ func (r *SimpleRepository) Search(baseDN *DN, scope int, q *Query, reqMemberAttr
 			if parentId, ok := q.DNNormToIdCache[parentDNNorm]; ok {
 				// Find by the parent_id and rdn_norm
 				rdnNorm := pendingDN.RDNs[0].NormStr()
-				id, err := r.FindIDByParentIDAndRDNNorm(nil, parentId, rdnNorm)
+				id, err := r.findIDByParentIDAndRDNNorm(nil, parentId, rdnNorm)
 				if err != nil {
 					log.Printf("debug: Can't find the DN by parent_id: %d and rdn_norm: %s, err: %s", parentId, rdnNorm, err)
 					continue
@@ -1087,7 +1087,7 @@ func (r *SimpleRepository) Search(baseDN *DN, scope int, q *Query, reqMemberAttr
 			}
 			// No cache, need to full search...
 
-			dn, err := r.FindDNByDNWithLock(nil, pendingDN, false)
+			dn, err := r.findDNByDNWithLock(nil, pendingDN, false)
 			if err != nil {
 				log.Printf("debug: Can't find the DN by DN: %s, err: %s", pendingDN.DNNormStr(), err)
 				continue
@@ -1380,7 +1380,7 @@ func (r *SimpleRepository) FindRDNByID(tx *sqlx.Tx, id []int64, lock bool) (*Fet
 	return &dest, nil
 }
 
-func (r *SimpleRepository) FindRDNsByIDs(tx *sqlx.Tx, id []int64, lock bool) ([]*FetchedRDNOrig, error) {
+func (r *SimpleFetchedDBEntry) findRDNsByIDs(tx *sqlx.Tx, id []int64, lock bool) ([]*FetchedRDNOrig, error) {
 	in := make([]string, len(id))
 	for i, v := range id {
 		in[i] = strconv.FormatInt(v, 10)
@@ -1394,7 +1394,7 @@ func (r *SimpleRepository) FindRDNsByIDs(tx *sqlx.Tx, id []int64, lock bool) ([]
 			e.id in (` + strings.Join(in, ",") + `)
 		`
 
-	rows, err := r.db.Queryx(q)
+	rows, err := tx.Queryx(q)
 	if err != nil {
 		return nil, err
 	}
@@ -1414,7 +1414,7 @@ func (r *SimpleRepository) FindRDNsByIDs(tx *sqlx.Tx, id []int64, lock bool) ([]
 	return list, nil
 }
 
-func (r *SimpleRepository) FindDNsByIDs(tx *sqlx.Tx, id []int64, lock bool) ([]*FetchedDNOrig, error) {
+func (r *SimpleFetchedDBEntry) findDNsByIDs(tx *sqlx.Tx, id []int64, lock bool) ([]*FetchedDNOrig, error) {
 	in := make([]string, len(id))
 	for i, v := range id {
 		in[i] = strconv.FormatInt(v, 10)
@@ -1433,7 +1433,7 @@ func (r *SimpleRepository) FindDNsByIDs(tx *sqlx.Tx, id []int64, lock bool) ([]*
 	GROUP BY e.id
 	`
 
-	rows, err := r.db.Queryx(q)
+	rows, err := tx.Queryx(q)
 	if err != nil {
 		return nil, err
 	}
@@ -1517,7 +1517,7 @@ func (r *SimpleRepository) FindRDNsByID(tx *sqlx.Tx, id int64, lock bool) ([]*Fe
 	return list, nil
 }
 
-func (r *SimpleRepository) FindDNByID(tx *sqlx.Tx, id int64, lock bool) (*FetchedDNOrig, error) {
+func (r *SimpleFetchedDBEntry) findDNByID(tx *sqlx.Tx, id int64, lock bool) (*FetchedDNOrig, error) {
 	var dest FetchedDNOrig
 	err := namedStmt(tx, findDNByIDStmt).Get(&dest, map[string]interface{}{
 		"id": id,
@@ -1532,8 +1532,7 @@ func (r *SimpleRepository) FindDNByID(tx *sqlx.Tx, id int64, lock bool) (*Fetche
 	return &dest, nil
 }
 
-// FindDNByDNWithLock returns FetchedDN object from database by DN search.
-func (r *SimpleRepository) FindDNByDNWithLock(tx *sqlx.Tx, dn *DN, lock bool) (*FetchedDN, error) {
+func (r *SimpleRepository) findDNByDNWithLock(tx *sqlx.Tx, dn *DN, lock bool) (*FetchedDN, error) {
 	stmt, params, err := r.PrepareFindDNByDN(dn, &FindOption{Lock: lock})
 	if err != nil {
 		return nil, xerrors.Errorf("Failed to prepare FindDNOnlyByDN: %v, err: %w", dn, err)
@@ -1625,7 +1624,7 @@ func (r *SimpleRepository) FindContainerByDN(tx *sqlx.Tx, dn *FetchedDN, scope i
 	return list, nil
 }
 
-func (r *SimpleRepository) FindIDByParentIDAndRDNNorm(tx *sqlx.Tx, parentId int64, rdn_norm string) (int64, error) {
+func (r *SimpleRepository) findIDByParentIDAndRDNNorm(tx *sqlx.Tx, parentId int64, rdn_norm string) (int64, error) {
 	var dest int64
 	err := namedStmt(tx, findIDByParentIDAndRDNNormStmt).Get(&dest, map[string]interface{}{
 		"parent_id": parentId,
@@ -1641,7 +1640,7 @@ func (r *SimpleRepository) FindIDByParentIDAndRDNNorm(tx *sqlx.Tx, parentId int6
 	return dest, nil
 }
 
-func (r *SimpleRepository) FindIDsByParentIDAndRDNNorms(tx *sqlx.Tx, parentID int64, rdnNorms []string) ([]int64, error) {
+func (r *SimpleRepository) findIDsByParentIDAndRDNNorms(tx *sqlx.Tx, parentID int64, rdnNorms []string) ([]int64, error) {
 	stmt, err := r.db.PrepareNamed(`
 		SELECT e.id
 		FROM ldap_entry e
@@ -1776,4 +1775,147 @@ func (r *SimpleRepository) AppenScopeFilter(scope int, q *Query, fetchedDN *Fetc
 	}
 
 	return fmt.Sprintf("%s %s", parentFilter, query), nil
+}
+
+//////////////////////////////////////////
+// Mapping
+//////////////////////////////////////////
+
+// AddEntryToDBEntry converts LDAP entry object to DB entry object.
+// It handles metadata such as createTimistamp, modifyTimestamp and entryUUID.
+// Also, it handles member and uniqueMember attributes.
+func (m *SimpleRepository) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*SimpleDBEntry, []string, error) {
+	norm, orig := entry.Attrs()
+
+	created := time.Now()
+	updated := created
+	if _, ok := norm["createTimestamp"]; ok {
+		// Already validated, ignore error
+		created, _ = time.Parse(TIMESTAMP_FORMAT, norm["createTimestamp"].([]string)[0])
+	}
+	norm["createTimestamp"] = []int64{created.Unix()}
+	orig["createTimestamp"] = []string{created.In(time.UTC).Format(TIMESTAMP_FORMAT)}
+
+	if _, ok := norm["modifyTimestamp"]; ok {
+		// Already validated, ignore error
+		updated, _ = time.Parse(TIMESTAMP_FORMAT, norm["modifyTimestamp"].([]string)[0])
+	}
+	norm["modifyTimestamp"] = []int64{updated.Unix()}
+	orig["modifyTimestamp"] = []string{updated.In(time.UTC).Format(TIMESTAMP_FORMAT)}
+
+	// TODO strict mode
+	if _, ok := norm["entryUUID"]; !ok {
+		u, _ := uuid.NewRandom()
+		norm["entryUUID"] = []string{u.String()}
+		orig["entryUUID"] = []string{u.String()}
+	}
+
+	// Remove attributes to reduce attrs_orig column size
+	removeComputedAttrs(orig)
+
+	memberOf := []int64{}
+
+	// Convert the value of member and uniqueMamber attributes, DN => int64
+	if err := m.dnArrayToIDArray(tx, norm, "member", &memberOf); err != nil {
+		return nil, nil, err
+	}
+	if err := m.dnArrayToIDArray(tx, norm, "uniqueMember", &memberOf); err != nil {
+		return nil, nil, err
+	}
+
+	bNorm, _ := json.Marshal(norm)
+	bOrig, _ := json.Marshal(orig)
+
+	dbEntry := &SimpleDBEntry{
+		DNNorm:    entry.DN().DNNormStr(),
+		DNOrig:    entry.DN().DNOrigStr(),
+		AttrsNorm: types.JSONText(string(bNorm)),
+		AttrsOrig: types.JSONText(string(bOrig)),
+	}
+
+	return dbEntry, uniqueIDs(memberOf), nil
+}
+
+func (r *SimpleRepository) dnArrayToIDArray(tx *sqlx.Tx, norm map[string]interface{}, attrName string, memberOf *[]int64) error {
+	if members, ok := norm[attrName].([]string); ok && len(members) > 0 {
+
+		rdnGroup := map[string][]string{}
+		for i, v := range members {
+			dn, err := NormalizeDN(r.server.schemaMap, v)
+			if err != nil {
+				log.Printf("warn: Failed to normalize DN: %s", v)
+				return NewInvalidPerSyntax(attrName, i)
+			}
+
+			parentDNNorm := dn.ParentDN().DNNormStr()
+			rdnGroup[parentDNNorm] = append(rdnGroup[parentDNNorm], dn.RDNNormStr())
+		}
+
+		memberIDs := []int64{}
+
+		for k, v := range rdnGroup {
+			parentDN, err := NormalizeDN(r.server.schemaMap, k)
+			if err != nil {
+				log.Printf("error: Unexpected normalize DN error. DN: %s, err: %v", k, err)
+				return NewUnavailable()
+			}
+			fetchedParentDN, err := r.findDNByDNWithLock(tx, parentDN, true)
+			if err != nil {
+				if lerr, ok := err.(*LDAPError); ok {
+					if lerr.IsNoSuchObjectError() {
+						log.Printf("warn: No such object: %s", parentDN.DNNormStr())
+						// TODO should be return error or special handling?
+						return NewInvalidPerSyntax(attrName, 0)
+					}
+				}
+				// System error
+				return NewUnavailable()
+			}
+
+			ids, err := r.findIDsByParentIDAndRDNNorms(tx, fetchedParentDN.ID, v)
+			if err != nil {
+				return err
+			}
+
+			memberIDs = append(memberIDs, ids...)
+			*memberOf = append(*memberOf, ids...)
+		}
+
+		// Replace with id member
+		norm[attrName] = memberIDs
+	}
+	return nil
+}
+
+func (r *SimpleRepository) modifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry) (*SimpleDBEntry, []string, error) {
+	norm, orig := entry.GetAttrs()
+
+	// Remove attributes to reduce attrs_orig column size
+	removeComputedAttrs(orig)
+
+	var memberOf []int64
+
+	// Convert the value of member and uniqueMamber attributes, DN => int64
+	if err := r.dnArrayToIDArray(tx, norm, "member", &memberOf); err != nil {
+		return nil, nil, err
+	}
+	if err := r.dnArrayToIDArray(tx, norm, "uniqueMember", &memberOf); err != nil {
+		return nil, nil, err
+	}
+
+	updated := time.Now()
+	norm["modifyTimestamp"] = []int64{updated.Unix()}
+	orig["modifyTimestamp"] = []string{updated.In(time.UTC).Format(TIMESTAMP_FORMAT)}
+
+	bNorm, _ := json.Marshal(norm)
+	bOrig, _ := json.Marshal(orig)
+
+	dbEntry := &SimpleDBEntry{
+		ID:        entry.dbEntryID,
+		Updated:   updated,
+		AttrsNorm: types.JSONText(string(bNorm)),
+		AttrsOrig: types.JSONText(string(bOrig)),
+	}
+
+	return dbEntry, uniqueIDs(memberOf), nil
 }
