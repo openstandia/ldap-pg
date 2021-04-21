@@ -55,7 +55,7 @@ type Server struct {
 	internal   *ldap.Server
 	suffixOrig []string
 	suffixNorm []string
-	repo       *Repository
+	repo       RepositoryHandler
 }
 
 func NewServer(c *ServerConfig) *Server {
@@ -80,7 +80,7 @@ func NewServer(c *ServerConfig) *Server {
 	}
 }
 
-func (s *Server) Repo() *Repository {
+func (s *Server) Repo() RepositoryHandler {
 	return s.repo
 }
 

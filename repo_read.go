@@ -25,7 +25,7 @@ type FetchedDBEntry struct {
 	ParentDNOrig    string         // No real column in the table
 }
 
-func (e *FetchedDBEntry) Member(repo *Repository, IdToDNOrigCache map[int64]string) ([]string, error) {
+func (e *FetchedDBEntry) Member(repo RepositoryHandler, IdToDNOrigCache map[int64]string) ([]string, error) {
 	if len(e.RawMember) == 0 {
 		return nil, nil
 	}
@@ -90,7 +90,7 @@ func (e *FetchedDBEntry) Member2(repo *Repository, IdToDNOrigCache map[int64]str
 	return results, nil
 }
 
-func (e *FetchedDBEntry) MemberOf(repo *Repository, IdToDNOrigCache map[int64]string) ([]string, error) {
+func (e *FetchedDBEntry) MemberOf(repo RepositoryHandler, IdToDNOrigCache map[int64]string) ([]string, error) {
 	if len(e.RawMemberOf) == 0 {
 		return nil, nil
 	}

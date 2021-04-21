@@ -55,11 +55,10 @@ func (m *StmtCache) Put(key string, value *sqlx.NamedStmt) {
 }
 
 type Repository struct {
-	server *Server
-	db     *sqlx.DB
+	db *sqlx.DB
 }
 
-func NewRepository(server *Server) (*Repository, error) {
+func NewRepository(server *Server) (RepositoryHandler, error) {
 	// Init DB Connection
 	db, err := sqlx.Connect("postgres", fmt.Sprintf("host=%s port=%d user=%s dbname=%s password=%s sslmode=disable search_path=%s",
 		server.config.DBHostName, server.config.DBPort, server.config.DBUser, server.config.DBName,
@@ -72,17 +71,17 @@ func NewRepository(server *Server) (*Repository, error) {
 	db.SetMaxIdleConns(server.config.DBMaxIdleConns)
 	// db.SetConnMaxLifetime(time.Hour)
 
-	repo := &Repository{
-		server: server,
-		db:     db,
+	var repo RepositoryHandler = &Repository{
+		// server: server,
+		db: db,
 	}
 
-	err = repo.initTables(db)
+	err = repo.InitTables(db)
 	if err != nil {
 		return nil, err
 	}
 
-	err = repo.initStmt(db)
+	err = repo.InitStmt(db)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +89,33 @@ func NewRepository(server *Server) (*Repository, error) {
 	return repo, nil
 }
 
-func (r *Repository) initTables(db *sqlx.DB) error {
+type RepositoryHandler interface {
+	InitTables(db *sqlx.DB) error
+	InitStmt(db *sqlx.DB) error
+
+	BeginTx() *sqlx.Tx
+
+	FindCredByDN(dn *DN) ([]string, error)
+	FindRDNsByIDs(tx *sqlx.Tx, id []int64, lock bool) ([]*FetchedRDNOrig, error)
+	FindDNByID(tx *sqlx.Tx, id int64, lock bool) (*FetchedDNOrig, error)
+	// FindDNByDNWithLock returns FetchedDN object from database by DN search.
+	FindDNByDNWithLock(tx *sqlx.Tx, dn *DN, lock bool) (*FetchedDN, error)
+	FindIDsByParentIDAndRDNNorms(tx *sqlx.Tx, parentID int64, rdnNorms []string) ([]int64, error)
+	Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []string,
+		reqMemberOf, isHasSubordinatesRequested bool, handler func(entry *SearchEntry) error) (int32, int32, error)
+
+	Update(tx *sqlx.Tx, oldEntry, newEntry *ModifyEntry) error
+	// FindEntryByDN returns FetchedDBEntry object from database by DN search.
+	FindEntryByDN(tx *sqlx.Tx, dn *DN, lock bool) (*ModifyEntry, error)
+
+	UpdateDN(oldDN, newDN *DN, oldRDN *RelativeDN) error
+
+	Insert(entry *AddEntry) (int64, error)
+
+	DeleteByDN(dn *DN) error
+}
+
+func (r *Repository) InitTables(db *sqlx.DB) error {
 	_, err := db.Exec(`
 	CREATE EXTENSION IF NOT EXISTS pgcrypto;
 	CREATE EXTENSION IF NOT EXISTS ltree;
@@ -119,7 +144,7 @@ func (r *Repository) initTables(db *sqlx.DB) error {
 	return err
 }
 
-func (r *Repository) initStmt(db *sqlx.DB) error {
+func (r *Repository) InitStmt(db *sqlx.DB) error {
 	var err error
 
 	// Can't find root by this query
@@ -254,6 +279,10 @@ func (r *Repository) initStmt(db *sqlx.DB) error {
 	}
 
 	return nil
+}
+
+func (r *Repository) BeginTx() *sqlx.Tx {
+	return r.db.MustBegin()
 }
 
 type DBEntry struct {
