@@ -15,8 +15,11 @@ type SimpleRepository struct {
 	*DBRepository
 }
 
-func (r *SimpleRepository) InitTables(db *sqlx.DB) error {
-	_, err := db.Exec(`
+func (r *SimpleRepository) Init() error {
+	var err error
+	db := r.db
+
+	_, err = db.Exec(`
 	CREATE EXTENSION IF NOT EXISTS pgcrypto;
 	CREATE EXTENSION IF NOT EXISTS ltree;
 	
@@ -41,11 +44,6 @@ func (r *SimpleRepository) InitTables(db *sqlx.DB) error {
 	-- all json index
 	CREATE INDEX IF NOT EXISTS idx_ldap_entry_attrs ON ldap_entry USING gin (attrs_norm jsonb_path_ops);
 	`)
-	return err
-}
-
-func (r *SimpleRepository) InitStmt(db *sqlx.DB) error {
-	var err error
 
 	// Can't find root by this query
 	findDNByIDStmt, err = db.PrepareNamed(`SELECT

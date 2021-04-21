@@ -78,12 +78,7 @@ func NewRepository(server *Server) (Repository, error) {
 	repo := &SimpleRepository{}
 	repo.db = db
 
-	err = repo.InitTables(db)
-	if err != nil {
-		return nil, err
-	}
-
-	err = repo.InitStmt(db)
+	err = repo.Init()
 	if err != nil {
 		return nil, err
 	}
@@ -92,12 +87,15 @@ func NewRepository(server *Server) (Repository, error) {
 }
 
 type Repository interface {
-	InitTables(db *sqlx.DB) error
-	InitStmt(db *sqlx.DB) error
+	// Init is called when initializing repository implementation.
+	Init() error
 
 	BeginTx() *sqlx.Tx
 
+	// FindCredByDN returns the credential by specified DN.
+	// This is used for BIND operation.
 	FindCredByDN(dn *DN) ([]string, error)
+
 	FindRDNsByIDs(tx *sqlx.Tx, id []int64, lock bool) ([]*FetchedRDNOrig, error)
 	FindDNByID(tx *sqlx.Tx, id int64, lock bool) (*FetchedDNOrig, error)
 	// FindDNByDNWithLock returns FetchedDN object from database by DN search.
@@ -107,14 +105,18 @@ type Repository interface {
 		reqMemberOf, isHasSubordinatesRequested bool, handler func(entry *SearchEntry) error) (int32, int32, error)
 	FindDNsByIDs(tx *sqlx.Tx, id []int64, lock bool) ([]*FetchedDNOrig, error)
 
+	// Update modifies the entry by specified change data.
 	Update(tx *sqlx.Tx, oldEntry, newEntry *ModifyEntry) error
 	// FindEntryByDN returns FetchedDBEntry object from database by DN search.
 	FindEntryByDN(tx *sqlx.Tx, dn *DN, lock bool) (*ModifyEntry, error)
 
+	// UpdateDN modifies the entry DN by specified change data.
 	UpdateDN(oldDN, newDN *DN, oldRDN *RelativeDN) error
 
+	// Insert creates the entry by specified entry data.
 	Insert(entry *AddEntry) (int64, error)
 
+	// DeleteByDN deletes the entry by specified DN.
 	DeleteByDN(dn *DN) error
 }
 
