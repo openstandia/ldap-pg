@@ -472,9 +472,32 @@ func (r *SimpleRepository) insertRootEntry(tx *sqlx.Tx, entry *AddEntry) (int64,
 // MOD operation
 //////////////////////////////////////////
 
-func (r *SimpleRepository) Update(tx *sqlx.Tx, oldEntry, newEntry *ModifyEntry) error {
+func (r *SimpleRepository) Update(dn *DN, callback func(current *ModifyEntry) error) error {
+	tx := r.db.MustBegin()
+
+	// Fetch target entry with lock
+	oldEntry, err := r.findByDNForUpdate(tx, dn)
+	if err != nil {
+		rollback(tx)
+		return err
+	}
+
+	newEntry, err := mapper.FetchedEntryToModifyEntry(oldEntry)
+	if err != nil {
+		rollback(tx)
+		xerrors.Errorf("Failed to map to ModifyEntry in %s: %v, err: %w", txLabel(tx), dn, err)
+	}
+
+	// Apply modify operations from LDAP request
+	err = callback(newEntry)
+	if err != nil {
+		rollback(tx)
+		return err
+	}
+
+	// Then, update database
 	if newEntry.dbEntryID == 0 {
-		return xerrors.Errorf("Invalid dbEntryId for update DBEntry.")
+		return xerrors.Errorf("Invalid dbEntryId for update DBEntry in %s.", txLabel(tx))
 	}
 
 	dbEntry, _, err := r.modifyEntryToDBEntry(tx, newEntry)
@@ -489,39 +512,59 @@ func (r *SimpleRepository) Update(tx *sqlx.Tx, oldEntry, newEntry *ModifyEntry) 
 		"attrs_orig": dbEntry.AttrsOrig,
 	})
 	if err != nil {
-		return xerrors.Errorf("Failed to update entry. entry: %v, err: %w", newEntry, err)
+		return xerrors.Errorf("Failed to update entry in %s. entry: %v, err: %w", txLabel(tx), newEntry, err)
 	}
 
-	return nil
+	return commit(tx)
+}
+
+func (r *SimpleRepository) findByDNForUpdate(tx *sqlx.Tx, dn *DN) (*FetchedEntry, error) {
+	stmt, params, err := r.PrepareFindDNByDN(dn, &FindOption{Lock: true, FetchAttrs: true})
+	if err != nil {
+		return nil, xerrors.Errorf("Failed to prepare FindEntryByDN in %s: %v, err: %w", txLabel(tx), dn, err)
+	}
+
+	var dest FetchedEntry
+	err = namedStmt(tx, stmt).Get(&dest, params)
+	if err != nil {
+		if isNoResult(err) {
+			return nil, NewNoSuchObject()
+		}
+		return nil, xerrors.Errorf("Failed to fetch FindEntryByDN in %s: %v, err: %w", txLabel(tx), dn, err)
+	}
+
+	return &dest, nil
 }
 
 func (r *SimpleRepository) UpdateDN(oldDN, newDN *DN, oldRDN *RelativeDN) error {
 	tx := r.db.MustBegin()
 
-	err := r.updateDN(tx, oldDN, newDN, oldRDN)
+	// Fetch target entry with lock
+	oldEntry, err := r.findByDNForUpdate(tx, oldDN)
+	if err != nil {
+		rollback(tx)
+		return err
+	}
+
+	me, err := mapper.FetchedEntryToModifyEntry(oldEntry)
+	if err != nil {
+		return err
+	}
+
+	if !oldDN.ParentDN().Equal(newDN.ParentDN()) {
+		// Move or copy onto the new parent case
+		err = r.updateDNOntoNewParent(tx, oldDN, newDN, oldRDN, me)
+	} else {
+		// Update rdn only case
+		err = r.updateRDN(tx, oldDN, newDN, oldRDN, me)
+	}
+
 	if err != nil {
 		rollback(tx)
 		return err
 	}
 
 	return commit(tx)
-}
-
-func (r *SimpleRepository) updateDN(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *RelativeDN) error {
-	// Lock the entry
-	oldEntry, err := r.FindEntryByDN(tx, oldDN, true)
-	if err != nil {
-		log.Printf("debug: Failed to fetch the entry by DN: %v, err: %v", oldDN, err)
-		return NewNoSuchObject()
-	}
-
-	if !oldDN.ParentDN().Equal(newDN.ParentDN()) {
-		// Move or copy onto the new parent case
-		return r.updateDNOntoNewParent(tx, oldDN, newDN, oldRDN, oldEntry)
-	} else {
-		// Update rdn only case
-		return r.updateRDN(tx, oldDN, newDN, oldRDN, oldEntry)
-	}
 }
 
 func (r *SimpleRepository) updateDNOntoNewParent(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *RelativeDN, oldEntry *ModifyEntry) error {
@@ -1548,25 +1591,6 @@ func (r *SimpleRepository) findDNByDNWithLock(tx *sqlx.Tx, dn *DN, lock bool) (*
 	}
 
 	return &dest, nil
-}
-
-// FindEntryByDN returns FetchedDBEntry object from database by DN search.
-func (r *SimpleRepository) FindEntryByDN(tx *sqlx.Tx, dn *DN, lock bool) (*ModifyEntry, error) {
-	stmt, params, err := r.PrepareFindDNByDN(dn, &FindOption{Lock: lock, FetchAttrs: true})
-	if err != nil {
-		return nil, xerrors.Errorf("Failed to prepare FindEntryByDN: %v, err: %w", dn, err)
-	}
-
-	var dest FetchedEntry
-	err = namedStmt(tx, stmt).Get(&dest, params)
-	if err != nil {
-		if isNoResult(err) {
-			return nil, NewNoSuchObject()
-		}
-		return nil, xerrors.Errorf("Failed to fetch FindEntryByDN in %s: %v, err: %w", txLabel(tx), dn, err)
-	}
-
-	return mapper.FetchedEntryToModifyEntry(&dest)
 }
 
 func (r *SimpleRepository) FindContainerByDN(tx *sqlx.Tx, dn *FetchedDN, scope int) ([]*FetchedDNOrig, error) {

@@ -90,8 +90,6 @@ type Repository interface {
 	// Init is called when initializing repository implementation.
 	Init() error
 
-	BeginTx() *sqlx.Tx
-
 	// FindCredByDN returns the credential by specified DN.
 	// This is used for BIND operation.
 	FindCredByDN(dn *DN) ([]string, error)
@@ -101,13 +99,12 @@ type Repository interface {
 	Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []string,
 		reqMemberOf, isHasSubordinatesRequested bool, handler func(entry *SearchEntry) error) (int32, int32, error)
 
-	// FindEntryByDN returns FetchedDBEntry object from database by DN search.
-	// This is used for MOD operation to before updating.
-	FindEntryByDN(tx *sqlx.Tx, dn *DN, lock bool) (*ModifyEntry, error)
 	// Update modifies the entry by specified change data.
-	Update(tx *sqlx.Tx, oldEntry, newEntry *ModifyEntry) error
+	// This is used for MOD operation.
+	Update(dn *DN, callback func(current *ModifyEntry) error) error
 
 	// UpdateDN modifies the entry DN by specified change data.
+	// This is used for MODRDN operation.
 	UpdateDN(oldDN, newDN *DN, oldRDN *RelativeDN) error
 
 	// Insert creates the entry by specified entry data.
