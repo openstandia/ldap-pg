@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/openstandia/goldap/message"
 )
 
 var (
@@ -96,7 +97,9 @@ type Repository interface {
 
 	// Search handles search request by filter.
 	// This is used for SEARCH operation.
-	Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []string,
+	Search(baseDN *DN, scope int, q message.Filter,
+		pageSize, offset int32,
+		reqMemberAttrs []string,
 		reqMemberOf, isHasSubordinatesRequested bool, handler func(entry *SearchEntry) error) (int32, int32, error)
 
 	// Update modifies the entry by specified change data.

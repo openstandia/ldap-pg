@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/jmoiron/sqlx/types"
+	"github.com/openstandia/goldap/message"
 	"golang.org/x/xerrors"
 )
 
@@ -1035,8 +1036,24 @@ type FetchedDNOrig struct {
 	DNOrig string `db:"dn_orig"`
 }
 
-func (r *SimpleRepository) Search(baseDN *DN, scope int, q *Query, reqMemberAttrs []string,
+func (r *SimpleRepository) Search(baseDN *DN, scope int, filter message.Filter,
+	pageSize, offset int32,
+	reqMemberAttrs []string,
 	reqMemberOf, isHasSubordinatesRequested bool, handler func(entry *SearchEntry) error) (int32, int32, error) {
+
+	// Phase 3: filter converting
+	q, err := ToQuery(r.server, filter)
+	if err != nil {
+		log.Printf("info: query error: %#v", err)
+
+		// TODO return correct error code
+		return 0, 0, NewOperationsError()
+	}
+
+	// If the filter doesn't contain supported attributes, return success.
+	if q.Query == "" {
+		return 0, 0, NewSuccess()
+	}
 
 	fetchedDN, err := r.findDNByDNWithLock(nil, baseDN, false)
 	if err != nil {

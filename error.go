@@ -144,3 +144,9 @@ func NewUnavailable() *LDAPError {
 		Code: ldap.LDAPResultUnavailable,
 	}
 }
+
+func NewOperationsError() *LDAPError {
+	return &LDAPError{
+		Code: ldap.LDAPResultOperationsError,
+	}
+}

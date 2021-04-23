@@ -74,23 +74,6 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	// Phase 3: filter converting
-	q, err := ToQuery(s, r.Filter())
-	if err != nil {
-		log.Printf("info: query error: %#v", err)
-
-		// TODO return correct error code
-		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultOperationsError)
-		w.Write(res)
-		return
-	}
-	// If the filter doesn't contain supported attributes, return success.
-	if q.Query == "" && r.FilterString() != "" {
-		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultSuccess)
-		w.Write(res)
-		return
-	}
-
 	// Phase 4: execute SQL and return entries
 	// TODO configurable default pageSize
 	var pageSize int32 = 500
@@ -109,10 +92,8 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		}
 	}
 
-	q.Params["pageSize"] = pageSize
-	q.Params["offset"] = offset
-
-	maxCount, limittedCount, err := s.Repo().Search(baseDN, scope, q,
+	maxCount, limittedCount, err := s.Repo().Search(baseDN, scope, r.Filter(),
+		pageSize, offset,
 		getRequestedMemberAttrs(r), isMemberOfRequested(r), isHasSubOrdinatesRequested(r), func(searchEntry *SearchEntry) error {
 			responseEntry(s, w, r, searchEntry)
 			return nil
