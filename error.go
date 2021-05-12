@@ -119,6 +119,13 @@ func NewInsufficientAccess() *LDAPError {
 	}
 }
 
+func NewNoGlobalSuperiorKnowledge() *LDAPError {
+	return &LDAPError{
+		Code: ldap.LDAPResultUnwillingToPerform,
+		Msg:  fmt.Sprintf("no global superior knowledge"),
+	}
+}
+
 func NewObjectClassViolation() *LDAPError {
 	return &LDAPError{
 		Code: 65,

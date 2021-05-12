@@ -50,6 +50,7 @@ func (m *Mapper) LDAPMessageToAddEntry(dn *DN, ldapAttrs message.AttributeList) 
 func removeComputedAttrs(orig map[string][]string) {
 	delete(orig, "member")
 	delete(orig, "uniqueMember")
+	delete(orig, "memberOf")
 	// delete(orig, "createTimestamp")
 	// delete(orig, "modifyTimestamp")
 	// delete(orig, "entryUUID")
@@ -63,6 +64,20 @@ func uniqueIDs(target []int64) []string {
 		if !m[v] {
 			m[v] = true
 			result = append(result, strconv.FormatInt(v, 10))
+		}
+	}
+
+	return result
+}
+
+func unique(target []int64) []int64 {
+	m := map[int64]bool{}
+	result := []int64{}
+
+	for _, v := range target {
+		if !m[v] {
+			m[v] = true
+			result = append(result, v)
 		}
 	}
 

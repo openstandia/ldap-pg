@@ -152,10 +152,46 @@ func (d *DN) DNNormStr() string {
 	return b.String()
 }
 
+func (d *DN) DNNormStrWithoutSuffix(suffix *DN) string {
+	sRDNs := suffix.RDNs
+	diff := len(d.RDNs) - len(sRDNs)
+
+	var b strings.Builder
+	b.Grow(256)
+	for i, rdn := range d.RDNs {
+		if i >= diff {
+			break
+		}
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString(rdn.NormStr())
+	}
+	return b.String()
+}
+
 func (d *DN) DNOrigStr() string {
 	var b strings.Builder
 	b.Grow(256)
 	for i, rdn := range d.RDNs {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString(rdn.OrigStr())
+	}
+	return b.String()
+}
+
+func (d *DN) DNOrigStrWithoutSuffix(suffix *DN) string {
+	sRDNs := suffix.RDNs
+	diff := len(d.RDNs) - len(sRDNs)
+
+	var b strings.Builder
+	b.Grow(256)
+	for i, rdn := range d.RDNs {
+		if i >= diff {
+			break
+		}
 		if i > 0 {
 			b.WriteString(",")
 		}
@@ -196,7 +232,19 @@ func (d *DN) Equal(o *DN) bool {
 	if d == nil {
 		return o == nil
 	}
-	return d.DNNormStr() == o.DNNormStr()
+	return len(d.RDNs) == len(o.RDNs) && d.DNNormStr() == o.DNNormStr()
+}
+
+// IsSubOf checks whether the arg DN is subset of self.
+// Example:
+//   self DN: ou=people,dc=exaple,dc=com
+//   arg DN: dc=example,dc=com
+// => true
+func (d *DN) IsSubOf(o *DN) bool {
+	if d == nil {
+		return false
+	}
+	return len(d.RDNs) > len(o.RDNs) && strings.HasSuffix(d.DNNormStr(), o.DNNormStr())
 }
 
 func (d *DN) RDN() map[string]string {
@@ -285,4 +333,8 @@ func (d *DN) IsDC() bool {
 
 func (d *DN) IsAnonymous() bool {
 	return len(d.RDNs) == 0
+}
+
+func (d *DN) Level() int {
+	return len(d.RDNs)
 }

@@ -22,6 +22,12 @@ func handleAdd(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
+	// Invalid suffix
+	if !dn.Equal(s.Suffix) && !dn.IsSubOf(s.Suffix) {
+		responseAddError(w, NewNoGlobalSuperiorKnowledge())
+		return
+	}
+
 	log.Printf("debug: Start adding DN: %v", dn)
 
 	addEntry, err := mapper.LDAPMessageToAddEntry(dn, r.Attributes())

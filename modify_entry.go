@@ -5,24 +5,26 @@ import (
 )
 
 type ModifyEntry struct {
-	schemaMap  *SchemaMap
-	dn         *DN
-	attributes map[string]*SchemaValue
-	dbEntryID  int64
-	dbParentID int64
-	hasSub     bool
-	path       string
-	add        []*SchemaValue
-	replace    []*SchemaValue
-	del        []*SchemaValue
+	schemaMap        *SchemaMap
+	dn               *DN
+	attributes       map[string]*SchemaValue
+	dbEntryID        int64
+	dbParentID       int64
+	hasSub           bool
+	path             string
+	AddChangeLog     map[string]*SchemaValue
+	ReplaceChangeLog map[string]*SchemaValue
+	DelChangeLog     map[string]*SchemaValue
 }
 
 func NewModifyEntry(schemaMap *SchemaMap, dn *DN, valuesOrig map[string][]string) (*ModifyEntry, error) {
 	// TODO
 	modifyEntry := &ModifyEntry{
-		schemaMap:  schemaMap,
-		dn:         dn,
-		attributes: map[string]*SchemaValue{},
+		schemaMap:    schemaMap,
+		dn:           dn,
+		attributes:   map[string]*SchemaValue{},
+		AddChangeLog: map[string]*SchemaValue{},
+		DelChangeLog: map[string]*SchemaValue{},
 	}
 
 	for k, v := range valuesOrig {
@@ -101,7 +103,12 @@ func (j *ModifyEntry) Add(attrName string, attrValue []string) error {
 	}
 
 	// Record changelog
-	j.add = append(j.add, sv)
+	if v, ok := j.AddChangeLog[sv.Name()]; !ok {
+		j.AddChangeLog[sv.Name()] = sv
+	} else {
+		// Need this case?
+		v.Add(sv)
+	}
 
 	return nil
 }
@@ -116,7 +123,12 @@ func (j *ModifyEntry) AddNoCheck(attrName string, attrValue []string) error {
 	}
 
 	// Record changelog
-	j.add = append(j.add, sv)
+	if v, ok := j.AddChangeLog[sv.Name()]; !ok {
+		j.AddChangeLog[sv.Name()] = sv
+	} else {
+		// Need this case?
+		v.Add(sv)
+	}
 
 	return nil
 }
@@ -147,7 +159,7 @@ func (j *ModifyEntry) Replace(attrName string, attrValue []string) error {
 	}
 
 	// Record changelog
-	j.replace = append(j.replace, sv)
+	j.ReplaceChangeLog[sv.Name()] = sv
 
 	return nil
 }
@@ -177,7 +189,12 @@ func (j *ModifyEntry) Delete(attrName string, attrValue []string) error {
 	}
 
 	// Record changelog
-	j.del = append(j.del, sv)
+	if v, ok := j.DelChangeLog[sv.Name()]; !ok {
+		j.DelChangeLog[sv.Name()] = sv
+	} else {
+		// TODO Need this case?
+		v.Add(sv)
+	}
 
 	return nil
 }

@@ -54,6 +54,7 @@ type Server struct {
 	internal   *ldap.Server
 	suffixOrig []string
 	suffixNorm []string
+	Suffix     *DN
 	repo       Repository
 	schemaMap  *SchemaMap
 }
@@ -145,6 +146,13 @@ func (s *Server) Start() {
 
 	// Init schema map
 	s.LoadSchema()
+
+	// Init suffix
+	var suffixDN *DN
+	if suffixDN, err = ParseDN(s.schemaMap, s.config.Suffix); err != nil {
+		log.Fatalf("alert: Invalid suffix: %s, err: %+v", s.config.Suffix, err)
+	}
+	s.Suffix = suffixDN
 
 	// Init mapper
 	mapper = NewMapper(s)

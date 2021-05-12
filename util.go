@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 	"github.com/openstandia/goldap/message"
 	ldap "github.com/openstandia/ldapserver"
 	"golang.org/x/xerrors"
@@ -434,6 +435,15 @@ func normalizeUUID(value string) (string, error) {
 func isNoResult(err error) bool {
 	// see https://golang.org/pkg/database/sql/#pkg-variables
 	return err == sql.ErrNoRows
+}
+
+func isDuplicateKeyError(err error) bool {
+	// The error code is 23505.
+	// see https://www.postgresql.org/docs/9.3/errcodes-appendix.html
+	if err, ok := err.(*pq.Error); ok {
+		return err.Code == pq.ErrorCode("23505")
+	}
+	return false
 }
 
 func namedStmt(tx *sqlx.Tx, stmt *sqlx.NamedStmt) *sqlx.NamedStmt {

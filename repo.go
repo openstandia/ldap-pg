@@ -75,9 +75,15 @@ func NewRepository(server *Server) (Repository, error) {
 	// db.SetConnMaxLifetime(time.Hour)
 
 	// TODO: Enable to switch another implementation
-	repo := &SimpleRepository{}
-	repo.server = server
-	repo.db = db
+	// repo := &SimpleRepository{}
+	repo := &HybridRepository{
+		DBRepository: &DBRepository{
+			server: server,
+			db:     db,
+		},
+	}
+	// repo.server = server
+	// repo.db = db
 
 	err = repo.Init()
 	if err != nil {
