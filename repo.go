@@ -122,3 +122,8 @@ type Repository interface {
 	// DeleteByDN deletes the entry by specified DN.
 	DeleteByDN(dn *DN) error
 }
+
+type FetchedDNOrig struct {
+	ID     int64  `db:"id"`
+	DNOrig string `db:"dn_orig"`
+}

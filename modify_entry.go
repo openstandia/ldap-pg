@@ -20,11 +20,12 @@ type ModifyEntry struct {
 func NewModifyEntry(schemaMap *SchemaMap, dn *DN, valuesOrig map[string][]string) (*ModifyEntry, error) {
 	// TODO
 	modifyEntry := &ModifyEntry{
-		schemaMap:    schemaMap,
-		dn:           dn,
-		attributes:   map[string]*SchemaValue{},
-		AddChangeLog: map[string]*SchemaValue{},
-		DelChangeLog: map[string]*SchemaValue{},
+		schemaMap:        schemaMap,
+		dn:               dn,
+		attributes:       map[string]*SchemaValue{},
+		AddChangeLog:     map[string]*SchemaValue{},
+		ReplaceChangeLog: map[string]*SchemaValue{},
+		DelChangeLog:     map[string]*SchemaValue{},
 	}
 
 	for k, v := range valuesOrig {
