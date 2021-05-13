@@ -280,7 +280,7 @@ func (r *HybridRepository) Init() error {
 	return nil
 }
 
-type Type2DBEntry struct {
+type HybridDBEntry struct {
 	ID                  int64          `db:"id"`
 	DNNormWithoutSuffix string         `db:"dn_norm"`
 	DNOrigWithoutSuffix string         `db:"dn_orig"`
@@ -296,7 +296,7 @@ type Type2DBEntry struct {
 	ParentDN            *DN
 }
 
-type Type2FetchedDBEntry struct {
+type HybridFetchedDBEntry struct {
 	ID              int64          `db:"id"`
 	ParentID        int64          `db:"parent_id"`
 	RDNOrig         string         `db:"rdn_orig"`
@@ -350,7 +350,7 @@ func (r *HybridRepository) Insert(entry *AddEntry) (int64, error) {
 	return newID, nil
 }
 
-func (r *HybridRepository) insertLevel0(tx *sqlx.Tx, dbEntry *Type2DBEntry) (int64, int64, error) {
+func (r *HybridRepository) insertLevel0(tx *sqlx.Tx, dbEntry *HybridDBEntry) (int64, int64, error) {
 	// Step 1: Insert entry
 	var parentId int64 = 0
 
@@ -391,7 +391,7 @@ func (r *HybridRepository) insertLevel0(tx *sqlx.Tx, dbEntry *Type2DBEntry) (int
 	return newID, parentId, nil
 }
 
-func (r *HybridRepository) insertInternal(tx *sqlx.Tx, dbEntry *Type2DBEntry) (int64, int64, error) {
+func (r *HybridRepository) insertInternal(tx *sqlx.Tx, dbEntry *HybridDBEntry) (int64, int64, error) {
 	parentDN := dbEntry.ParentDN
 
 	// Step 1: Find the parent ID
@@ -624,14 +624,14 @@ func (r *HybridRepository) Update(dn *DN, callback func(current *ModifyEntry) er
 	return commit(tx)
 }
 
-type Type2FetchedDBEntryForUpdate struct {
+type HybridFetchedDBEntryForUpdate struct {
 	ID        int64          `db:"id"`
 	ParentID  int64          `db:"parent_id"`
 	RDNOrig   string         `db:"rdn_orig"`
 	AttrsOrig types.JSONText `db:"attrs_orig"`
 }
 
-func (e *Type2FetchedDBEntryForUpdate) AttrsOrigAsMap() map[string][]string {
+func (e *HybridFetchedDBEntryForUpdate) AttrsOrigAsMap() map[string][]string {
 	if len(e.AttrsOrig) > 0 {
 		jsonMap := make(map[string][]string)
 		if err := e.AttrsOrig.Unmarshal(&jsonMap); err != nil {
@@ -643,8 +643,8 @@ func (e *Type2FetchedDBEntryForUpdate) AttrsOrigAsMap() map[string][]string {
 	return nil
 }
 
-func (r *HybridRepository) findByDNForUpdate(tx *sqlx.Tx, dn *DN) (*Type2FetchedDBEntryForUpdate, error) {
-	var dest Type2FetchedDBEntryForUpdate
+func (r *HybridRepository) findByDNForUpdate(tx *sqlx.Tx, dn *DN) (*HybridFetchedDBEntryForUpdate, error) {
+	var dest HybridFetchedDBEntryForUpdate
 	err := namedStmt(tx, findEntryByDNWithShareLock).Get(&dest, map[string]interface{}{
 		"rdn_norm":       dn.RDNNormStr(),
 		"parent_dn_norm": dn.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix),
@@ -1022,7 +1022,7 @@ func (r *HybridRepository) removeAssociationById(tx *sqlx.Tx, id int64) error {
 // SEARCH operation
 //////////////////////////////////////////
 
-func (e *Type2FetchedDBEntry) AttrsOrig() map[string][]string {
+func (e *HybridFetchedDBEntry) AttrsOrig() map[string][]string {
 	if len(e.RawAttrsOrig) > 0 {
 		jsonMap := make(map[string][]string)
 		if err := e.RawAttrsOrig.Unmarshal(&jsonMap); err != nil {
@@ -1042,7 +1042,7 @@ func (e *Type2FetchedDBEntry) AttrsOrig() map[string][]string {
 	return nil
 }
 
-func (e *Type2FetchedDBEntry) Clear() {
+func (e *HybridFetchedDBEntry) Clear() {
 	e.ID = 0
 	e.DNOrig = ""
 	e.RawAttrsOrig = nil
@@ -1065,7 +1065,7 @@ func (r *HybridRepository) Search(baseDN *DN, scope int, filter message.Filter,
 // AddEntryToDBEntry converts LDAP entry object to DB entry object.
 // It handles metadata such as createTimistamp, modifyTimestamp and entryUUID.
 // Also, it handles member and uniqueMember attributes.
-func (r *HybridRepository) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*Type2DBEntry, map[string][]int64, error) {
+func (r *HybridRepository) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*HybridDBEntry, map[string][]int64, error) {
 	norm, orig := entry.Attrs()
 
 	// TODO strict mode
@@ -1121,7 +1121,7 @@ func (r *HybridRepository) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*Typ
 
 	dn := entry.DN()
 
-	dbEntry := &Type2DBEntry{
+	dbEntry := &HybridDBEntry{
 		DNNormWithoutSuffix: dn.DNNormStrWithoutSuffix(r.server.Suffix),
 		DNOrigWithoutSuffix: dn.DNOrigStrWithoutSuffix(r.server.Suffix),
 		RDNNorm:             dn.RDNNormStr(),
@@ -1252,7 +1252,7 @@ func (r *HybridRepository) resolveDNMap(tx *sqlx.Tx, dnMap map[string][]string) 
 	return rtn, nil
 }
 
-func (r *HybridRepository) modifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry) (*Type2DBEntry, map[string][]int64, map[string][]int64, error) {
+func (r *HybridRepository) modifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry) (*HybridDBEntry, map[string][]int64, map[string][]int64, error) {
 	norm, orig := entry.GetAttrs()
 
 	// Convert the value of member, uniqueMamber and memberOf attributes, DN => int64
@@ -1307,7 +1307,7 @@ func (r *HybridRepository) modifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry)
 	bNorm, _ := json.Marshal(norm)
 	bOrig, _ := json.Marshal(orig)
 
-	dbEntry := &Type2DBEntry{
+	dbEntry := &HybridDBEntry{
 		ID:        entry.dbEntryID,
 		Updated:   updated,
 		AttrsNorm: types.JSONText(string(bNorm)),
