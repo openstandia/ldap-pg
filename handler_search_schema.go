@@ -28,7 +28,7 @@ func handleSearchSubschema(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	e := ldap.NewSearchResultEntry(string(r.BaseObject()))
 
-	searchEntry := NewSearchEntry(s.schemaMap, nil, map[string][]string{
+	searchEntry := NewSearchEntry(s.schemaMap, "", map[string][]string{
 		"objectClass": {"top", "subentry", "subschema", "extensibleObject"},
 		"cn":          {"Subschema"},
 	})

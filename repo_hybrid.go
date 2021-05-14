@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/jmoiron/sqlx/types"
-	"github.com/openstandia/goldap/message"
 	"golang.org/x/xerrors"
 )
 
@@ -19,9 +18,11 @@ type HybridRepository struct {
 }
 
 var (
-	// repo_create
+	// repo_read for search
+	findIDByBaseDN  *sqlx.NamedStmt
+	findIDsByBaseDN *sqlx.NamedStmt
 
-	// repo_read
+	// repo_read for update
 	findContainerWithUpdateLock   *sqlx.NamedStmt
 	findContainerWithShareLock    *sqlx.NamedStmt
 	findEntryIDByDNWithShareLock  *sqlx.NamedStmt
@@ -73,6 +74,35 @@ func (r *HybridRepository) Init() error {
 	CREATE INDEX IF NOT EXISTS idx_ldap_association_id ON ldap_association(name, id);
 	CREATE INDEX IF NOT EXISTS idx_ldap_association_member_id ON ldap_association(name, member_id);
 	`)
+
+	// findIDByBaseDN, err := db.PrepareNamed(`SELECT
+	// 	e.id,
+	// FROM
+	// 	ldap_entry e
+	// 	LEFT JOIN ldap_container c ON e.parent_id = c.id
+	// WHERE
+	// 	e.rdn_norm = :rdn_norm
+	// 	AND c.dn_norm = :parent_dn_norm
+	// `)
+	// if err != nil {
+	// 	return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	// }
+
+	// findIDsByBaseDN, err := db.PrepareNamed(`SELECT
+	// 	e.id,
+	// FROM
+	// 	ldap_entry e
+	// 	LEFT JOIN ldap_container c ON e.parent_id = c.id
+	// WHERE
+	// 	e.rdn_norm = :rdn_norm
+	// 	AND (
+	// 		c.dn_norm = :parent_dn_norm
+	// 		OR REVERSE(c.dn_norm) LIKE REVERSE('%,' || :parent_dn_norm)
+	// 	)
+	// `)
+	// if err != nil {
+	// 	return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	// }
 
 	findCredByDN, err = db.PrepareNamed(`SELECT
 		e.id, e.attrs_orig->'userPassword' 
@@ -303,7 +333,7 @@ type HybridFetchedDBEntry struct {
 	RawAttrsOrig    types.JSONText `db:"attrs_orig"`
 	RawMember       types.JSONText `db:"member"`          // No real column in the table
 	RawUniqueMember types.JSONText `db:"uniquemember"`    // No real column in the table
-	RawMemberOf     types.JSONText `db:"member_of"`       // No real column in the table
+	RawMemberOf     types.JSONText `db:"memberof"`        // No real column in the table
 	HasSubordinates string         `db:"hassubordinates"` // No real column in the table
 	DNOrig          string         `db:"dn_orig"`         // No real clumn in t he table
 	Count           int32          `db:"count"`           // No real column in the table
@@ -1023,39 +1053,357 @@ func (r *HybridRepository) removeAssociationById(tx *sqlx.Tx, id int64) error {
 //////////////////////////////////////////
 
 func (e *HybridFetchedDBEntry) AttrsOrig() map[string][]string {
+	jsonMap := make(map[string][]string)
+
 	if len(e.RawAttrsOrig) > 0 {
-		jsonMap := make(map[string][]string)
 		if err := e.RawAttrsOrig.Unmarshal(&jsonMap); err != nil {
 			log.Printf("erro: Unexpectd umarshal error: %s", err)
 		}
-
-		if len(e.RawMemberOf) > 0 {
-			jsonArray := []string{}
-			if err := e.RawMemberOf.Unmarshal(&jsonArray); err != nil {
-				log.Printf("erro: Unexpectd umarshal error: %s", err)
-			}
-			jsonMap["memberOf"] = jsonArray
-		}
-
-		return jsonMap
 	}
-	return nil
+
+	if len(e.RawMember) > 0 {
+		jsonArray := []string{}
+		if err := e.RawMember.Unmarshal(&jsonArray); err != nil {
+			log.Printf("erro: Unexpectd umarshal error: %s", err)
+		}
+		jsonMap["member"] = jsonArray
+	}
+
+	if len(e.RawUniqueMember) > 0 {
+		jsonArray := []string{}
+		if err := e.RawUniqueMember.Unmarshal(&jsonArray); err != nil {
+			log.Printf("erro: Unexpectd umarshal error: %s", err)
+		}
+		jsonMap["uniqueMember"] = jsonArray
+	}
+
+	if len(e.RawMemberOf) > 0 {
+		jsonArray := []string{}
+		if err := e.RawMemberOf.Unmarshal(&jsonArray); err != nil {
+			log.Printf("erro: Unexpectd umarshal error: %s", err)
+		}
+		jsonMap["memberOf"] = jsonArray
+	}
+
+	return jsonMap
 }
 
 func (e *HybridFetchedDBEntry) Clear() {
 	e.ID = 0
+	e.ParentID = 0
+	e.RDNOrig = ""
 	e.DNOrig = ""
+	e.ParentDNOrig = ""
 	e.RawAttrsOrig = nil
 	e.RawMemberOf = nil
+	e.RawMember = nil
+	e.RawUniqueMember = nil
+	e.HasSubordinates = ""
 	e.Count = 0
 }
 
-func (r *HybridRepository) Search(baseDN *DN, scope int, filter message.Filter,
-	pageSize, offset int32,
-	reqMemberAttrs []string,
-	reqMemberOf, isHasSubordinatesRequested bool, handler func(entry *SearchEntry) error) (int32, int32, error) {
+func (r *HybridRepository) Search(baseDN *DN, option *SearchOption, handler func(entry *SearchEntry) error) (int32, int32, error) {
+	// ids, err := r.findIDsByBaseDN(baseDN, option)
+	// if err != nil {
+	// 	return 0, 0, xerrors.Errorf("Failed to search, err: %w", err)
+	// }
 
-	return 0, 0, nil
+	// if len(ids) == 0 {
+	// 	return 0, 0, nil
+	// }
+
+	return r.searchByIDs(baseDN, option, handler)
+}
+
+func (r *HybridRepository) collectWhereSQL(baseDN *DN, option *SearchOption, where *[]string, params map[string]interface{}) {
+	// Scope handling
+	// 0: base (only base)
+	// 1: one (only one level, not include base)
+	// 2: sub (subtree, include base)
+	// 3: children (subtree, not include base)
+	if option.Scope == 0 || option.Scope == 1 {
+		var col string
+		if option.Scope == 0 {
+			col = "id"
+		} else {
+			col = "parent_id"
+		}
+		*where = append(*where, fmt.Sprintf(`
+	e.%s = (SELECT
+			e.id
+		FROM
+			ldap_entry e
+			LEFT JOIN ldap_container c ON e.parent_id = c.id
+		WHERE
+			e.rdn_norm = :rdn_norm
+			AND c.dn_norm = :parent_dn_norm
+	)`, col))
+		params["rdn_norm"] = baseDN.RDNNormStr()
+		params["parent_dn_norm"] = baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
+
+	} else {
+		var subWhere string
+		if baseDN.Equal(r.server.Suffix) {
+			subWhere = `
+	e.parent_id IN (
+		SELECT
+			id
+		FROM
+			ldap_container c
+		WHERE
+			id != 0
+	)`
+		} else {
+			subWhere = `
+	e.parent_id IN (SELECT
+			e.id
+		FROM
+			ldap_entry e
+			LEFT JOIN ldap_container c ON e.parent_id = c.id
+		WHERE
+			REVERSE(c.dn_norm) LIKE REVERSE('%,' || :parent_dn_norm)
+	)`
+		}
+
+		if option.Scope == 2 {
+			*where = append(*where, `
+	e.id = (SELECT
+			e.id
+		FROM
+			ldap_entry e
+			LEFT JOIN ldap_container c ON e.parent_id = c.id
+		WHERE
+			e.rdn_norm = :rdn_norm
+			AND c.dn_norm = :parent_dn_norm
+	) OR
+	`+subWhere)
+			params["rdn_norm"] = baseDN.RDNNormStr()
+			params["parent_dn_norm"] = baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
+		} else {
+			*where = append(*where, subWhere)
+			params["parent_dn_norm"] = baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
+		}
+	}
+}
+
+func (r *HybridRepository) searchByIDs(baseDN *DN, option *SearchOption, handler func(entry *SearchEntry) error) (int32, int32, error) {
+	log.Printf("Search option: %v", option)
+
+	proj := []string{}
+	join := []string{}
+	where := []string{}
+	params := map[string]interface{}{
+		"pageSize": option.PageSize,
+		"offset":   option.Offset,
+	}
+	r.collectAssociationSQL(option, &proj, &join)
+	r.collectHasSubordinatesSQL(option, &proj, &join)
+	r.collectWhereSQL(baseDN, option, &where, params)
+
+	// TODO search filter
+	// TODO filter by association. Should only support `equal` or `presence` filter for association.
+
+	q := fmt.Sprintf(`
+	SELECT
+		e.id,
+		e.parent_id,
+		e.rdn_orig || ',' || dnc.dn_orig AS dn_orig,
+		e.attrs_orig,
+		count(e.id) over() AS count
+		%s
+	FROM
+		ldap_entry e
+		-- DN join
+		LEFT JOIN ldap_container dnc ON e.parent_id = dnc.id
+		%s
+	WHERE
+		%s
+	LIMIT :pageSize OFFSET :offset
+	`, strings.Join(proj, ", "), strings.Join(join, ""), strings.Join(where, " AND "))
+
+	log.Printf("Search SQL\n==\n%s\n==\n%v\n==", q, params)
+
+	rows, err := r.db.NamedQuery(q, params)
+
+	if err != nil {
+		if isNoResult(err) {
+			return 0, 0, nil
+		}
+		return 0, 0, xerrors.Errorf("Failed to search, err: %w", err)
+	}
+
+	var maxCount int32 = 0
+	var count int32 = 0
+	var dbEntry HybridFetchedDBEntry
+
+	for rows.Next() {
+		err = rows.StructScan(&dbEntry)
+		if err != nil {
+			return 0, 0, xerrors.Errorf("Failed to scan, err: %w", err)
+		}
+		if maxCount == 0 {
+			maxCount = dbEntry.Count
+		}
+
+		readEntry, err := r.toSearchEntry(&dbEntry)
+		if err != nil {
+			log.Printf("error: Mapper error: %#v", err)
+			return 0, 0, err
+		}
+
+		err = handler(readEntry)
+		if err != nil {
+			log.Printf("error: Handler error: %#v", err)
+			return 0, 0, err
+		}
+
+		count++
+		dbEntry.Clear()
+	}
+
+	return maxCount, count, nil
+}
+
+func (m *HybridRepository) toSearchEntry(dbEntry *HybridFetchedDBEntry) (*SearchEntry, error) {
+	orig := dbEntry.AttrsOrig()
+
+	// hasSubordinates
+	if dbEntry.HasSubordinates != "" {
+		orig["hasSubordinates"] = []string{dbEntry.HasSubordinates}
+	}
+
+	// resolve association suffix
+	m.resolveAssociationSuffix(orig, "member")
+	m.resolveAssociationSuffix(orig, "uniqueMember")
+	m.resolveAssociationSuffix(orig, "memberOf")
+
+	readEntry := NewSearchEntry(m.server.schemaMap, dbEntry.DNOrig, orig)
+
+	return readEntry, nil
+}
+
+func (r *HybridRepository) resolveAssociationSuffix(attrsOrig map[string][]string, attrName string) {
+	um := attrsOrig[attrName]
+	if len(um) > 0 {
+		for i, v := range um {
+			um[i] = resolveSuffix(r.server, v)
+		}
+	}
+}
+
+func (r *HybridRepository) findIDsByBaseDN(baseDN *DN, option *SearchOption) ([]int64, error) {
+	// Scope handling, sub need to include base.
+	// 0: base
+	// 1: one
+	// 2: sub
+	// 3: children
+
+	if option.Scope <= 1 {
+		var id int64
+		err := findIDByBaseDN.Get(&id, map[string]interface{}{
+			"rdn_norm":       baseDN.RDNNormStr(),
+			"parent_dn_norm": baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix),
+		})
+		if err != nil {
+			if isNoResult(err) {
+				return nil, nil
+			}
+		}
+		return []int64{id}, nil
+
+	} else {
+		rows, err := findIDsByBaseDN.Queryx(map[string]interface{}{
+			"rdn_norm":       baseDN.RDNNormStr(),
+			"parent_dn_norm": baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix),
+		})
+		if err != nil {
+			if isNoResult(err) {
+				return nil, nil
+			}
+		}
+		defer rows.Close()
+
+		ids := []int64{}
+		for rows.Next() {
+			var id int64
+			err = rows.Scan(&id)
+			if err != nil {
+				return nil, xerrors.Errorf("Failed to scan, err: %w", err)
+			}
+			ids = append(ids, id)
+		}
+
+		return ids, nil
+	}
+}
+
+// func (r *HybridRepository) createAssociationFilterSQL(option *SearchOption) (string, string) {
+// 	join := ""
+// 	where := ""
+// 	for i, v := range option.RequestedAssocation {
+// 		if i > 0 {
+// 			proj += ", "
+// 		}
+// 		proj += fmt.Sprintf("%s AS %s", v, v)
+// 		join += fmt.Sprintf(`
+// 		-- filter by %s
+// 		INNER JOIN ldap_association a ON e.id = a.member_id
+// 		INNER JOIN ldap_entry ae ON ae.id = a.id
+// 		INNER JOIN ldap_container c ON c.id = ae.parent_id
+// 		`, v, v, v)
+
+// 		where += fmt.Sprintf(`
+// 		(
+// 			ae.rdn_norm = 'cn=group13'
+// 			AND c.dn_norm = 'ou=group,ou=t0
+// 		)
+// 		`)
+// 	}
+
+// 	return proj, join
+// }
+
+func (r *HybridRepository) collectAssociationSQL(option *SearchOption, proj, join *[]string) {
+	if len(*proj) == 0 {
+		*proj = append(*proj, "")
+	}
+
+	for _, v := range option.RequestedAssocation {
+		*proj = append(*proj, fmt.Sprintf("%s.%s AS %s", v, v, v))
+		*join = append(*join, fmt.Sprintf(`
+	-- requested association - %s 
+	LEFT JOIN LATERAL (
+		SELECT jsonb_agg(rae.rdn_orig || ',' || rc.dn_orig) AS %s
+		FROM ldap_association ra, ldap_entry rae, ldap_container rc
+		WHERE e.id = ra.id AND ra.name = '%s' AND rae.id = ra.member_id AND rc.id = rae.parent_id
+	) AS %s ON true`, v, v, v, v))
+	}
+
+	if option.IsMemberOfRequested {
+		*proj = append(*proj, "memberOf.memberOf AS memberOf")
+		*join = append(*join, `
+	-- requested association - memberOf
+	LEFT JOIN LATERAL (
+		SELECT jsonb_agg(rae.rdn_orig || ',' || rc.dn_orig) AS memberOf
+		FROM ldap_association ra, ldap_entry rae, ldap_container rc
+		WHERE e.id = ra.member_id AND rae.id = ra.id AND rc.id = rae.parent_id
+	) AS memberOf ON true`)
+	}
+}
+
+func (r *HybridRepository) collectHasSubordinatesSQL(option *SearchOption, proj, join *[]string) {
+	if len(*proj) == 0 {
+		*proj = append(*proj, "")
+	}
+
+	if option.IsHasSubordinatesRequested {
+		*proj = append(*proj, "has_sub.has_sub AS has_sub")
+		*join = append(*join, `
+	-- requested has_sub
+	LEFT JOIN LATERAL (
+		SELECT EXISTS (SELECT 1 FROM ldap_container WHERE id = e.id) AS has_sub
+	) AS has_sub ON true`)
+	}
 }
 
 //////////////////////////////////////////

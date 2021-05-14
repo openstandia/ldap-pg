@@ -91,13 +91,20 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 			delete(sessionMap, reqCookie)
 		}
 	}
+	option := &SearchOption{
+		Scope:                      scope,
+		Filter:                     r.Filter(),
+		PageSize:                   pageSize,
+		Offset:                     offset,
+		RequestedAssocation:        getRequestedMemberAttrs(r),
+		IsMemberOfRequested:        isMemberOfRequested(r),
+		IsHasSubordinatesRequested: isHasSubOrdinatesRequested(r),
+	}
 
-	maxCount, limittedCount, err := s.Repo().Search(baseDN, scope, r.Filter(),
-		pageSize, offset,
-		getRequestedMemberAttrs(r), isMemberOfRequested(r), isHasSubOrdinatesRequested(r), func(searchEntry *SearchEntry) error {
-			responseEntry(s, w, r, searchEntry)
-			return nil
-		})
+	maxCount, limittedCount, err := s.Repo().Search(baseDN, option, func(searchEntry *SearchEntry) error {
+		responseEntry(s, w, r, searchEntry)
+		return nil
+	})
 	if err != nil {
 		responseSearchError(w, err)
 		return
@@ -138,7 +145,7 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 func responseEntry(s *Server, w ldap.ResponseWriter, r message.SearchRequest, searchEntry *SearchEntry) {
 	log.Printf("Response Entry: %+v", searchEntry)
 
-	e := ldap.NewSearchResultEntry(searchEntry.DNOrigStr())
+	e := ldap.NewSearchResultEntry(resolveSuffix(s, searchEntry.DNOrigStr()))
 
 	sentAttrs := map[string]struct{}{}
 

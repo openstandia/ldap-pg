@@ -103,10 +103,7 @@ type Repository interface {
 
 	// Search handles search request by filter.
 	// This is used for SEARCH operation.
-	Search(baseDN *DN, scope int, q message.Filter,
-		pageSize, offset int32,
-		reqMemberAttrs []string,
-		reqMemberOf, isHasSubordinatesRequested bool, handler func(entry *SearchEntry) error) (int32, int32, error)
+	Search(baseDN *DN, option *SearchOption, handler func(entry *SearchEntry) error) (int32, int32, error)
 
 	// Update modifies the entry by specified change data.
 	// This is used for MOD operation.
@@ -121,6 +118,16 @@ type Repository interface {
 
 	// DeleteByDN deletes the entry by specified DN.
 	DeleteByDN(dn *DN) error
+}
+
+type SearchOption struct {
+	Scope                      int
+	Filter                     message.Filter
+	PageSize                   int32
+	Offset                     int32
+	RequestedAssocation        []string
+	IsMemberOfRequested        bool
+	IsHasSubordinatesRequested bool
 }
 
 type FetchedDNOrig struct {
