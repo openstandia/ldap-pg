@@ -18,26 +18,28 @@ type HybridRepository struct {
 }
 
 var (
-	// repo_read for search
-	findIDByBaseDN  *sqlx.NamedStmt
-	findIDsByBaseDN *sqlx.NamedStmt
+	// repo_insert
+	insertContainerStmt *sqlx.NamedStmt
+	insertEntryStmt     *sqlx.NamedStmt
 
 	// repo_read for update
-	findContainerWithUpdateLock   *sqlx.NamedStmt
-	findContainerWithShareLock    *sqlx.NamedStmt
 	findEntryIDByDNWithShareLock  *sqlx.NamedStmt
 	findEntryIDByDNWithUpdateLock *sqlx.NamedStmt
 	findEntryByDNWithShareLock    *sqlx.NamedStmt
-	findCredByDN                  *sqlx.NamedStmt
 
-	// repo_insert
-	insertContainerStmt   *sqlx.NamedStmt
-	insertEntryStmt       *sqlx.NamedStmt
-	insertAssociationStmt *sqlx.NamedStmt
+	// repo_update
+	updateAttrsByIdStmt *sqlx.NamedStmt
+	updateDNByIdStmt    *sqlx.NamedStmt
+	updateRDNByIdStmt   *sqlx.NamedStmt
 
 	// repo_delete
 	deleteContainerStmt          *sqlx.NamedStmt
+	deleteByIDStmt               *sqlx.NamedStmt
 	deleteAllAssociationByIDStmt *sqlx.NamedStmt
+	hasSubStmt                   *sqlx.NamedStmt
+
+	// repo_read for bind
+	findCredByDN *sqlx.NamedStmt
 )
 
 func (r *HybridRepository) Init() error {
@@ -75,35 +77,6 @@ func (r *HybridRepository) Init() error {
 	CREATE INDEX IF NOT EXISTS idx_ldap_association_member_id ON ldap_association(name, member_id);
 	`)
 
-	// findIDByBaseDN, err := db.PrepareNamed(`SELECT
-	// 	e.id,
-	// FROM
-	// 	ldap_entry e
-	// 	LEFT JOIN ldap_container c ON e.parent_id = c.id
-	// WHERE
-	// 	e.rdn_norm = :rdn_norm
-	// 	AND c.dn_norm = :parent_dn_norm
-	// `)
-	// if err != nil {
-	// 	return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	// }
-
-	// findIDsByBaseDN, err := db.PrepareNamed(`SELECT
-	// 	e.id,
-	// FROM
-	// 	ldap_entry e
-	// 	LEFT JOIN ldap_container c ON e.parent_id = c.id
-	// WHERE
-	// 	e.rdn_norm = :rdn_norm
-	// 	AND (
-	// 		c.dn_norm = :parent_dn_norm
-	// 		OR REVERSE(c.dn_norm) LIKE REVERSE('%,' || :parent_dn_norm)
-	// 	)
-	// `)
-	// if err != nil {
-	// 	return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	// }
-
 	findCredByDN, err = db.PrepareNamed(`SELECT
 		e.id, e.attrs_orig->'userPassword' 
 	FROM
@@ -114,25 +87,6 @@ func (r *HybridRepository) Init() error {
 		AND c.dn_norm = :parent_dn_norm
 	FOR SHARE
 	`)
-	if err != nil {
-		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	}
-
-	findContainerWithUpdateLock, err = db.PrepareNamed(`SELECT id FROM ldap_container WHERE dn_norm = :dn_norm FOR UPDATE`)
-	if err != nil {
-		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	}
-
-	findContainerWithShareLock, err = db.PrepareNamed(`SELECT
-		e.id, has_sub.has_sub
-	FROM
-		ldap_container e
-		LEFT JOIN LATERAL (
-			SELECT EXISTS (SELECT 1 FROM ldap_entry WHERE parent_id = e.id AND rdn_norm = :sub_rdn_norm) AS has_sub
-	    ) AS has_sub ON true
-	WHERE
-		dn_norm = :dn_norm
-	FOR SHARE`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
@@ -187,33 +141,6 @@ func (r *HybridRepository) Init() error {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
-	// Lock the entry to block update or delete.
-	// By using 'FOR SHARE', other transactions can read the entry without lock.
-	// findIDByDNWithShareLock, err := db.PrepareNamed(`SELECT
-	// 	e.id
-	// FROM
-	// 	ldap_entry e
-	// LEFT JOIN ldap_container c ON e.parent_id = c.id
-	// WHERE
-	// 	e.rdn_norm = :rdn_norm
-	// 	AND c.dn_norm = :parent_dn_norm
-	// FOR SHARE
-	// `)
-	// if err != nil {
-	// 	return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	// }
-
-	findIDByParentIDAndRDNNormStmt, err = db.PrepareNamed(`SELECT
-		e.id
-		FROM
-			ldap_entry e
-		WHERE
-			e.parent_id = :parent_id AND e.rdn_norm = :rdn_norm
-	`)
-	if err != nil {
-		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	}
-
 	insertContainerStmt, err = db.PrepareNamed(`INSERT INTO ldap_container (id, dn_norm, dn_orig)
 	VALUES (:id, :dn_norm, :dn_orig)`)
 	if err != nil {
@@ -233,12 +160,6 @@ func (r *HybridRepository) Init() error {
 	insertEntryStmt, err = db.PrepareNamed(`INSERT INTO ldap_entry (parent_id, rdn_norm, rdn_orig, attrs_norm, attrs_orig)
 	VALUES (:parent_id, :rdn_norm, :rdn_orig, :attrs_norm, :attrs_orig)
 	RETURNING id`)
-	if err != nil {
-		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	}
-
-	insertAssociationStmt, err = db.PrepareNamed(`INSERT INTO ldap_association (name, id, member_id)
-	VALUES (:name, :id, :member_id)`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
@@ -277,67 +198,19 @@ func (r *HybridRepository) Init() error {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
-	// Don't need to update modifyTimestamp since it's overlay function
-	removeMemberByIDStmt, err = db.PrepareNamed(`UPDATE ldap_entry
-		SET attrs_norm =
-			CASE WHEN (jsonb_array_length(attrs_norm->'member')) = 1
-				THEN
-					attrs_norm #- '{member}'
-				ELSE
-					attrs_norm || jsonb_build_object('member', jsonb_path_query_array(attrs_norm->'member', :cond_filter))
-			END
-		WHERE attrs_norm @@ :cond_where
-		RETURNING id`)
-	if err != nil {
-		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	}
-
-	// Don't need to update modifyTimestamp since it's overlay function
-	removeUniqueMemberByIDStmt, err = db.PrepareNamed(`UPDATE ldap_entry
-		SET attrs_norm =
-			CASE WHEN (jsonb_array_length(attrs_norm->'uniqueMember')) = 1
-				THEN
-					attrs_norm #- '{uniqueMember}'
-				ELSE
-					attrs_norm || jsonb_build_object('uniqueMember', jsonb_path_query_array(attrs_norm->'uniqueMember', :cond_filter))
-			END
-		WHERE attrs_norm @@ :cond_where
-		RETURNING id`)
-	if err != nil {
-		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	}
-
 	return nil
 }
 
+// HybridDBEntry is used as insert or update entry.
 type HybridDBEntry struct {
 	ID                  int64          `db:"id"`
 	DNNormWithoutSuffix string         `db:"dn_norm"`
 	DNOrigWithoutSuffix string         `db:"dn_orig"`
 	RDNNorm             string         `db:"rdn_norm"`
 	RDNOrig             string         `db:"rdn_orig"`
-	EntryUUID           string         `db:"uuid"`
-	Created             time.Time      `db:"created"`
-	Updated             time.Time      `db:"updated"`
 	AttrsNorm           types.JSONText `db:"attrs_norm"`
 	AttrsOrig           types.JSONText `db:"attrs_orig"`
-	Count               int32          `db:"count"`    // No real column in the table
-	MemberOf            types.JSONText `db:"memberof"` // No real column in the table
 	ParentDN            *DN
-}
-
-type HybridFetchedDBEntry struct {
-	ID              int64          `db:"id"`
-	ParentID        int64          `db:"parent_id"`
-	RDNOrig         string         `db:"rdn_orig"`
-	RawAttrsOrig    types.JSONText `db:"attrs_orig"`
-	RawMember       types.JSONText `db:"member"`          // No real column in the table
-	RawUniqueMember types.JSONText `db:"uniquemember"`    // No real column in the table
-	RawMemberOf     types.JSONText `db:"memberof"`        // No real column in the table
-	HasSubordinates string         `db:"hassubordinates"` // No real column in the table
-	DNOrig          string         `db:"dn_orig"`         // No real clumn in t he table
-	Count           int32          `db:"count"`           // No real column in the table
-	ParentDNOrig    string         // No real column in the table
 }
 
 //////////////////////////////////////////
@@ -545,19 +418,19 @@ func (r *HybridRepository) Update(dn *DN, callback func(current *ModifyEntry) er
 
 	// Step 1: Fetch current entry with share lock(blocking update and delete)
 	// TODO: Need to fetch all associations
-	oldEntry, err := r.findByDNForUpdate(tx, dn)
+	oID, oParentID, _, oJSONMap, err := r.findByDNForUpdate(tx, dn)
 	if err != nil {
 		rollback(tx)
 		return err
 	}
 
-	newEntry, err := NewModifyEntry(r.server.schemaMap, dn, oldEntry.AttrsOrigAsMap())
+	newEntry, err := NewModifyEntry(r.server.schemaMap, dn, oJSONMap)
 	if err != nil {
 		rollback(tx)
 		xerrors.Errorf("Failed to map to ModifyEntry in %s: %v, err: %w", txLabel(tx), dn, err)
 	}
-	newEntry.dbEntryID = oldEntry.ID
-	newEntry.dbParentID = oldEntry.ParentID
+	newEntry.dbEntryID = oID
+	newEntry.dbParentID = oParentID
 
 	// Apply modify operations from LDAP request
 	err = callback(newEntry)
@@ -579,7 +452,6 @@ func (r *HybridRepository) Update(dn *DN, callback func(current *ModifyEntry) er
 	// Step 2: Update entry
 	_, err = tx.NamedStmt(updateAttrsByIdStmt).Exec(map[string]interface{}{
 		"id":         dbEntry.ID,
-		"updated":    dbEntry.Updated,
 		"attrs_norm": dbEntry.AttrsNorm,
 		"attrs_orig": dbEntry.AttrsOrig,
 	})
@@ -654,39 +526,34 @@ func (r *HybridRepository) Update(dn *DN, callback func(current *ModifyEntry) er
 	return commit(tx)
 }
 
-type HybridFetchedDBEntryForUpdate struct {
-	ID        int64          `db:"id"`
-	ParentID  int64          `db:"parent_id"`
-	RDNOrig   string         `db:"rdn_orig"`
-	AttrsOrig types.JSONText `db:"attrs_orig"`
-}
+func (r *HybridRepository) findByDNForUpdate(tx *sqlx.Tx, dn *DN) (int64, int64, string, map[string][]string, error) {
+	dest := struct {
+		id        int64          `db:"id"`
+		parentID  int64          `db:"parent_id"`
+		rdnOrig   string         `db:"rdn_orig"`
+		attrsOrig types.JSONText `db:"attrs_orig"`
+	}{}
 
-func (e *HybridFetchedDBEntryForUpdate) AttrsOrigAsMap() map[string][]string {
-	if len(e.AttrsOrig) > 0 {
-		jsonMap := make(map[string][]string)
-		if err := e.AttrsOrig.Unmarshal(&jsonMap); err != nil {
-			log.Printf("error: Unexpected unmarshal error. err: %s", err)
-		}
-
-		return jsonMap
-	}
-	return nil
-}
-
-func (r *HybridRepository) findByDNForUpdate(tx *sqlx.Tx, dn *DN) (*HybridFetchedDBEntryForUpdate, error) {
-	var dest HybridFetchedDBEntryForUpdate
 	err := namedStmt(tx, findEntryByDNWithShareLock).Get(&dest, map[string]interface{}{
 		"rdn_norm":       dn.RDNNormStr(),
 		"parent_dn_norm": dn.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix),
 	})
 	if err != nil {
 		if isNoResult(err) {
-			return nil, NewNoSuchObject()
+			return 0, 0, "", nil, NewNoSuchObject()
 		}
-		return nil, xerrors.Errorf("Failed to execute findByDNForUpdate in %s: %v, err: %w", txLabel(tx), dn, err)
+		return 0, 0, "", nil, xerrors.Errorf("Failed to execute findByDNForUpdate in %s. dn_norm: %s, err: %w", txLabel(tx), dn.DNNormStr(), err)
 	}
 
-	return &dest, nil
+	var jsonMap map[string][]string
+	if len(dest.attrsOrig) > 0 {
+		jsonMap := make(map[string][]string)
+		if err := dest.attrsOrig.Unmarshal(&jsonMap); err != nil {
+			return 0, 0, "", nil, xerrors.Errorf("Unexpected unmarshal error in %s. dn_norm: %s, err: %w", txLabel(tx), dn.DNNormStr(), err)
+		}
+	}
+
+	return dest.id, dest.parentID, dest.rdnOrig, jsonMap, nil
 }
 
 // oldRDN: set when keeping current entry
@@ -694,18 +561,18 @@ func (r *HybridRepository) UpdateDN(oldDN, newDN *DN, oldRDN *RelativeDN) error 
 	tx := r.db.MustBegin()
 
 	// Fetch target entry with lock
-	oldEntry, err := r.findByDNForUpdate(tx, oldDN)
+	oID, oParentID, _, oJSONMap, err := r.findByDNForUpdate(tx, oldDN)
 	if err != nil {
 		rollback(tx)
 		return err
 	}
 
-	entry, err := NewModifyEntry(r.server.schemaMap, oldDN, oldEntry.AttrsOrigAsMap())
+	entry, err := NewModifyEntry(r.server.schemaMap, oldDN, oJSONMap)
 	if err != nil {
 		return err
 	}
-	entry.dbEntryID = oldEntry.ID
-	entry.dbParentID = oldEntry.ParentID
+	entry.dbEntryID = oID
+	entry.dbParentID = oParentID
 
 	if !oldDN.ParentDN().Equal(newDN.ParentDN()) {
 		// Move or copy under the new parent case
@@ -1052,6 +919,19 @@ func (r *HybridRepository) removeAssociationById(tx *sqlx.Tx, id int64) error {
 // SEARCH operation
 //////////////////////////////////////////
 
+type HybridFetchedDBEntry struct {
+	ID              int64          `db:"id"`
+	ParentID        int64          `db:"parent_id"`
+	RDNOrig         string         `db:"rdn_orig"`
+	RawAttrsOrig    types.JSONText `db:"attrs_orig"`
+	RawMember       types.JSONText `db:"member"`          // No real column in the table
+	RawUniqueMember types.JSONText `db:"uniquemember"`    // No real column in the table
+	RawMemberOf     types.JSONText `db:"memberof"`        // No real column in the table
+	HasSubordinates string         `db:"hassubordinates"` // No real column in the table
+	DNOrig          string         `db:"dn_orig"`         // No real column in the table
+	Count           int32          `db:"count"`           // No real column in the table
+}
+
 func (e *HybridFetchedDBEntry) AttrsOrig() map[string][]string {
 	jsonMap := make(map[string][]string)
 
@@ -1093,7 +973,6 @@ func (e *HybridFetchedDBEntry) Clear() {
 	e.ParentID = 0
 	e.RDNOrig = ""
 	e.DNOrig = ""
-	e.ParentDNOrig = ""
 	e.RawAttrsOrig = nil
 	e.RawMemberOf = nil
 	e.RawMember = nil
@@ -1103,90 +982,6 @@ func (e *HybridFetchedDBEntry) Clear() {
 }
 
 func (r *HybridRepository) Search(baseDN *DN, option *SearchOption, handler func(entry *SearchEntry) error) (int32, int32, error) {
-	// ids, err := r.findIDsByBaseDN(baseDN, option)
-	// if err != nil {
-	// 	return 0, 0, xerrors.Errorf("Failed to search, err: %w", err)
-	// }
-
-	// if len(ids) == 0 {
-	// 	return 0, 0, nil
-	// }
-
-	return r.searchByIDs(baseDN, option, handler)
-}
-
-func (r *HybridRepository) collectWhereSQL(baseDN *DN, option *SearchOption, where *[]string, params map[string]interface{}) {
-	// Scope handling
-	// 0: base (only base)
-	// 1: one (only one level, not include base)
-	// 2: sub (subtree, include base)
-	// 3: children (subtree, not include base)
-	if option.Scope == 0 || option.Scope == 1 {
-		var col string
-		if option.Scope == 0 {
-			col = "id"
-		} else {
-			col = "parent_id"
-		}
-		*where = append(*where, fmt.Sprintf(`
-	e.%s = (SELECT
-			e.id
-		FROM
-			ldap_entry e
-			LEFT JOIN ldap_container c ON e.parent_id = c.id
-		WHERE
-			e.rdn_norm = :rdn_norm
-			AND c.dn_norm = :parent_dn_norm
-	)`, col))
-		params["rdn_norm"] = baseDN.RDNNormStr()
-		params["parent_dn_norm"] = baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
-
-	} else {
-		var subWhere string
-		if baseDN.Equal(r.server.Suffix) {
-			subWhere = `
-	e.parent_id IN (
-		SELECT
-			id
-		FROM
-			ldap_container c
-		WHERE
-			id != 0
-	)`
-		} else {
-			subWhere = `
-	e.parent_id IN (SELECT
-			e.id
-		FROM
-			ldap_entry e
-			LEFT JOIN ldap_container c ON e.parent_id = c.id
-		WHERE
-			REVERSE(c.dn_norm) LIKE REVERSE('%,' || :parent_dn_norm)
-	)`
-		}
-
-		if option.Scope == 2 {
-			*where = append(*where, `
-	e.id = (SELECT
-			e.id
-		FROM
-			ldap_entry e
-			LEFT JOIN ldap_container c ON e.parent_id = c.id
-		WHERE
-			e.rdn_norm = :rdn_norm
-			AND c.dn_norm = :parent_dn_norm
-	) OR
-	`+subWhere)
-			params["rdn_norm"] = baseDN.RDNNormStr()
-			params["parent_dn_norm"] = baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
-		} else {
-			*where = append(*where, subWhere)
-			params["parent_dn_norm"] = baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
-		}
-	}
-}
-
-func (r *HybridRepository) searchByIDs(baseDN *DN, option *SearchOption, handler func(entry *SearchEntry) error) (int32, int32, error) {
 	log.Printf("Search option: %v", option)
 
 	proj := []string{}
@@ -1291,52 +1086,6 @@ func (r *HybridRepository) resolveAssociationSuffix(attrsOrig map[string][]strin
 	}
 }
 
-func (r *HybridRepository) findIDsByBaseDN(baseDN *DN, option *SearchOption) ([]int64, error) {
-	// Scope handling, sub need to include base.
-	// 0: base
-	// 1: one
-	// 2: sub
-	// 3: children
-
-	if option.Scope <= 1 {
-		var id int64
-		err := findIDByBaseDN.Get(&id, map[string]interface{}{
-			"rdn_norm":       baseDN.RDNNormStr(),
-			"parent_dn_norm": baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix),
-		})
-		if err != nil {
-			if isNoResult(err) {
-				return nil, nil
-			}
-		}
-		return []int64{id}, nil
-
-	} else {
-		rows, err := findIDsByBaseDN.Queryx(map[string]interface{}{
-			"rdn_norm":       baseDN.RDNNormStr(),
-			"parent_dn_norm": baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix),
-		})
-		if err != nil {
-			if isNoResult(err) {
-				return nil, nil
-			}
-		}
-		defer rows.Close()
-
-		ids := []int64{}
-		for rows.Next() {
-			var id int64
-			err = rows.Scan(&id)
-			if err != nil {
-				return nil, xerrors.Errorf("Failed to scan, err: %w", err)
-			}
-			ids = append(ids, id)
-		}
-
-		return ids, nil
-	}
-}
-
 // func (r *HybridRepository) createAssociationFilterSQL(option *SearchOption) (string, string) {
 // 	join := ""
 // 	where := ""
@@ -1403,6 +1152,77 @@ func (r *HybridRepository) collectHasSubordinatesSQL(option *SearchOption, proj,
 	LEFT JOIN LATERAL (
 		SELECT EXISTS (SELECT 1 FROM ldap_container WHERE id = e.id) AS has_sub
 	) AS has_sub ON true`)
+	}
+}
+
+func (r *HybridRepository) collectWhereSQL(baseDN *DN, option *SearchOption, where *[]string, params map[string]interface{}) {
+	// Scope handling
+	// 0: base (only base)
+	// 1: one (only one level, not include base)
+	// 2: sub (subtree, include base)
+	// 3: children (subtree, not include base)
+	if option.Scope == 0 || option.Scope == 1 {
+		var col string
+		if option.Scope == 0 {
+			col = "id"
+		} else {
+			col = "parent_id"
+		}
+		*where = append(*where, fmt.Sprintf(`
+	e.%s = (SELECT
+			e.id
+		FROM
+			ldap_entry e
+			LEFT JOIN ldap_container c ON e.parent_id = c.id
+		WHERE
+			e.rdn_norm = :rdn_norm
+			AND c.dn_norm = :parent_dn_norm
+	)`, col))
+		params["rdn_norm"] = baseDN.RDNNormStr()
+		params["parent_dn_norm"] = baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
+
+	} else {
+		var subWhere string
+		if baseDN.Equal(r.server.Suffix) {
+			subWhere = `
+	e.parent_id IN (
+		SELECT
+			id
+		FROM
+			ldap_container c
+		WHERE
+			id != 0
+	)`
+		} else {
+			subWhere = `
+	e.parent_id IN (SELECT
+			e.id
+		FROM
+			ldap_entry e
+			LEFT JOIN ldap_container c ON e.parent_id = c.id
+		WHERE
+			REVERSE(c.dn_norm) LIKE REVERSE('%,' || :parent_dn_norm)
+	)`
+		}
+
+		if option.Scope == 2 {
+			*where = append(*where, `
+	e.id = (SELECT
+			e.id
+		FROM
+			ldap_entry e
+			LEFT JOIN ldap_container c ON e.parent_id = c.id
+		WHERE
+			e.rdn_norm = :rdn_norm
+			AND c.dn_norm = :parent_dn_norm
+	) OR
+	`+subWhere)
+			params["rdn_norm"] = baseDN.RDNNormStr()
+			params["parent_dn_norm"] = baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
+		} else {
+			*where = append(*where, subWhere)
+			params["parent_dn_norm"] = baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
+		}
 	}
 }
 
@@ -1657,7 +1477,6 @@ func (r *HybridRepository) modifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry)
 
 	dbEntry := &HybridDBEntry{
 		ID:        entry.dbEntryID,
-		Updated:   updated,
 		AttrsNorm: types.JSONText(string(bNorm)),
 		AttrsOrig: types.JSONText(string(bOrig)),
 	}

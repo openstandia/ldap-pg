@@ -9,32 +9,6 @@ import (
 	"github.com/openstandia/goldap/message"
 )
 
-var (
-	// repo_create
-
-	// repo_read
-	findDNByIDStmt                 *sqlx.NamedStmt
-	findRDNByIDStmt                *sqlx.NamedStmt
-	findRDNsByIDsStmt              *sqlx.NamedStmt
-	findContainerByPathStmt        *sqlx.NamedStmt
-	findIDByParentIDAndRDNNormStmt *sqlx.NamedStmt
-
-	filterStmtMap StmtCache
-	treeStmtCache StmtCache
-
-	// repo_update
-	updateAttrsByIdStmt *sqlx.NamedStmt
-	updateDNByIdStmt    *sqlx.NamedStmt
-	updateRDNByIdStmt   *sqlx.NamedStmt
-
-	// repo_delete
-	deleteTreeByIDStmt         *sqlx.NamedStmt
-	deleteByIDStmt             *sqlx.NamedStmt
-	hasSubStmt                 *sqlx.NamedStmt
-	removeMemberByIDStmt       *sqlx.NamedStmt
-	removeUniqueMemberByIDStmt *sqlx.NamedStmt
-)
-
 // For generic filter
 type StmtCache struct {
 	sm sync.Map
