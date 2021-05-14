@@ -228,25 +228,25 @@ func (s *Server) Start() {
 
 func (s *Server) LoadSchema() {
 	schemaMap := InitSchemaMap(s)
-	if s, ok := schemaMap.Get("entryUUID"); ok {
-		s.UseIndependentColumn("uuid")
-	}
-	if s, ok := schemaMap.Get("createTimestamp"); ok {
-		s.UseIndependentColumn("created")
-	}
-	if s, ok := schemaMap.Get("modifyTimestamp"); ok {
-		s.UseIndependentColumn("updated")
-	}
+	// if s, ok := schemaMap.Get("entryUUID"); ok {
+	// 	s.UseIndependentColumn("uuid")
+	// }
+	// if s, ok := schemaMap.Get("createTimestamp"); ok {
+	// 	s.UseIndependentColumn("created")
+	// }
+	// if s, ok := schemaMap.Get("modifyTimestamp"); ok {
+	// 	s.UseIndependentColumn("updated")
+	// }
 	// TODO
-	memberAttrs := []string{"member", "uniqueMember"}
-	for _, v := range memberAttrs {
-		if s, ok := schemaMap.Get(v); ok {
-			s.UseMemberTable(true)
-		}
-	}
-	if s, ok := schemaMap.Get("memberOf"); ok {
-		s.UseMemberOfTable(true)
-	}
+	// memberAttrs := []string{"member", "uniqueMember"}
+	// for _, v := range memberAttrs {
+	// 	if s, ok := schemaMap.Get(v); ok {
+	// 		s.UseMemberTable(true)
+	// 	}
+	// }
+	// if s, ok := schemaMap.Get("memberOf"); ok {
+	// 	s.UseMemberOfTable(true)
+	// }
 
 	s.schemaMap = schemaMap
 }

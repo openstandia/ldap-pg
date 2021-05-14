@@ -479,7 +479,7 @@ func commit(tx *sqlx.Tx) error {
 func resolveSuffix(s *Server, dnOrig string) string {
 	// Suffix DN or Level 1 DN have comma with end
 	if strings.HasSuffix(dnOrig, ",") {
-		// Detect whether the search result is Suffix DN (The DN should have same RDN)
+		// Detect whether the dnOrig is Suffix DN (The DN should have same RDN)
 		if s.Suffix.RDNNormStr() == strings.ToLower(strings.TrimSuffix(dnOrig, ",")) {
 			dnOrig = s.SuffixOrigStr()
 		} else {

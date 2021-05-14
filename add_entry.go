@@ -45,24 +45,6 @@ func (j *AddEntry) IsRoot() bool {
 	return j.dn.IsRoot()
 }
 
-func (j *AddEntry) Member() []*MemberEntry {
-	list := []*MemberEntry{}
-
-	for _, sv := range j.attributes {
-		if sv.IsMemberAttribute() {
-			for _, v := range sv.Norm() {
-				m := &MemberEntry{
-					AttrNameNorm:   sv.Name(),
-					MemberOfDNNorm: v,
-				}
-				list = append(list, m)
-			}
-		}
-	}
-
-	return list
-}
-
 func (j *AddEntry) RDNNorm() string {
 	return j.dn.RDNNormStr()
 }

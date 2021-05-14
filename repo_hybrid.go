@@ -10,11 +10,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/jmoiron/sqlx/types"
+	"github.com/openstandia/goldap/message"
 	"golang.org/x/xerrors"
 )
 
 type HybridRepository struct {
 	*DBRepository
+	translator *HybridDBQueryTranslator
 }
 
 var (
@@ -932,6 +934,19 @@ type HybridFetchedDBEntry struct {
 	Count           int32          `db:"count"`           // No real column in the table
 }
 
+func (e *HybridFetchedDBEntry) Clear() {
+	e.ID = 0
+	e.ParentID = 0
+	e.RDNOrig = ""
+	e.DNOrig = ""
+	e.RawAttrsOrig = nil
+	e.RawMemberOf = nil
+	e.RawMember = nil
+	e.RawUniqueMember = nil
+	e.HasSubordinates = ""
+	e.Count = 0
+}
+
 func (e *HybridFetchedDBEntry) AttrsOrig() map[string][]string {
 	jsonMap := make(map[string][]string)
 
@@ -968,32 +983,21 @@ func (e *HybridFetchedDBEntry) AttrsOrig() map[string][]string {
 	return jsonMap
 }
 
-func (e *HybridFetchedDBEntry) Clear() {
-	e.ID = 0
-	e.ParentID = 0
-	e.RDNOrig = ""
-	e.DNOrig = ""
-	e.RawAttrsOrig = nil
-	e.RawMemberOf = nil
-	e.RawMember = nil
-	e.RawUniqueMember = nil
-	e.HasSubordinates = ""
-	e.Count = 0
-}
-
 func (r *HybridRepository) Search(baseDN *DN, option *SearchOption, handler func(entry *SearchEntry) error) (int32, int32, error) {
 	log.Printf("Search option: %v", option)
 
 	proj := []string{}
 	join := []string{}
-	where := []string{}
+	scopeWhere := []string{}
+	filterWhere := []string{}
 	params := map[string]interface{}{
 		"pageSize": option.PageSize,
 		"offset":   option.Offset,
 	}
 	r.collectAssociationSQL(option, &proj, &join)
 	r.collectHasSubordinatesSQL(option, &proj, &join)
-	r.collectWhereSQL(baseDN, option, &where, params)
+	r.collectScopeWhereSQL(baseDN, option, &scopeWhere, params)
+	r.collectFilterWhereSQL(baseDN, option, &filterWhere, params)
 
 	// TODO search filter
 	// TODO filter by association. Should only support `equal` or `presence` filter for association.
@@ -1012,9 +1016,13 @@ func (r *HybridRepository) Search(baseDN *DN, option *SearchOption, handler func
 		LEFT JOIN ldap_container dnc ON e.parent_id = dnc.id
 		%s
 	WHERE
-		%s
+		-- scope filter
+		(%s)
+		AND
+		-- ldap filter
+		(%s)
 	LIMIT :pageSize OFFSET :offset
-	`, strings.Join(proj, ", "), strings.Join(join, ""), strings.Join(where, " AND "))
+	`, strings.Join(proj, ", "), strings.Join(join, ""), strings.Join(scopeWhere, " AND "), strings.Join(filterWhere, " AND "))
 
 	log.Printf("Search SQL\n==\n%s\n==\n%v\n==", q, params)
 
@@ -1155,7 +1163,7 @@ func (r *HybridRepository) collectHasSubordinatesSQL(option *SearchOption, proj,
 	}
 }
 
-func (r *HybridRepository) collectWhereSQL(baseDN *DN, option *SearchOption, where *[]string, params map[string]interface{}) {
+func (r *HybridRepository) collectScopeWhereSQL(baseDN *DN, option *SearchOption, where *[]string, params map[string]interface{}) {
 	// Scope handling
 	// 0: base (only base)
 	// 1: one (only one level, not include base)
@@ -1169,15 +1177,15 @@ func (r *HybridRepository) collectWhereSQL(baseDN *DN, option *SearchOption, whe
 			col = "parent_id"
 		}
 		*where = append(*where, fmt.Sprintf(`
-	e.%s = (SELECT
-			e.id
-		FROM
-			ldap_entry e
-			LEFT JOIN ldap_container c ON e.parent_id = c.id
-		WHERE
-			e.rdn_norm = :rdn_norm
-			AND c.dn_norm = :parent_dn_norm
-	)`, col))
+		e.%s = (SELECT
+				e.id
+			FROM
+				ldap_entry e
+				LEFT JOIN ldap_container c ON e.parent_id = c.id
+			WHERE
+				e.rdn_norm = :rdn_norm
+				AND c.dn_norm = :parent_dn_norm
+		)`, col))
 		params["rdn_norm"] = baseDN.RDNNormStr()
 		params["parent_dn_norm"] = baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
 
@@ -1185,38 +1193,38 @@ func (r *HybridRepository) collectWhereSQL(baseDN *DN, option *SearchOption, whe
 		var subWhere string
 		if baseDN.Equal(r.server.Suffix) {
 			subWhere = `
-	e.parent_id IN (
-		SELECT
-			id
-		FROM
-			ldap_container c
-		WHERE
-			id != 0
-	)`
+		e.parent_id IN (
+			SELECT
+				id
+			FROM
+				ldap_container c
+			WHERE
+				id != 0
+		)`
 		} else {
 			subWhere = `
-	e.parent_id IN (SELECT
-			e.id
-		FROM
-			ldap_entry e
-			LEFT JOIN ldap_container c ON e.parent_id = c.id
-		WHERE
-			REVERSE(c.dn_norm) LIKE REVERSE('%,' || :parent_dn_norm)
-	)`
+		e.parent_id IN (SELECT
+				e.id
+			FROM
+				ldap_entry e
+				LEFT JOIN ldap_container c ON e.parent_id = c.id
+			WHERE
+				REVERSE(c.dn_norm) LIKE REVERSE('%,' || :parent_dn_norm)
+		)`
 		}
 
 		if option.Scope == 2 {
 			*where = append(*where, `
-	e.id = (SELECT
-			e.id
-		FROM
-			ldap_entry e
-			LEFT JOIN ldap_container c ON e.parent_id = c.id
-		WHERE
-			e.rdn_norm = :rdn_norm
-			AND c.dn_norm = :parent_dn_norm
-	) OR
-	`+subWhere)
+		e.id = (SELECT
+				e.id
+			FROM
+				ldap_entry e
+				LEFT JOIN ldap_container c ON e.parent_id = c.id
+			WHERE
+				e.rdn_norm = :rdn_norm
+				AND c.dn_norm = :parent_dn_norm
+		)
+		OR`+subWhere)
 			params["rdn_norm"] = baseDN.RDNNormStr()
 			params["parent_dn_norm"] = baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
 		} else {
@@ -1224,6 +1232,350 @@ func (r *HybridRepository) collectWhereSQL(baseDN *DN, option *SearchOption, whe
 			params["parent_dn_norm"] = baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
 		}
 	}
+}
+
+func (r *HybridRepository) collectFilterWhereSQL(baseDN *DN, option *SearchOption, where *[]string, params map[string]interface{}) error {
+	var sb strings.Builder
+	sb.Grow(128)
+
+	q := &HybridDBFilterQuery{
+		where:  &sb,
+		params: params,
+	}
+
+	err := r.translator.translate(r.server.schemaMap, option.Filter, q)
+	if err != nil {
+		return err
+	}
+
+	*where = append(*where, sb.String())
+
+	return nil
+}
+
+type HybridDBQueryTranslator struct {
+}
+
+type HybridDBFilterQuery struct {
+	where  *strings.Builder
+	params map[string]interface{}
+}
+
+func (q *HybridDBFilterQuery) nextParamKey(name string) string {
+	return fmt.Sprintf("%d_%s", len(q.params), name)
+}
+
+func (t *HybridDBQueryTranslator) translate(schemaMap *SchemaMap, packet message.Filter, q *HybridDBFilterQuery) (err error) {
+	err = nil
+
+	switch f := packet.(type) {
+	case message.FilterAnd:
+		q.where.WriteString("(")
+		for i, child := range f {
+			err = t.translate(schemaMap, child, q)
+
+			if err != nil {
+				return
+			}
+			if i < len(f)-1 {
+				q.where.WriteString(" AND ")
+			}
+		}
+		q.where.WriteString(")")
+	case message.FilterOr:
+		q.where.WriteString("(")
+		for i, child := range f {
+			err = t.translate(schemaMap, child, q)
+
+			if err != nil {
+				return
+			}
+			if i < len(f)-1 {
+				q.where.WriteString(" OR ")
+			}
+		}
+		q.where.WriteString(")")
+	case message.FilterNot:
+		q.where.WriteString("(NOT(")
+		err = t.translate(schemaMap, f.Filter, q)
+
+		if err != nil {
+			return
+		}
+		q.where.WriteString("))")
+	case message.FilterSubstrings:
+		q.where.WriteString(`attrs_norm @@ '`)
+
+		for i, fs := range f.Substrings() {
+			attrName := string(f.Type_())
+
+			var s *Schema
+			s, ok := schemaMap.Get(attrName)
+			if !ok {
+				log.Printf("Unsupported filter attribute: %s", attrName)
+				return
+			}
+
+			switch fsv := fs.(type) {
+			case message.SubstringInitial:
+				t.StartsWithMatch(s, q, string(fsv), i)
+			case message.SubstringAny:
+				if i > 0 {
+					q.where.WriteString(" && ")
+				}
+				t.AnyMatch(s, q, string(fsv), i)
+			case message.SubstringFinal:
+				if i > 0 {
+					q.where.WriteString(" || ")
+				}
+				t.EndsMatch(s, q, string(fsv), i)
+			}
+		}
+		q.where.WriteString(`'`)
+	case message.FilterEqualityMatch:
+		if s, ok := findSchema(schemaMap, string(f.AttributeDesc())); ok {
+			t.EqualityMatch(s, q, string(f.AssertionValue()))
+		}
+	case message.FilterGreaterOrEqual:
+		if s, ok := findSchema(schemaMap, string(f.AttributeDesc())); ok {
+			t.GreaterOrEqualMatch(s, q, string(f.AssertionValue()))
+		}
+	case message.FilterLessOrEqual:
+		if s, ok := findSchema(schemaMap, string(f.AttributeDesc())); ok {
+			t.LessOrEqualMatch(s, q, string(f.AssertionValue()))
+		}
+	case message.FilterPresent:
+		if s, ok := findSchema(schemaMap, string(f)); ok {
+			t.PresentMatch(s, q)
+		}
+	case message.FilterApproxMatch:
+		if s, ok := findSchema(schemaMap, string(f.AttributeDesc())); ok {
+			t.ApproxMatch(s, q, string(f.AssertionValue()))
+		}
+	}
+
+	return nil
+}
+
+func (t *HybridDBQueryTranslator) StartsWithMatch(s *Schema, q *HybridDBFilterQuery, val string, i int) {
+	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
+	if err != nil {
+		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
+		return
+	}
+
+	if s.IsAssociationAttribute() || s.IsReverseAssociationAttribute() {
+		log.Printf("Filter for association doesn't support substring initial")
+		q.where.WriteString(fmt.Sprintf(`$.%s == false`, s.Name))
+		return
+	}
+
+	// attrs_norm @@ '$.cn starts with "foo"';
+	q.where.WriteString(`$.`)
+	q.where.WriteString(s.Name)
+	q.where.WriteString(` starts with "`)
+	q.where.WriteString(escape(sv.Norm()[0]))
+	q.where.WriteString(`"`)
+}
+
+func (t *HybridDBQueryTranslator) AnyMatch(s *Schema, q *HybridDBFilterQuery, val string, i int) {
+	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
+	if err != nil {
+		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
+		return
+	}
+
+	if s.IsAssociationAttribute() || s.IsReverseAssociationAttribute() {
+		log.Printf("Filter for association doesn't support substring any")
+		q.where.WriteString(fmt.Sprintf(`$.%s == false`, s.Name))
+		return
+	}
+
+	// attrs_norm @@ '$.cn like_regex ".*foo.*"';
+	q.where.WriteString(`$.`)
+	q.where.WriteString(s.Name)
+	q.where.WriteString(` like_regex ".*`)
+	q.where.WriteString(escapeRegex(sv.Norm()[0]))
+	q.where.WriteString(`".*`)
+}
+
+func (t *HybridDBQueryTranslator) EndsMatch(s *Schema, q *HybridDBFilterQuery, val string, i int) {
+	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
+	if err != nil {
+		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
+		return
+	}
+
+	if s.IsAssociationAttribute() || s.IsReverseAssociationAttribute() {
+		log.Printf("Filter for association doesn't support substring final")
+		q.where.WriteString(fmt.Sprintf(`$.%s == false`, s.Name))
+		return
+	}
+
+	// attrs_norm @@ '$.cn like_regex ".*foo.*"';
+	q.where.WriteString(`$.`)
+	q.where.WriteString(s.Name)
+	q.where.WriteString(` like_regex ".*`)
+	q.where.WriteString(escapeRegex(sv.Norm()[0]))
+	q.where.WriteString(`"$`)
+}
+
+func (t *HybridDBQueryTranslator) EqualityMatch(s *Schema, q *HybridDBFilterQuery, val string) {
+
+	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
+	if err != nil {
+		// TODO error no entry response
+		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s, err: %+v", s.Name, val, err)
+		return
+	}
+
+	if s.IsAssociationAttribute() {
+		reqDN, err := s.server.NormalizeDN(val)
+		if err != nil {
+			log.Printf("warn: Ignore filter due to invalid DN syntax of member. attrName: %s, value: %s, err: %+v", s.Name, val, err)
+			return
+		}
+
+		nameKey := q.nextParamKey(s.Name)
+		q.params[nameKey] = s.Name
+
+		rdnNormKey := q.nextParamKey(s.Name)
+		q.params[rdnNormKey] = reqDN.RDNNormStr()
+
+		parentDNNormKey := q.nextParamKey(s.Name)
+		q.params[parentDNNormKey] = reqDN.ParentDN().DNNormStrWithoutSuffix(s.server.Suffix)
+
+		q.where.WriteString(fmt.Sprintf(`
+		(SELECT EXISTS (
+			SELECT 1 FROM ldap_association a, ldap_entry me, ldap_container mc
+			WHERE
+				a.name = :%s AND e.id = a.id AND a.member_id = me.id AND me.parent_id = mc.id AND
+				me.rdn_norm = :%s AND mc.dn_norm = :%s
+	    ))`, nameKey, rdnNormKey, parentDNNormKey))
+
+	} else if s.IsReverseAssociationAttribute() {
+		reqDN, err := s.server.NormalizeDN(val)
+		if err != nil {
+			log.Printf("warn: Ignore filter due to invalid DN syntax of memberOf. attrName: %s, value: %s, err: %+v", s.Name, val, err)
+			return
+		}
+
+		rdnNormKey := q.nextParamKey(s.Name)
+		q.params[rdnNormKey] = reqDN.RDNNormStr()
+
+		parentDNNormKey := q.nextParamKey(s.Name)
+		q.params[parentDNNormKey] = reqDN.ParentDN().DNNormStrWithoutSuffix(s.server.Suffix)
+
+		q.where.WriteString(fmt.Sprintf(`
+		(SELECT EXISTS (
+			SELECT 1 FROM ldap_association a, ldap_entry moe, ldap_container moc
+			WHERE
+				e.id = a.member_id AND a.id = moe.id AND moe.parent_id = moc.id AND
+				moe.rdn_norm = :%s AND moc.dn_norm = :%s
+	    ))`, rdnNormKey, parentDNNormKey))
+
+	} else {
+		// attrs_norm @@ '$.cn == "foo"';
+		q.where.WriteString(`attrs_norm @@ '$.`)
+		q.where.WriteString(s.Name)
+		q.where.WriteString(` == "`)
+		q.where.WriteString(escape(sv.Norm()[0]))
+		q.where.WriteString(`"'`)
+	}
+}
+
+func (t *HybridDBQueryTranslator) GreaterOrEqualMatch(s *Schema, q *HybridDBFilterQuery, val string) {
+	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
+	if err != nil {
+		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
+		return
+	}
+
+	if s.IsAssociationAttribute() || s.IsReverseAssociationAttribute() {
+		log.Printf("Filter for association doesn't support greater or equal")
+		q.where.WriteString(fmt.Sprintf(`attrs_norm @@ '$.%s == false'`, s.Name))
+		return
+	}
+	// TODO escape check
+
+	// attrs_norm @@ '$.cn == "foo"';
+	q.where.WriteString(`attrs_norm @@ '$.`)
+	q.where.WriteString(s.Name)
+	q.where.WriteString(` >= `)
+	q.where.WriteString(escape(sv.Norm()[0]))
+	q.where.WriteString(`'`)
+}
+
+func (t *HybridDBQueryTranslator) LessOrEqualMatch(s *Schema, q *HybridDBFilterQuery, val string) {
+	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
+	if err != nil {
+		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
+		return
+	}
+
+	if s.IsAssociationAttribute() || s.IsReverseAssociationAttribute() {
+		log.Printf("Filter for association doesn't support less or equal")
+		q.where.WriteString(fmt.Sprintf(`attrs_norm @@ '$.%s == false'`, s.Name))
+		return
+	}
+	// TODO escape check
+
+	// attrs_norm @@ '$.cn == "foo"';
+	q.where.WriteString(`attrs_norm @@ '$.`)
+	q.where.WriteString(s.Name)
+	q.where.WriteString(` <= `)
+	q.where.WriteString(escape(sv.Norm()[0]))
+	q.where.WriteString(`'`)
+}
+
+func (t *HybridDBQueryTranslator) PresentMatch(s *Schema, q *HybridDBFilterQuery) {
+	if s.IsAssociationAttribute() {
+		nameKey := q.nextParamKey(s.Name)
+		q.params[nameKey] = s.Name
+
+		q.where.WriteString(fmt.Sprintf(`
+		(SELECT EXISTS (
+			SELECT 1 FROM ldap_association a
+			WHERE
+				a.name = :%s AND e.id = a.id
+	    ))`, nameKey))
+
+	} else if s.IsReverseAssociationAttribute() {
+		q.where.WriteString(`
+		(SELECT EXISTS (
+			SELECT 1 FROM ldap_association a, ldap_entry moe, ldap_container moc
+			WHERE
+				e.id = a.member_id
+	    ))`)
+
+	} else {
+		// attrs_norm @@ 'exists($.cn)';
+		q.where.WriteString(`attrs_norm @@ 'exists($.`)
+		q.where.WriteString(escape(s.Name))
+		q.where.WriteString(`)'`)
+	}
+}
+
+func (t *HybridDBQueryTranslator) ApproxMatch(s *Schema, q *HybridDBFilterQuery, val string) {
+	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
+	if err != nil {
+		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
+		return
+	}
+
+	if s.IsAssociationAttribute() || s.IsReverseAssociationAttribute() {
+		log.Printf("Filter for association doesn't support approx match")
+		q.where.WriteString(fmt.Sprintf(`attrs_norm @@ '$.%s == false'`, s.Name))
+		return
+	}
+
+	// TODO
+	// attrs_norm @@ '$.cn like_regex ".*foo.*"';
+	q.where.WriteString(`attrs_norm @@ '$.`)
+	q.where.WriteString(s.Name)
+	q.where.WriteString(` like_regex ".*`)
+	q.where.WriteString(escapeRegex(sv.Norm()[0]))
+	q.where.WriteString(`.*"'`)
 }
 
 //////////////////////////////////////////

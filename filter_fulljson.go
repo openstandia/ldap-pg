@@ -173,7 +173,7 @@ func (t *FullJsonQueryTranslator) EqualityMatch(s *Schema, q *Query, jsonpath *s
 		return
 	}
 
-	if s.IsUseMemberTable {
+	if s.IsAssociationAttribute() {
 		reqDN, err := s.server.NormalizeDN(val)
 		if err != nil {
 			log.Printf("warn: Ignore filter due to invalid DN syntax of member. attrName: %s, value: %s, err: %+v", s.Name, val, err)
@@ -189,7 +189,7 @@ func (t *FullJsonQueryTranslator) EqualityMatch(s *Schema, q *Query, jsonpath *s
 		jsonpath.WriteString(` == :`)
 		jsonpath.WriteString(paramKey) // replace using pending params later before executing query
 		jsonpath.WriteString(``)
-	} else if s.IsUseMemberOfTable {
+	} else if s.IsReverseAssociationAttribute() {
 		reqDN, err := s.server.NormalizeDN(val)
 		if err != nil {
 			log.Printf("warn: Ignore filter due to invalid DN syntax of memberOf. attrName: %s, value: %s, err: %+v", s.Name, val, err)
