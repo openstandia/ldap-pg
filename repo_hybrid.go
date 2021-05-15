@@ -1304,34 +1304,40 @@ func (t *HybridDBQueryTranslator) translate(schemaMap *SchemaMap, packet message
 		}
 		q.where.WriteString("))")
 	case message.FilterSubstrings:
-		q.where.WriteString(`attrs_norm @@ '`)
+
+		attrName := string(f.Type_())
+
+		var s *Schema
+		s, ok := schemaMap.Get(attrName)
+		if !ok {
+			log.Printf("warn: Ignore filter due to unsupported attribute: %s", attrName)
+			return
+		}
+
+		var sb strings.Builder
+		sb.Grow(64)
 
 		for i, fs := range f.Substrings() {
-			attrName := string(f.Type_())
-
-			var s *Schema
-			s, ok := schemaMap.Get(attrName)
-			if !ok {
-				log.Printf("Unsupported filter attribute: %s", attrName)
-				return
-			}
-
 			switch fsv := fs.(type) {
 			case message.SubstringInitial:
-				t.StartsWithMatch(s, q, string(fsv), i)
+				t.StartsWithMatch(s, &sb, string(fsv), i)
 			case message.SubstringAny:
 				if i > 0 {
-					q.where.WriteString(" && ")
+					sb.WriteString(" && ")
 				}
-				t.AnyMatch(s, q, string(fsv), i)
+				t.AnyMatch(s, &sb, string(fsv), i)
 			case message.SubstringFinal:
 				if i > 0 {
-					q.where.WriteString(" || ")
+					sb.WriteString(" && ")
 				}
-				t.EndsMatch(s, q, string(fsv), i)
+				t.EndsMatch(s, &sb, string(fsv), i)
 			}
 		}
-		q.where.WriteString(`'`)
+
+		filterKey := q.nextParamKey(s.Name)
+		q.params[filterKey] = sb.String()
+
+		q.where.WriteString(`e.attrs_norm @@ :` + filterKey)
 	case message.FilterEqualityMatch:
 		if s, ok := findSchema(schemaMap, string(f.AttributeDesc())); ok {
 			t.EqualityMatch(s, q, string(f.AssertionValue()))
@@ -1357,7 +1363,7 @@ func (t *HybridDBQueryTranslator) translate(schemaMap *SchemaMap, packet message
 	return nil
 }
 
-func (t *HybridDBQueryTranslator) StartsWithMatch(s *Schema, q *HybridDBFilterQuery, val string, i int) {
+func (t *HybridDBQueryTranslator) StartsWithMatch(s *Schema, sb *strings.Builder, val string, i int) {
 	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
 	if err != nil {
 		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
@@ -1366,19 +1372,19 @@ func (t *HybridDBQueryTranslator) StartsWithMatch(s *Schema, q *HybridDBFilterQu
 
 	if s.IsAssociationAttribute() || s.IsReverseAssociationAttribute() {
 		log.Printf("Filter for association doesn't support substring initial")
-		q.where.WriteString(fmt.Sprintf(`$.%s == false`, s.Name))
+		sb.WriteString(fmt.Sprintf(`$.%s == false`, escape(s.Name)))
 		return
 	}
 
 	// attrs_norm @@ '$.cn starts with "foo"';
-	q.where.WriteString(`$.`)
-	q.where.WriteString(s.Name)
-	q.where.WriteString(` starts with "`)
-	q.where.WriteString(escape(sv.Norm()[0]))
-	q.where.WriteString(`"`)
+	sb.WriteString(`$.`)
+	sb.WriteString(escape(s.Name))
+	sb.WriteString(` starts with "`)
+	sb.WriteString(escape(sv.Norm()[0]))
+	sb.WriteString(`"`)
 }
 
-func (t *HybridDBQueryTranslator) AnyMatch(s *Schema, q *HybridDBFilterQuery, val string, i int) {
+func (t *HybridDBQueryTranslator) AnyMatch(s *Schema, sb *strings.Builder, val string, i int) {
 	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
 	if err != nil {
 		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
@@ -1387,19 +1393,19 @@ func (t *HybridDBQueryTranslator) AnyMatch(s *Schema, q *HybridDBFilterQuery, va
 
 	if s.IsAssociationAttribute() || s.IsReverseAssociationAttribute() {
 		log.Printf("Filter for association doesn't support substring any")
-		q.where.WriteString(fmt.Sprintf(`$.%s == false`, s.Name))
+		sb.WriteString(fmt.Sprintf(`$.%s == false`, escape(s.Name)))
 		return
 	}
 
 	// attrs_norm @@ '$.cn like_regex ".*foo.*"';
-	q.where.WriteString(`$.`)
-	q.where.WriteString(s.Name)
-	q.where.WriteString(` like_regex ".*`)
-	q.where.WriteString(escapeRegex(sv.Norm()[0]))
-	q.where.WriteString(`".*`)
+	sb.WriteString(`$.`)
+	sb.WriteString(escape(s.Name))
+	sb.WriteString(` like_regex ".*`)
+	sb.WriteString(escapeRegex(sv.Norm()[0]))
+	sb.WriteString(`.*"`)
 }
 
-func (t *HybridDBQueryTranslator) EndsMatch(s *Schema, q *HybridDBFilterQuery, val string, i int) {
+func (t *HybridDBQueryTranslator) EndsMatch(s *Schema, sb *strings.Builder, val string, i int) {
 	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
 	if err != nil {
 		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
@@ -1408,16 +1414,16 @@ func (t *HybridDBQueryTranslator) EndsMatch(s *Schema, q *HybridDBFilterQuery, v
 
 	if s.IsAssociationAttribute() || s.IsReverseAssociationAttribute() {
 		log.Printf("Filter for association doesn't support substring final")
-		q.where.WriteString(fmt.Sprintf(`$.%s == false`, s.Name))
+		sb.WriteString(fmt.Sprintf(`$.%s == false`, escape(s.Name)))
 		return
 	}
 
 	// attrs_norm @@ '$.cn like_regex ".*foo.*"';
-	q.where.WriteString(`$.`)
-	q.where.WriteString(s.Name)
-	q.where.WriteString(` like_regex ".*`)
-	q.where.WriteString(escapeRegex(sv.Norm()[0]))
-	q.where.WriteString(`"$`)
+	sb.WriteString(`$.`)
+	sb.WriteString(escape(s.Name))
+	sb.WriteString(` like_regex ".*`)
+	sb.WriteString(escapeRegex(sv.Norm()[0]))
+	sb.WriteString(`$"`)
 }
 
 func (t *HybridDBQueryTranslator) EqualityMatch(s *Schema, q *HybridDBFilterQuery, val string) {
@@ -1475,12 +1481,11 @@ func (t *HybridDBQueryTranslator) EqualityMatch(s *Schema, q *HybridDBFilterQuer
 	    ))`, rdnNormKey, parentDNNormKey))
 
 	} else {
+		filterKey := q.nextParamKey(s.Name)
+		q.params[filterKey] = `$.` + escape(s.Name) + ` == "` + escape(sv.Norm()[0]) + `"`
+
 		// attrs_norm @@ '$.cn == "foo"';
-		q.where.WriteString(`attrs_norm @@ '$.`)
-		q.where.WriteString(s.Name)
-		q.where.WriteString(` == "`)
-		q.where.WriteString(escape(sv.Norm()[0]))
-		q.where.WriteString(`"'`)
+		q.where.WriteString(`e.attrs_norm @@ :` + filterKey)
 	}
 }
 
@@ -1493,17 +1498,21 @@ func (t *HybridDBQueryTranslator) GreaterOrEqualMatch(s *Schema, q *HybridDBFilt
 
 	if s.IsAssociationAttribute() || s.IsReverseAssociationAttribute() {
 		log.Printf("Filter for association doesn't support greater or equal")
-		q.where.WriteString(fmt.Sprintf(`attrs_norm @@ '$.%s == false'`, s.Name))
+		q.where.WriteString(fmt.Sprintf(`attrs_norm @@ '$.%s == false'`, escape(s.Name)))
 		return
 	}
-	// TODO escape check
+	if !s.IsNumberOrdering() {
+		log.Printf("Not number ordering doesn't support reater or equal")
+		q.where.WriteString(fmt.Sprintf(`attrs_norm @@ '$.%s == false'`, escape(s.Name)))
+		return
+	}
 
-	// attrs_norm @@ '$.cn == "foo"';
-	q.where.WriteString(`attrs_norm @@ '$.`)
-	q.where.WriteString(s.Name)
-	q.where.WriteString(` >= `)
-	q.where.WriteString(escape(sv.Norm()[0]))
-	q.where.WriteString(`'`)
+	filterKey := q.nextParamKey(s.Name)
+	// TODO escape check
+	q.params[filterKey] = `$.` + escape(s.Name) + ` >= ` + escape(sv.Norm()[0])
+
+	// attrs_norm @@ '$.createTimestamp >= "20070101000000Z"';
+	q.where.WriteString(`e.attrs_norm @@ :` + filterKey)
 }
 
 func (t *HybridDBQueryTranslator) LessOrEqualMatch(s *Schema, q *HybridDBFilterQuery, val string) {
@@ -1515,17 +1524,21 @@ func (t *HybridDBQueryTranslator) LessOrEqualMatch(s *Schema, q *HybridDBFilterQ
 
 	if s.IsAssociationAttribute() || s.IsReverseAssociationAttribute() {
 		log.Printf("Filter for association doesn't support less or equal")
-		q.where.WriteString(fmt.Sprintf(`attrs_norm @@ '$.%s == false'`, s.Name))
+		q.where.WriteString(fmt.Sprintf(`attrs_norm @@ '$.%s == false'`, escape(s.Name)))
 		return
 	}
-	// TODO escape check
+	if !s.IsNumberOrdering() {
+		log.Printf("Not number ordering doesn't support less or equal")
+		q.where.WriteString(fmt.Sprintf(`attrs_norm @@ '$.%s == false'`, escape(s.Name)))
+		return
+	}
 
-	// attrs_norm @@ '$.cn == "foo"';
-	q.where.WriteString(`attrs_norm @@ '$.`)
-	q.where.WriteString(s.Name)
-	q.where.WriteString(` <= `)
-	q.where.WriteString(escape(sv.Norm()[0]))
-	q.where.WriteString(`'`)
+	filterKey := q.nextParamKey(s.Name)
+	// TODO escape check
+	q.params[filterKey] = `$.` + escape(s.Name) + ` <= ` + escape(sv.Norm()[0])
+
+	// attrs_norm @@ '$.createTimestamp <= "20070101000000Z"';
+	q.where.WriteString(`e.attrs_norm @@ :` + filterKey)
 }
 
 func (t *HybridDBQueryTranslator) PresentMatch(s *Schema, q *HybridDBFilterQuery) {
@@ -1549,10 +1562,11 @@ func (t *HybridDBQueryTranslator) PresentMatch(s *Schema, q *HybridDBFilterQuery
 	    ))`)
 
 	} else {
+		filterKey := q.nextParamKey(s.Name)
+		q.params[filterKey] = `exists($.` + escape(s.Name) + `)`
+
 		// attrs_norm @@ 'exists($.cn)';
-		q.where.WriteString(`attrs_norm @@ 'exists($.`)
-		q.where.WriteString(escape(s.Name))
-		q.where.WriteString(`)'`)
+		q.where.WriteString(`e.attrs_norm @@ :` + filterKey)
 	}
 }
 
@@ -1565,17 +1579,16 @@ func (t *HybridDBQueryTranslator) ApproxMatch(s *Schema, q *HybridDBFilterQuery,
 
 	if s.IsAssociationAttribute() || s.IsReverseAssociationAttribute() {
 		log.Printf("Filter for association doesn't support approx match")
-		q.where.WriteString(fmt.Sprintf(`attrs_norm @@ '$.%s == false'`, s.Name))
+		q.where.WriteString(fmt.Sprintf(`e.attrs_norm @@ '$.%s == false'`, escape(s.Name)))
 		return
 	}
 
-	// TODO
+	filterKey := q.nextParamKey(s.Name)
+	q.params[filterKey] = `$.` + escape(s.Name) + ` like_regex ".*` + escapeRegex(sv.Norm()[0]) + `.*"`
+
+	// TODO Find better solution?
 	// attrs_norm @@ '$.cn like_regex ".*foo.*"';
-	q.where.WriteString(`attrs_norm @@ '$.`)
-	q.where.WriteString(s.Name)
-	q.where.WriteString(` like_regex ".*`)
-	q.where.WriteString(escapeRegex(sv.Norm()[0]))
-	q.where.WriteString(`.*"'`)
+	q.where.WriteString(`e.attrs_norm @@ :` + filterKey)
 }
 
 //////////////////////////////////////////

@@ -563,3 +563,10 @@ func (s *Schema) IsAssociationAttribute() bool {
 func (s *Schema) IsReverseAssociationAttribute() bool {
 	return s.Name == "memberOf"
 }
+
+func (s *Schema) IsNumberOrdering() bool {
+	return s.Ordering == "generalizedTimeOrderingMatch" ||
+		s.Ordering == "integerOrderingMatch" ||
+		s.Ordering == "numericStringOrderingMatch" ||
+		s.Ordering == "UUIDOrderingMatch"
+}

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -417,11 +418,11 @@ func normalizeDistinguishedName(schemaMap *SchemaMap, value string) (string, err
 }
 
 func normalizeGeneralizedTime(value string) (string, error) {
-	_, err := time.Parse(TIMESTAMP_FORMAT, value)
+	t, err := time.Parse(TIMESTAMP_FORMAT, value)
 	if err != nil {
 		return "", err
 	}
-	return value, nil
+	return strconv.FormatInt(t.Unix(), 10), nil
 }
 
 func normalizeUUID(value string) (string, error) {
