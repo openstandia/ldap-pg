@@ -54,7 +54,7 @@ func NewRepository(server *Server) (Repository, error) {
 			server: server,
 			db:     db,
 		},
-		translator: &HybridDBQueryTranslator{},
+		translator: &HybridDBFilterTranslator{},
 	}
 
 	err = repo.Init()

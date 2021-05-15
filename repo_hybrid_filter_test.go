@@ -15,7 +15,7 @@ type HybridFilterTestData struct {
 	schemaMap SchemaMap
 	filter    message.Filter
 	err       string
-	out       *HybridDBFilterQuery
+	out       *HybridDBFilterTranslatorResult
 }
 
 func TestHybridFilter(t *testing.T) {
@@ -25,16 +25,16 @@ func TestHybridFilter(t *testing.T) {
 	})
 	server.LoadSchema()
 
-	translator := HybridDBQueryTranslator{}
+	translator := HybridDBFilterTranslator{}
 
 	for i, test := range createHybridFilterTestData() {
 		var sb strings.Builder
-		q := &HybridDBFilterQuery{
+		q := &HybridDBFilterTranslatorResult{
 			where:  &sb,
 			params: map[string]interface{}{},
 		}
 
-		err := translator.translate(server.schemaMap, test.filter, q)
+		err := translator.translate(server.schemaMap, test.filter, q, false)
 		if err == nil {
 			if test.out == nil {
 				t.Errorf("#%d: %s\nEXPECTED ERROR MESSAGE:\n%s\nGOT A STRUCT INSTEAD:\n%#+v", i, test.label, test.err, q)
@@ -70,7 +70,7 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 				},
 			},
 			filter: message.NewFilterEqualityMatch("cn", "foo"),
-			out: &HybridDBFilterQuery{
+			out: &HybridDBFilterTranslatorResult{
 				where: sb("e.attrs_norm @@ :0_cn"),
 				params: map[string]interface{}{
 					"0_cn": `$.cn == "foo"`,
@@ -79,7 +79,7 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 		},
 
 		{
-			label: "(&(cn=foo)(uid=foo))",
+			label: "(&(cn=foo)(uid=bar))",
 			schemaMap: map[string]*Schema{
 				"cn": {
 					Name:        "cn",
@@ -96,7 +96,7 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 				message.NewFilterEqualityMatch("cn", "foo"),
 				message.NewFilterEqualityMatch("uid", "bar"),
 			},
-			out: &HybridDBFilterQuery{
+			out: &HybridDBFilterTranslatorResult{
 				where: sb("(e.attrs_norm @@ :0_cn AND e.attrs_norm @@ :1_uid)"),
 				params: map[string]interface{}{
 					"0_cn":  `$.cn == "foo"`,
@@ -118,7 +118,7 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 				message.NewFilterEqualityMatch("cn", "foo"),
 				message.NewFilterEqualityMatch("cn", "bar"),
 			},
-			out: &HybridDBFilterQuery{
+			out: &HybridDBFilterTranslatorResult{
 				where: sb("(e.attrs_norm @@ :0_cn OR e.attrs_norm @@ :1_cn)"),
 				params: map[string]interface{}{
 					"0_cn": `$.cn == "foo"`,
@@ -141,7 +141,7 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 				message.NewFilterEqualityMatch("cn", "bar"),
 				message.NewFilterEqualityMatch("cn", "hoge"),
 			},
-			out: &HybridDBFilterQuery{
+			out: &HybridDBFilterTranslatorResult{
 				where: sb("(e.attrs_norm @@ :0_cn OR e.attrs_norm @@ :1_cn OR e.attrs_norm @@ :2_cn)"),
 				params: map[string]interface{}{
 					"0_cn": `$.cn == "foo"`,
@@ -177,7 +177,7 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 					message.NewFilterEqualityMatch("sn", "hoge"),
 				},
 			},
-			out: &HybridDBFilterQuery{
+			out: &HybridDBFilterTranslatorResult{
 				where: sb("(e.attrs_norm @@ :0_cn OR (e.attrs_norm @@ :1_uid AND e.attrs_norm @@ :2_sn))"),
 				params: map[string]interface{}{
 					"0_cn":  `$.cn == "foo"`,
@@ -199,8 +199,126 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 			filter: message.FilterNot{
 				Filter: message.NewFilterEqualityMatch("cn", "foo"),
 			},
-			out: &HybridDBFilterQuery{
-				where: sb("(NOT(e.attrs_norm @@ :0_cn))"),
+			out: &HybridDBFilterTranslatorResult{
+				where: sb("e.attrs_norm @@ :0_cn"),
+				params: map[string]interface{}{
+					"0_cn": `!($.cn == "foo")`,
+				},
+			},
+		},
+
+		{
+			label: "(!(&(cn=foo)(uid=bar)))",
+			schemaMap: map[string]*Schema{
+				"cn": {
+					Name:        "cn",
+					Equality:    "",
+					SingleValue: true,
+				},
+				"uid": {
+					Name:        "uid",
+					Equality:    "",
+					SingleValue: true,
+				},
+			},
+			filter: message.FilterNot{
+				Filter: message.FilterAnd{
+					message.NewFilterEqualityMatch("cn", "foo"),
+					message.NewFilterEqualityMatch("uid", "bar"),
+				},
+			},
+			out: &HybridDBFilterTranslatorResult{
+				where: sb("(e.attrs_norm @@ :0_cn OR e.attrs_norm @@ :1_uid)"),
+				params: map[string]interface{}{
+					"0_cn":  `!($.cn == "foo")`,
+					"1_uid": `!($.uid == "bar")`,
+				},
+			},
+		},
+
+		{
+			label: "(!(|(cn=foo)(uid=bar)))",
+			schemaMap: map[string]*Schema{
+				"cn": {
+					Name:        "cn",
+					Equality:    "",
+					SingleValue: true,
+				},
+				"uid": {
+					Name:        "uid",
+					Equality:    "",
+					SingleValue: true,
+				},
+			},
+			filter: message.FilterNot{
+				Filter: message.FilterOr{
+					message.NewFilterEqualityMatch("cn", "foo"),
+					message.NewFilterEqualityMatch("uid", "bar"),
+				},
+			},
+			out: &HybridDBFilterTranslatorResult{
+				where: sb("(e.attrs_norm @@ :0_cn AND e.attrs_norm @@ :1_uid)"),
+				params: map[string]interface{}{
+					"0_cn":  `!($.cn == "foo")`,
+					"1_uid": `!($.uid == "bar")`,
+				},
+			},
+		},
+
+		{
+			label: "(!(|(&(cn=foo)(uid=bar))(sn=hoge)))",
+			schemaMap: map[string]*Schema{
+				"cn": {
+					Name:        "cn",
+					Equality:    "",
+					SingleValue: true,
+				},
+				"uid": {
+					Name:        "uid",
+					Equality:    "",
+					SingleValue: true,
+				},
+				"sn": {
+					Name:        "sn",
+					Equality:    "",
+					SingleValue: true,
+				},
+			},
+			filter: message.FilterNot{
+				Filter: message.FilterOr{
+					message.FilterAnd{
+						message.NewFilterEqualityMatch("cn", "foo"),
+						message.NewFilterEqualityMatch("uid", "bar"),
+					},
+					message.NewFilterEqualityMatch("sn", "hoge"),
+				},
+			},
+			out: &HybridDBFilterTranslatorResult{
+				where: sb("((e.attrs_norm @@ :0_cn OR e.attrs_norm @@ :1_uid) AND e.attrs_norm @@ :2_sn)"),
+				params: map[string]interface{}{
+					"0_cn":  `!($.cn == "foo")`,
+					"1_uid": `!($.uid == "bar")`,
+					"2_sn":  `!($.sn == "hoge")`,
+				},
+			},
+		},
+
+		{
+			label: "(!(!(cn=foo)))",
+			schemaMap: map[string]*Schema{
+				"cn": {
+					Name:        "cn",
+					Equality:    "",
+					SingleValue: true,
+				},
+			},
+			filter: message.FilterNot{
+				Filter: message.FilterNot{
+					Filter: message.NewFilterEqualityMatch("cn", "foo"),
+				},
+			},
+			out: &HybridDBFilterTranslatorResult{
+				where: sb("e.attrs_norm @@ :0_cn"),
 				params: map[string]interface{}{
 					"0_cn": `$.cn == "foo"`,
 				},
