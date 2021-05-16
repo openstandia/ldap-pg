@@ -989,6 +989,7 @@ func (r *HybridRepository) Search(baseDN *DN, option *SearchOption, handler func
 	proj := []string{}
 	join := []string{}
 	scopeWhere := []string{}
+	filterJoin := []string{}
 	filterWhere := []string{}
 	params := map[string]interface{}{
 		"pageSize": option.PageSize,
@@ -997,29 +998,42 @@ func (r *HybridRepository) Search(baseDN *DN, option *SearchOption, handler func
 	r.collectAssociationSQL(option, &proj, &join)
 	r.collectHasSubordinatesSQL(option, &proj, &join)
 	r.collectScopeWhereSQL(baseDN, option, &scopeWhere, params)
-	r.collectFilterWhereSQL(baseDN, option, &join, &filterWhere, params)
+	r.collectFilterWhereSQL(baseDN, option, &filterJoin, &filterWhere, params)
 
 	q := fmt.Sprintf(`
-	SELECT
-		e.id,
-		e.parent_id,
-		e.rdn_orig || ',' || dnc.dn_orig AS dn_orig,
-		e.attrs_orig,
-		count(e.id) over() AS count
-		%s
-	FROM
-		ldap_entry e
+WITH
+	filtered_entry AS (
+		SELECT
+			e.id,
+			e.parent_id,
+			e.rdn_orig || ',' || dnc.dn_orig AS dn_orig,
+			e.attrs_orig,
+			count(e.id) over() AS count
+		FROM
+			ldap_entry e
 		-- DN join
 		LEFT JOIN ldap_container dnc ON e.parent_id = dnc.id
 		%s
-	WHERE
-		-- scope filter
-		(%s)
-		AND
-		-- ldap filter
-		(%s)
-	LIMIT :pageSize OFFSET :offset
-	`, strings.Join(proj, ", "), strings.Join(join, ""), strings.Join(scopeWhere, " AND "), strings.Join(filterWhere, " AND "))
+		WHERE
+			-- scope filter
+			(%s)
+			AND
+			-- ldap filter
+			(%s)
+		ORDER BY e.id
+		LIMIT :pageSize OFFSET :offset
+	)
+SELECT
+	fe.id,
+	fe.parent_id,
+	fe.dn_orig,
+	fe.attrs_orig,
+	fe.count
+	%s
+FROM
+	filtered_entry fe
+%s
+	`, strings.Join(filterJoin, ""), strings.Join(scopeWhere, " AND "), strings.Join(filterWhere, " AND "), strings.Join(proj, ", "), strings.Join(join, ""))
 
 	log.Printf("Search SQL\n==\n%s\n==\n%v\n==", q, params)
 
@@ -1103,7 +1117,7 @@ func (r *HybridRepository) collectAssociationSQL(option *SearchOption, proj, joi
 	LEFT JOIN LATERAL (
 		SELECT jsonb_agg(rae.rdn_orig || ',' || rc.dn_orig) AS %s
 		FROM ldap_association ra, ldap_entry rae, ldap_container rc
-		WHERE e.id = ra.id AND ra.name = '%s' AND rae.id = ra.member_id AND rc.id = rae.parent_id
+		WHERE fe.id = ra.id AND ra.name = '%s' AND rae.id = ra.member_id AND rc.id = rae.parent_id
 	) AS %s ON true`, v, v, v, v))
 	}
 
@@ -1114,7 +1128,7 @@ func (r *HybridRepository) collectAssociationSQL(option *SearchOption, proj, joi
 	LEFT JOIN LATERAL (
 		SELECT jsonb_agg(rae.rdn_orig || ',' || rc.dn_orig) AS memberOf
 		FROM ldap_association ra, ldap_entry rae, ldap_container rc
-		WHERE e.id = ra.member_id AND rae.id = ra.id AND rc.id = rae.parent_id
+		WHERE fe.id = ra.member_id AND rae.id = ra.id AND rc.id = rae.parent_id
 	) AS memberOf ON true`)
 	}
 }
@@ -1129,7 +1143,7 @@ func (r *HybridRepository) collectHasSubordinatesSQL(option *SearchOption, proj,
 		*join = append(*join, `
 	-- requested has_sub
 	LEFT JOIN LATERAL (
-		SELECT EXISTS (SELECT 1 FROM ldap_container WHERE id = e.id) AS has_sub
+		SELECT EXISTS (SELECT 1 FROM ldap_container WHERE id = fe.id) AS has_sub
 	) AS has_sub ON true`)
 	}
 }
