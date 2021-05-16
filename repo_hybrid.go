@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -986,22 +987,24 @@ func (e *HybridFetchedDBEntry) AttrsOrig() map[string][]string {
 func (r *HybridRepository) Search(baseDN *DN, option *SearchOption, handler func(entry *SearchEntry) error) (int32, int32, error) {
 	log.Printf("Search option: %v", option)
 
-	proj := []string{}
-	join := []string{}
-	scopeWhere := []string{}
+	// Filter
+	var scopeWhere strings.Builder
 	filterJoin := []string{}
 	filterWhere := []string{}
 	params := map[string]interface{}{
 		"pageSize": option.PageSize,
 		"offset":   option.Offset,
 	}
-	r.collectAssociationSQL(option, &proj, &join)
-	r.collectHasSubordinatesSQL(option, &proj, &join)
 	r.collectScopeWhereSQL(baseDN, option, &scopeWhere, params)
 	r.collectFilterWhereSQL(baseDN, option, &filterJoin, &filterWhere, params)
 
-	q := fmt.Sprintf(`
-WITH
+	// Projection(Association etc.)
+	var proj strings.Builder
+	var join strings.Builder
+	r.collectAssociationSQL(option, &proj, &join, params)
+	r.collectHasSubordinatesSQL(option, &proj, &join)
+
+	q := fmt.Sprintf(`WITH
 	filtered_entry AS (
 		SELECT
 			e.id,
@@ -1016,7 +1019,7 @@ WITH
 		%s
 		WHERE
 			-- scope filter
-			(%s)
+			%s
 			AND
 			-- ldap filter
 			(%s)
@@ -1033,7 +1036,7 @@ SELECT
 FROM
 	filtered_entry fe
 %s
-	`, strings.Join(filterJoin, ""), strings.Join(scopeWhere, " AND "), strings.Join(filterWhere, " AND "), strings.Join(proj, ", "), strings.Join(join, ""))
+	`, strings.Join(filterJoin, ""), scopeWhere.String(), strings.Join(filterWhere, " AND "), proj.String(), join.String())
 
 	log.Printf("Search SQL\n==\n%s\n==\n%v\n==", q, params)
 
@@ -1105,50 +1108,81 @@ func (r *HybridRepository) resolveAssociationSuffix(attrsOrig map[string][]strin
 	}
 }
 
-func (r *HybridRepository) collectAssociationSQL(option *SearchOption, proj, join *[]string) {
-	if len(*proj) == 0 {
-		*proj = append(*proj, "")
-	}
-
+func (r *HybridRepository) collectAssociationSQL(option *SearchOption, proj, join *strings.Builder, params map[string]interface{}) {
 	for _, v := range option.RequestedAssocation {
-		*proj = append(*proj, fmt.Sprintf("%s.%s AS %s", v, v, v))
-		*join = append(*join, fmt.Sprintf(`
-	-- requested association - %s 
-	LEFT JOIN LATERAL (
-		SELECT jsonb_agg(rae.rdn_orig || ',' || rc.dn_orig) AS %s
-		FROM ldap_association ra, ldap_entry rae, ldap_container rc
-		WHERE fe.id = ra.id AND ra.name = '%s' AND rae.id = ra.member_id AND rc.id = rae.parent_id
-	) AS %s ON true`, v, v, v, v))
+		proj.WriteString(`, `)
+		join.WriteString("\n")
+
+		key := strconv.Itoa(len(params))
+		params[key] = v
+
+		proj.WriteString(v)
+		proj.WriteString(`.`)
+		proj.WriteString(v)
+		proj.WriteString(` AS `)
+		proj.WriteString(v)
+
+		join.WriteString(`-- requested association - `)
+		join.WriteString(v)
+		join.WriteString(`
+LEFT JOIN LATERAL (
+	SELECT jsonb_agg(rae.rdn_orig || ',' || rc.dn_orig) AS `)
+		join.WriteString(v)
+		join.WriteString(`
+	FROM ldap_association ra, ldap_entry rae, ldap_container rc
+	WHERE fe.id = ra.id AND ra.name = :`)
+		join.WriteString(key)
+		join.WriteString(` AND rae.id = ra.member_id AND rc.id = rae.parent_id
+) AS `)
+		join.WriteString(v)
+		join.WriteString(` ON true`)
 	}
 
 	if option.IsMemberOfRequested {
-		*proj = append(*proj, "memberOf.memberOf AS memberOf")
-		*join = append(*join, `
-	-- requested association - memberOf
-	LEFT JOIN LATERAL (
-		SELECT jsonb_agg(rae.rdn_orig || ',' || rc.dn_orig) AS memberOf
-		FROM ldap_association ra, ldap_entry rae, ldap_container rc
-		WHERE fe.id = ra.member_id AND rae.id = ra.id AND rc.id = rae.parent_id
-	) AS memberOf ON true`)
+		proj.WriteString(`, `)
+		join.WriteString("\n")
+
+		v := "memberOf"
+
+		key := strconv.Itoa(len(params))
+		params[key] = v
+
+		proj.WriteString(v)
+		proj.WriteString(`.`)
+		proj.WriteString(v)
+		proj.WriteString(` AS `)
+		proj.WriteString(v)
+
+		join.WriteString(`-- requested reverse association - `)
+		join.WriteString(v)
+		join.WriteString(`
+LEFT JOIN LATERAL (
+	SELECT jsonb_agg(rae.rdn_orig || ',' || rc.dn_orig) AS `)
+		join.WriteString(v)
+		join.WriteString(`
+	FROM ldap_association ra, ldap_entry rae, ldap_container rc
+	WHERE fe.id = ra.member_id AND rae.id = ra.id AND rc.id = rae.parent_id
+) AS `)
+		join.WriteString(v)
+		join.WriteString(` ON true`)
 	}
 }
 
-func (r *HybridRepository) collectHasSubordinatesSQL(option *SearchOption, proj, join *[]string) {
-	if len(*proj) == 0 {
-		*proj = append(*proj, "")
-	}
-
+func (r *HybridRepository) collectHasSubordinatesSQL(option *SearchOption, proj, join *strings.Builder) {
 	if option.IsHasSubordinatesRequested {
-		*proj = append(*proj, "has_sub.has_sub AS has_sub")
-		*join = append(*join, `
-	-- requested has_sub
-	LEFT JOIN LATERAL (
-		SELECT EXISTS (SELECT 1 FROM ldap_container WHERE id = fe.id) AS has_sub
-	) AS has_sub ON true`)
+		proj.WriteString(`,`)
+		join.WriteString("\n")
+
+		proj.WriteString(`has_sub.has_sub AS has_sub`)
+		join.WriteString(`
+-- requested has_sub
+LEFT JOIN LATERAL (
+	SELECT EXISTS (SELECT 1 FROM ldap_container WHERE id = fe.id) AS has_sub
+) AS has_sub ON true`)
 	}
 }
 
-func (r *HybridRepository) collectScopeWhereSQL(baseDN *DN, option *SearchOption, where *[]string, params map[string]interface{}) {
+func (r *HybridRepository) collectScopeWhereSQL(baseDN *DN, option *SearchOption, where *strings.Builder, params map[string]interface{}) {
 	// Scope handling
 	// 0: base (only base)
 	// 1: one (only one level, not include base)
@@ -1161,16 +1195,16 @@ func (r *HybridRepository) collectScopeWhereSQL(baseDN *DN, option *SearchOption
 		} else {
 			col = "parent_id"
 		}
-		*where = append(*where, fmt.Sprintf(`
-		e.%s = (SELECT
-				e.id
-			FROM
-				ldap_entry e
-				LEFT JOIN ldap_container c ON e.parent_id = c.id
-			WHERE
-				e.rdn_norm = :rdn_norm
-				AND c.dn_norm = :parent_dn_norm
-		)`, col))
+		where.WriteString(`e.`)
+		where.WriteString(col)
+		where.WriteString(` = (SELECT
+					e.id
+				FROM
+					ldap_entry e
+					LEFT JOIN ldap_container c ON e.parent_id = c.id
+				WHERE
+					e.rdn_norm = :rdn_norm
+					AND c.dn_norm = :parent_dn_norm)`)
 		params["rdn_norm"] = baseDN.RDNNormStr()
 		params["parent_dn_norm"] = baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
 
@@ -1178,42 +1212,41 @@ func (r *HybridRepository) collectScopeWhereSQL(baseDN *DN, option *SearchOption
 		var subWhere string
 		if baseDN.Equal(r.server.Suffix) {
 			subWhere = `
-		e.parent_id IN (
-			SELECT
-				id
-			FROM
-				ldap_container c
-			WHERE
-				id != 0
-		)`
+				e.parent_id IN (
+					SELECT
+						id
+					FROM
+						ldap_container c
+					WHERE
+						id != 0
+				)`
 		} else {
 			subWhere = `
-		e.parent_id IN (SELECT
-				e.id
-			FROM
-				ldap_entry e
-				LEFT JOIN ldap_container c ON e.parent_id = c.id
-			WHERE
-				REVERSE(c.dn_norm) LIKE REVERSE('%,' || :parent_dn_norm)
-		)`
+				e.parent_id IN (SELECT
+						e.id
+					FROM
+						ldap_entry e
+						LEFT JOIN ldap_container c ON e.parent_id = c.id
+					WHERE
+						REVERSE(c.dn_norm) LIKE REVERSE('%,' || :parent_dn_norm)
+				)`
 		}
 
 		if option.Scope == 2 {
-			*where = append(*where, `
-		e.id = (SELECT
-				e.id
-			FROM
-				ldap_entry e
-				LEFT JOIN ldap_container c ON e.parent_id = c.id
-			WHERE
-				e.rdn_norm = :rdn_norm
-				AND c.dn_norm = :parent_dn_norm
-		)
-		OR`+subWhere)
+			where.WriteString(`e.id = (SELECT
+					e.id
+				FROM
+					ldap_entry e
+					LEFT JOIN ldap_container c ON e.parent_id = c.id
+				WHERE
+					e.rdn_norm = :rdn_norm
+					AND c.dn_norm = :parent_dn_norm)
+				OR`)
+			where.WriteString(subWhere)
 			params["rdn_norm"] = baseDN.RDNNormStr()
 			params["parent_dn_norm"] = baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
 		} else {
-			*where = append(*where, subWhere)
+			where.WriteString(subWhere)
 			params["parent_dn_norm"] = baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
 		}
 	}
@@ -1484,9 +1517,9 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *Schema, q *HybridDBFilterTra
 				t1.id IS NULL
 		*/
 		q.join.WriteString("\n")
-		q.join.WriteString(`-- association filter by `)
+		q.join.WriteString(`		-- association filter by `)
 		q.join.WriteString(s.Name)
-		q.join.WriteString(" \n")
+		q.join.WriteString(" \n		")
 		if isNot {
 			q.join.WriteString(`LEFT JOIN (`)
 		} else {
@@ -1570,9 +1603,9 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *Schema, q *HybridDBFilterTra
 				t1.member_id IS NULL
 		*/
 		q.join.WriteString("\n")
-		q.join.WriteString(`-- association filter by `)
+		q.join.WriteString(`		-- association filter by `)
 		q.join.WriteString(s.Name)
-		q.join.WriteString(" \n")
+		q.join.WriteString(" \n		")
 		if isNot {
 			q.join.WriteString(`LEFT JOIN (`)
 		} else {
