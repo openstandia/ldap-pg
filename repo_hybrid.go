@@ -1041,7 +1041,11 @@ FROM
 
 	log.Printf("Search SQL\n==\n%s\n==\n%v\n==", q, params)
 
+	start := time.Now()
+
 	rows, err := r.db.NamedQuery(q, params)
+
+	end := time.Now()
 
 	if err != nil {
 		if isNoResult(err) {
@@ -1061,9 +1065,8 @@ FROM
 		}
 		if maxCount == 0 {
 			maxCount = dbEntry.Count
+			log.Printf("info: Executed DB search: %d [ms], count: %d", end.Sub(start).Milliseconds(), maxCount)
 		}
-
-		log.Printf("Row: %v", dbEntry)
 
 		readEntry, err := r.toSearchEntry(&dbEntry)
 		if err != nil {
