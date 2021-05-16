@@ -997,10 +997,7 @@ func (r *HybridRepository) Search(baseDN *DN, option *SearchOption, handler func
 	r.collectAssociationSQL(option, &proj, &join)
 	r.collectHasSubordinatesSQL(option, &proj, &join)
 	r.collectScopeWhereSQL(baseDN, option, &scopeWhere, params)
-	r.collectFilterWhereSQL(baseDN, option, &filterWhere, params)
-
-	// TODO search filter
-	// TODO filter by association. Should only support `equal` or `presence` filter for association.
+	r.collectFilterWhereSQL(baseDN, option, &join, &filterWhere, params)
 
 	q := fmt.Sprintf(`
 	SELECT
@@ -1093,32 +1090,6 @@ func (r *HybridRepository) resolveAssociationSuffix(attrsOrig map[string][]strin
 		}
 	}
 }
-
-// func (r *HybridRepository) createAssociationFilterSQL(option *SearchOption) (string, string) {
-// 	join := ""
-// 	where := ""
-// 	for i, v := range option.RequestedAssocation {
-// 		if i > 0 {
-// 			proj += ", "
-// 		}
-// 		proj += fmt.Sprintf("%s AS %s", v, v)
-// 		join += fmt.Sprintf(`
-// 		-- filter by %s
-// 		INNER JOIN ldap_association a ON e.id = a.member_id
-// 		INNER JOIN ldap_entry ae ON ae.id = a.id
-// 		INNER JOIN ldap_container c ON c.id = ae.parent_id
-// 		`, v, v, v)
-
-// 		where += fmt.Sprintf(`
-// 		(
-// 			ae.rdn_norm = 'cn=group13'
-// 			AND c.dn_norm = 'ou=group,ou=t0
-// 		)
-// 		`)
-// 	}
-
-// 	return proj, join
-// }
 
 func (r *HybridRepository) collectAssociationSQL(option *SearchOption, proj, join *[]string) {
 	if len(*proj) == 0 {
@@ -1234,21 +1205,29 @@ func (r *HybridRepository) collectScopeWhereSQL(baseDN *DN, option *SearchOption
 	}
 }
 
-func (r *HybridRepository) collectFilterWhereSQL(baseDN *DN, option *SearchOption, where *[]string, params map[string]interface{}) error {
-	var sb strings.Builder
-	sb.Grow(128)
+func (r *HybridRepository) collectFilterWhereSQL(baseDN *DN, option *SearchOption, join *[]string, where *[]string, params map[string]interface{}) error {
+	var jsb, wsb strings.Builder
+	// TODO calc initial capacity
+	jsb.Grow(128)
+	wsb.Grow(128)
 
-	q := &HybridDBFilterTranslatorResult{
-		where:  &sb,
+	result := &HybridDBFilterTranslatorResult{
+		join:   &jsb,
+		where:  &wsb,
 		params: params,
 	}
 
-	err := r.translator.translate(r.server.schemaMap, option.Filter, q, false)
+	err := r.translator.translate(r.server.schemaMap, option.Filter, result, false)
 	if err != nil {
 		return err
 	}
 
-	*where = append(*where, sb.String())
+	if result.where.Len() == 0 {
+		wsb.WriteString(`TRUE`)
+	}
+
+	*join = append(*join, jsb.String())
+	*where = append(*where, wsb.String())
 
 	return nil
 }
@@ -1257,12 +1236,13 @@ type HybridDBFilterTranslator struct {
 }
 
 type HybridDBFilterTranslatorResult struct {
+	join   *strings.Builder
 	where  *strings.Builder
 	params map[string]interface{}
 }
 
 func (q *HybridDBFilterTranslatorResult) nextParamKey(name string) string {
-	return fmt.Sprintf("%d_%s", len(q.params), name)
+	return fmt.Sprintf("%d", len(q.params))
 }
 
 func (t *HybridDBFilterTranslator) translate(schemaMap *SchemaMap, packet message.Filter, q *HybridDBFilterTranslatorResult, isNot bool) (err error) {
@@ -1310,7 +1290,6 @@ func (t *HybridDBFilterTranslator) translate(schemaMap *SchemaMap, packet messag
 			return
 		}
 	case message.FilterSubstrings:
-
 		attrName := string(f.Type_())
 
 		var s *Schema
@@ -1465,13 +1444,78 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *Schema, q *HybridDBFilterTra
 		parentDNNormKey := q.nextParamKey(s.Name)
 		q.params[parentDNNormKey] = reqDN.ParentDN().DNNormStrWithoutSuffix(s.server.Suffix)
 
-		q.where.WriteString(fmt.Sprintf(`
-		(SELECT EXISTS (
-			SELECT 1 FROM ldap_association a, ldap_entry me, ldap_container mc
+		/*
+			[CASE EXISTS]
+			-- association filter by uniqueMember
+			INNER JOIN (
+				SELECT DISTINCT
+					a1.id
+				 FROM
+					ldap_association a1 INNER JOIN ldap_entry ae1 ON a1.name = 'uniqueMember' AND a1.member_id = ae1.id INNER JOIN ldap_container c1 ON ae1.parent_id = c1.id
+				 WHERE
+					ae1.rdn_norm = 'uid=user1' AND c1.dn_norm = 'ou=people'
+			) t1 ON t1.id = e.id
+
+			[CASE NOT EXISTS]
+			-- association filter by memberOf
+			LEFT JOIN (
+				SELECT DISTINCT
+					a1.id
+				FROM
+					ldap_association a1 INNER JOIN ldap_entry ae1 ON a1.name = 'uniqueMember' AND a1.member_id = ae1.id INNER JOIN ldap_container c1 ON ae1.parent_id = c1.id
+				WHERE
+					ae1.rdn_norm = 'uid=user1' AND c1.dn_norm = 'ou=people'
+			) t1 ON t1.id = e.id
 			WHERE
-				a.name = :%s AND e.id = a.id AND a.member_id = me.id AND me.parent_id = mc.id AND
-				me.rdn_norm = :%s AND mc.dn_norm = :%s
-	    ))`, nameKey, rdnNormKey, parentDNNormKey))
+				t1.id IS NULL
+		*/
+		q.join.WriteString("\n")
+		q.join.WriteString(`-- association filter by `)
+		q.join.WriteString(s.Name)
+		q.join.WriteString(" \n")
+		if isNot {
+			q.join.WriteString(`LEFT JOIN (`)
+		} else {
+			q.join.WriteString(`INNER JOIN (`)
+		}
+		q.join.WriteString(`SELECT DISTINCT a`)
+		q.join.WriteString(nameKey)
+		q.join.WriteString(`.id FROM ldap_association a`)
+		q.join.WriteString(nameKey)
+		q.join.WriteString(` INNER JOIN ldap_entry ae`)
+		q.join.WriteString(nameKey)
+		q.join.WriteString(` ON a`)
+		q.join.WriteString(nameKey)
+		q.join.WriteString(`.name = :`)
+		q.join.WriteString(nameKey)
+		q.join.WriteString(` AND a`)
+		q.join.WriteString(nameKey)
+		q.join.WriteString(`.member_id = ae`)
+		q.join.WriteString(nameKey)
+		q.join.WriteString(`.id INNER JOIN ldap_container c`)
+		q.join.WriteString(nameKey)
+		q.join.WriteString(` ON ae`)
+		q.join.WriteString(nameKey)
+		q.join.WriteString(`.parent_id = c`)
+		q.join.WriteString(nameKey)
+		q.join.WriteString(`.id WHERE ae`)
+		q.join.WriteString(nameKey)
+		q.join.WriteString(`.rdn_norm = :`)
+		q.join.WriteString(rdnNormKey)
+		q.join.WriteString(` AND c`)
+		q.join.WriteString(nameKey)
+		q.join.WriteString(`.dn_norm = :`)
+		q.join.WriteString(parentDNNormKey)
+		q.join.WriteString(`) t`)
+		q.join.WriteString(nameKey)
+		q.join.WriteString(` ON t`)
+		q.join.WriteString(nameKey)
+		q.join.WriteString(`.id = e.id`)
+		if isNot {
+			q.where.WriteString(`t`)
+			q.where.WriteString(nameKey)
+			q.where.WriteString(`.id IS NULL`)
+		}
 
 	} else if s.IsReverseAssociationAttribute() {
 		reqDN, err := s.server.NormalizeDN(val)
@@ -1486,13 +1530,74 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *Schema, q *HybridDBFilterTra
 		parentDNNormKey := q.nextParamKey(s.Name)
 		q.params[parentDNNormKey] = reqDN.ParentDN().DNNormStrWithoutSuffix(s.server.Suffix)
 
-		q.where.WriteString(fmt.Sprintf(`
-		(SELECT EXISTS (
-			SELECT 1 FROM ldap_association a, ldap_entry moe, ldap_container moc
+		/*
+			[CASE EXISTS]
+			-- association filter by memberOf
+			INNER JOIN (
+				SELECT DISTINCT
+					a1.member_id
+				 FROM
+					ldap_association a1 INNER JOIN ldap_entry ae1 ON ae1.id = a1.id INNER JOIN ldap_container c1 ON c1.id = ae1.parent_id
+				 WHERE
+					ae1.rdn_norm = 'cn=group1' AND c1.dn_norm = 'ou=groups'
+			) t1 ON t1.member_id = e.id
+
+			[CASE NOT EXISTS]
+			-- association filter by memberOf
+			LEFT JOIN (
+				SELECT DISTINCT
+					a1.member_id
+				FROM
+					ldap_association a1 INNER JOIN ldap_entry ae1 ON ae1.id = a1.id INNER JOIN ldap_container c1 ON c1.id = ae1.parent_id
+				WHERE
+					ae1.rdn_norm = 'cn=group1' AND c1.dn_norm = 'ou=groups'
+			) t1 ON t1.member_id = e.id
 			WHERE
-				e.id = a.member_id AND a.id = moe.id AND moe.parent_id = moc.id AND
-				moe.rdn_norm = :%s AND moc.dn_norm = :%s
-	    ))`, rdnNormKey, parentDNNormKey))
+				t1.member_id IS NULL
+		*/
+		q.join.WriteString("\n")
+		q.join.WriteString(`-- association filter by `)
+		q.join.WriteString(s.Name)
+		q.join.WriteString(" \n")
+		if isNot {
+			q.join.WriteString(`LEFT JOIN (`)
+		} else {
+			q.join.WriteString(`INNER JOIN (`)
+		}
+		q.join.WriteString(`SELECT DISTINCT a`)
+		q.join.WriteString(rdnNormKey)
+		q.join.WriteString(`.member_id FROM ldap_association a`)
+		q.join.WriteString(rdnNormKey)
+		q.join.WriteString(` INNER JOIN ldap_entry ae`)
+		q.join.WriteString(rdnNormKey)
+		q.join.WriteString(` ON ae`)
+		q.join.WriteString(rdnNormKey)
+		q.join.WriteString(`.id = a`)
+		q.join.WriteString(rdnNormKey)
+		q.join.WriteString(`.id INNER JOIN ldap_container c`)
+		q.join.WriteString(rdnNormKey)
+		q.join.WriteString(` ON c`)
+		q.join.WriteString(rdnNormKey)
+		q.join.WriteString(`.id = ae`)
+		q.join.WriteString(rdnNormKey)
+		q.join.WriteString(`.parent_id WHERE ae`)
+		q.join.WriteString(rdnNormKey)
+		q.join.WriteString(`.rdn_norm = :`)
+		q.join.WriteString(rdnNormKey)
+		q.join.WriteString(` AND c`)
+		q.join.WriteString(rdnNormKey)
+		q.join.WriteString(`.dn_norm = :`)
+		q.join.WriteString(parentDNNormKey)
+		q.join.WriteString(`) t`)
+		q.join.WriteString(rdnNormKey)
+		q.join.WriteString(` ON t`)
+		q.join.WriteString(rdnNormKey)
+		q.join.WriteString(`.member_id = e.id`)
+		if isNot {
+			q.where.WriteString(`t`)
+			q.where.WriteString(rdnNormKey)
+			q.where.WriteString(`.member_id IS NULL`)
+		}
 
 	} else {
 		var sb strings.Builder
