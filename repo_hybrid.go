@@ -1001,11 +1001,12 @@ func (r *HybridRepository) Search(baseDN *DN, option *SearchOption, handler func
 	// Projection(Association etc.)
 	var proj strings.Builder
 	var join strings.Builder
-	r.collectAssociationSQL(option, &proj, &join, params)
+	r.collectAssociationSQLPlanA(option, &proj, &join, params)
+	// r.collectAssociationSQLPlanB(option, &proj, &join, params)
 	r.collectHasSubordinatesSQL(option, &proj, &join)
 
 	q := fmt.Sprintf(`WITH
-	filtered_entry AS (
+	filtered_entry AS NOT MATERIALIZED (
 		SELECT
 			e.id,
 			e.parent_id,
@@ -1062,6 +1063,8 @@ FROM
 			maxCount = dbEntry.Count
 		}
 
+		log.Printf("Row: %v", dbEntry)
+
 		readEntry, err := r.toSearchEntry(&dbEntry)
 		if err != nil {
 			log.Printf("error: Mapper error: %#v", err)
@@ -1108,7 +1111,7 @@ func (r *HybridRepository) resolveAssociationSuffix(attrsOrig map[string][]strin
 	}
 }
 
-func (r *HybridRepository) collectAssociationSQL(option *SearchOption, proj, join *strings.Builder, params map[string]interface{}) {
+func (r *HybridRepository) collectAssociationSQLPlanA(option *SearchOption, proj, join *strings.Builder, params map[string]interface{}) {
 	for _, v := range option.RequestedAssocation {
 		proj.WriteString(`, `)
 		join.WriteString("\n")
@@ -1165,6 +1168,50 @@ LEFT JOIN LATERAL (
 ) AS `)
 		join.WriteString(v)
 		join.WriteString(` ON true`)
+	}
+}
+
+func (r *HybridRepository) collectAssociationSQLPlanB(option *SearchOption, proj, join *strings.Builder, params map[string]interface{}) {
+	for _, v := range option.RequestedAssocation {
+		proj.WriteString(`,`)
+		proj.WriteString("\n")
+
+		key := strconv.Itoa(len(params))
+		params[key] = v
+
+		proj.WriteString(`-- requested association - `)
+		proj.WriteString(v)
+		proj.WriteString(`
+	(SELECT jsonb_agg(rae.rdn_orig || ',' || rc.dn_orig) AS `)
+		proj.WriteString(v)
+		proj.WriteString(`
+	FROM ldap_association ra, ldap_entry rae, ldap_container rc
+	WHERE fe.id = ra.id AND ra.name = :`)
+		proj.WriteString(key)
+		proj.WriteString(` AND rae.id = ra.member_id AND rc.id = rae.parent_id`)
+		proj.WriteString(`) AS `)
+		proj.WriteString(v)
+	}
+
+	if option.IsMemberOfRequested {
+		proj.WriteString(`, `)
+		proj.WriteString("\n")
+
+		v := "memberOf"
+
+		key := strconv.Itoa(len(params))
+		params[key] = v
+
+		proj.WriteString(`	-- requested reverse association - `)
+		proj.WriteString(v)
+		proj.WriteString(`
+	(SELECT jsonb_agg(rae.rdn_orig || ',' || rc.dn_orig) AS `)
+		proj.WriteString(v)
+		proj.WriteString(`
+	FROM ldap_association ra, ldap_entry rae, ldap_container rc
+	WHERE fe.id = ra.member_id AND rae.id = ra.id AND rc.id = rae.parent_id`)
+		proj.WriteString(`) AS `)
+		proj.WriteString(v)
 	}
 }
 
@@ -1233,16 +1280,18 @@ func (r *HybridRepository) collectScopeWhereSQL(baseDN *DN, option *SearchOption
 		}
 
 		if option.Scope == 2 {
-			where.WriteString(`e.id = (SELECT
+			where.WriteString(`e.id IN (SELECT
 					e.id
 				FROM
 					ldap_entry e
 					LEFT JOIN ldap_container c ON e.parent_id = c.id
 				WHERE
 					e.rdn_norm = :rdn_norm
-					AND c.dn_norm = :parent_dn_norm)
+					AND c.dn_norm = :parent_dn_norm
 				OR`)
 			where.WriteString(subWhere)
+			where.WriteString(`
+			)`)
 			params["rdn_norm"] = baseDN.RDNNormStr()
 			params["parent_dn_norm"] = baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
 		} else {
