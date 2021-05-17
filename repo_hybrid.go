@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -1136,7 +1137,7 @@ FROM
 	return maxCount, count, nil
 }
 
-func (m *HybridRepository) toSearchEntry(dbEntry *HybridFetchedDBEntry) (*SearchEntry, error) {
+func (r *HybridRepository) toSearchEntry(dbEntry *HybridFetchedDBEntry) (*SearchEntry, error) {
 	orig := dbEntry.AttrsOrig()
 
 	// hasSubordinates
@@ -1145,11 +1146,11 @@ func (m *HybridRepository) toSearchEntry(dbEntry *HybridFetchedDBEntry) (*Search
 	}
 
 	// resolve association suffix
-	m.resolveAssociationSuffix(orig, "member")
-	m.resolveAssociationSuffix(orig, "uniqueMember")
-	m.resolveAssociationSuffix(orig, "memberOf")
+	r.resolveAssociationSuffix(orig, "member")
+	r.resolveAssociationSuffix(orig, "uniqueMember")
+	r.resolveAssociationSuffix(orig, "memberOf")
 
-	readEntry := NewSearchEntry(m.server.schemaMap, dbEntry.DNOrig, orig)
+	readEntry := NewSearchEntry(r.server.schemaMap, dbEntry.DNOrig, orig)
 
 	return readEntry, nil
 }
@@ -1389,8 +1390,8 @@ type HybridDBFilterTranslatorResult struct {
 	params map[string]interface{}
 }
 
-func (q *HybridDBFilterTranslatorResult) nextParamKey(name string) string {
-	return strconv.Itoa(len(q.params))
+func (r *HybridDBFilterTranslatorResult) nextParamKey(name string) string {
+	return strconv.Itoa(len(r.params))
 }
 
 func (t *HybridDBFilterTranslator) translate(schemaMap *SchemaMap, packet message.Filter, q *HybridDBFilterTranslatorResult, isNot bool) (err error) {
@@ -1503,16 +1504,6 @@ func (t *HybridDBFilterTranslator) translate(schemaMap *SchemaMap, packet messag
 	}
 
 	return nil
-}
-
-func writeFalseJsonpath(attrName string, sb *strings.Builder) {
-	sb.WriteString(`$."`)
-	sb.WriteString(escapeName(attrName))
-	sb.WriteString(`" == false`)
-}
-
-func writeFalse(sb *strings.Builder) {
-	sb.WriteString(`FALSE`)
 }
 
 func (t *HybridDBFilterTranslator) StartsWithMatch(s *Schema, sb *strings.Builder, val string, i int) {
@@ -2211,6 +2202,10 @@ func (r *HybridRepository) modifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry)
 	return dbEntry, addAssociation, delAssociation, nil
 }
 
+//////////////////////////////////////////
+// Bind
+//////////////////////////////////////////
+
 func (r *HybridRepository) FindCredByDN(dn *DN) ([]string, error) {
 	dest := struct {
 		ID   int64          `db:"id"`
@@ -2232,4 +2227,52 @@ func (r *HybridRepository) FindCredByDN(dn *DN) ([]string, error) {
 	}
 
 	return cred, nil
+}
+
+//////////////////////////////////////////
+// Utilities
+//////////////////////////////////////////
+
+func findSchema(schemaMap *SchemaMap, attrName string) (*Schema, bool) {
+	var s *Schema
+	s, ok := schemaMap.Get(attrName)
+	if !ok {
+		log.Printf("Unsupported filter attribute: %s", attrName)
+		return nil, false
+	}
+	return s, true
+}
+
+func escapeRegex(s string) string {
+	return regexp.QuoteMeta(s)
+}
+
+// escape escapes meta characters used in PostgreSQL jsonpath name.
+// See https://www.postgresql.org/docs/12/datatype-json.html#DATATYPE-JSONPATH
+func escapeName(s string) string {
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, `'`, `''`) // Write two adjacent single quotes
+	s = strings.ReplaceAll(s, `[`, `\[`)
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `*`, `\*`)
+	return s
+}
+
+// escapeValue escapes meta characters used in PostgreSQL jsonpath value.
+// See https://www.postgresql.org/docs/12/datatype-json.html#DATATYPE-JSONPATH
+func escapeValue(s string) string {
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, `'`, `''`)
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	return s
+}
+
+func writeFalseJsonpath(attrName string, sb *strings.Builder) {
+	sb.WriteString(`$."`)
+	sb.WriteString(escapeName(attrName))
+	sb.WriteString(`" == false`)
+}
+
+func writeFalse(sb *strings.Builder) {
+	sb.WriteString(`FALSE`)
 }
