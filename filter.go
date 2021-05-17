@@ -2,21 +2,31 @@ package main
 
 import (
 	"log"
+	"regexp"
 	"strings"
 )
 
-// TODO Need more escape?
 func escapeRegex(s string) string {
-	s = escape(s)
+	return regexp.QuoteMeta(s)
+}
+
+// escape escapes meta characters used in PostgreSQL jsonpath name.
+// See https://www.postgresql.org/docs/12/datatype-json.html#DATATYPE-JSONPATH
+func escapeName(s string) string {
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, `'`, `''`) // Write two adjacent single quotes
+	s = strings.ReplaceAll(s, `[`, `\[`)
+	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `*`, `\*`)
 	return s
 }
 
-func escape(s string) string {
+// escapeValue escapes meta characters used in PostgreSQL jsonpath value.
+// See https://www.postgresql.org/docs/12/datatype-json.html#DATATYPE-JSONPATH
+func escapeValue(s string) string {
 	s = strings.ReplaceAll(s, `"`, `\"`)
-	s = strings.ReplaceAll(s, `(`, `\(`)
-	s = strings.ReplaceAll(s, `)`, `\)`)
-	s = strings.ReplaceAll(s, `.`, `\.`)
+	s = strings.ReplaceAll(s, `'`, `''`)
+	s = strings.ReplaceAll(s, `\`, `\\`)
 	return s
 }
 

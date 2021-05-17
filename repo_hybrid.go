@@ -31,9 +31,11 @@ var (
 	findEntryByDNWithShareLock    *sqlx.NamedStmt
 
 	// repo_update
-	updateAttrsByIdStmt *sqlx.NamedStmt
-	updateDNByIdStmt    *sqlx.NamedStmt
-	updateRDNByIdStmt   *sqlx.NamedStmt
+	updateAttrsByIdStmt        *sqlx.NamedStmt
+	updateDNByIdStmt           *sqlx.NamedStmt
+	updateRDNByIdStmt          *sqlx.NamedStmt
+	updateContainerDNByIdStmt  *sqlx.NamedStmt
+	updateContainerDNsByIdStmt *sqlx.NamedStmt
 
 	// repo_delete
 	deleteContainerStmt          *sqlx.NamedStmt
@@ -97,10 +99,13 @@ func (r *HybridRepository) Init() error {
 	// Lock the entry to block update or delete.
 	// By using 'FOR SHARE', other transactions can read the entry without lock.
 	findEntryByDNWithShareLock, err = db.PrepareNamed(`SELECT
-		e.id, e.parent_id, e.rdn_orig, e.attrs_orig
+		e.id, e.parent_id, e.rdn_orig, e.attrs_orig, has_sub.has_sub
 	FROM
 		ldap_entry e
 		LEFT JOIN ldap_container c ON e.parent_id = c.id
+		LEFT JOIN LATERAL (
+			SELECT EXISTS (SELECT 1 FROM ldap_container WHERE id = e.id) AS has_sub
+	    ) AS has_sub ON true
 	WHERE
 		e.rdn_norm = :rdn_norm
 		AND c.dn_norm = :parent_dn_norm
@@ -186,6 +191,21 @@ func (r *HybridRepository) Init() error {
 		rdn_orig = :new_rdn_orig, rdn_norm = :new_rdn_norm,
 		attrs_norm = :attrs_norm, attrs_orig = :attrs_orig
 		WHERE id = :id`)
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
+
+	updateContainerDNByIdStmt, err = db.PrepareNamed(`UPDATE ldap_container SET
+		dn_orig = :new_dn_orig, dn_norm = :new_dn_norm
+		WHERE id = :id`)
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
+
+	updateContainerDNsByIdStmt, err = db.PrepareNamed(`UPDATE ldap_container SET
+		dn_orig = regexp_replace(dn_orig, :old_dn_orig_pattern, :new_dn_orig),
+		dn_norm = regexp_replace(dn_norm, :old_dn_norm_pattern, :new_dn_norm)
+		WHERE dn_norm ~ :old_dn_norm_pattern`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
@@ -421,7 +441,7 @@ func (r *HybridRepository) Update(dn *DN, callback func(current *ModifyEntry) er
 
 	// Step 1: Fetch current entry with share lock(blocking update and delete)
 	// TODO: Need to fetch all associations
-	oID, oParentID, _, oJSONMap, err := r.findByDNForUpdate(tx, dn)
+	oID, oParentID, _, oJSONMap, oHasSub, err := r.findByDNForUpdate(tx, dn)
 	if err != nil {
 		rollback(tx)
 		return err
@@ -434,6 +454,7 @@ func (r *HybridRepository) Update(dn *DN, callback func(current *ModifyEntry) er
 	}
 	newEntry.dbEntryID = oID
 	newEntry.dbParentID = oParentID
+	newEntry.hasSub = oHasSub
 
 	// Apply modify operations from LDAP request
 	err = callback(newEntry)
@@ -529,12 +550,13 @@ func (r *HybridRepository) Update(dn *DN, callback func(current *ModifyEntry) er
 	return commit(tx)
 }
 
-func (r *HybridRepository) findByDNForUpdate(tx *sqlx.Tx, dn *DN) (int64, int64, string, map[string][]string, error) {
+func (r *HybridRepository) findByDNForUpdate(tx *sqlx.Tx, dn *DN) (int64, int64, string, map[string][]string, bool, error) {
 	dest := struct {
-		id        int64          `db:"id"`
-		parentID  int64          `db:"parent_id"`
-		rdnOrig   string         `db:"rdn_orig"`
-		attrsOrig types.JSONText `db:"attrs_orig"`
+		ID        int64          `db:"id"`
+		ParentID  int64          `db:"parent_id"`
+		RDNOrig   string         `db:"rdn_orig"`
+		AttrsOrig types.JSONText `db:"attrs_orig"`
+		HasSub    bool           `db:"has_sub"`
 	}{}
 
 	err := namedStmt(tx, findEntryByDNWithShareLock).Get(&dest, map[string]interface{}{
@@ -543,20 +565,20 @@ func (r *HybridRepository) findByDNForUpdate(tx *sqlx.Tx, dn *DN) (int64, int64,
 	})
 	if err != nil {
 		if isNoResult(err) {
-			return 0, 0, "", nil, NewNoSuchObject()
+			return 0, 0, "", nil, false, NewNoSuchObject()
 		}
-		return 0, 0, "", nil, xerrors.Errorf("Failed to execute findByDNForUpdate in %s. dn_norm: %s, err: %w", txLabel(tx), dn.DNNormStr(), err)
+		return 0, 0, "", nil, false, xerrors.Errorf("Failed to execute findByDNForUpdate in %s. dn_norm: %s, err: %w", txLabel(tx), dn.DNNormStr(), err)
 	}
 
 	var jsonMap map[string][]string
-	if len(dest.attrsOrig) > 0 {
+	if len(dest.AttrsOrig) > 0 {
 		jsonMap := make(map[string][]string)
-		if err := dest.attrsOrig.Unmarshal(&jsonMap); err != nil {
-			return 0, 0, "", nil, xerrors.Errorf("Unexpected unmarshal error in %s. dn_norm: %s, err: %w", txLabel(tx), dn.DNNormStr(), err)
+		if err := dest.AttrsOrig.Unmarshal(&jsonMap); err != nil {
+			return 0, 0, "", nil, false, xerrors.Errorf("Unexpected unmarshal error in %s. dn_norm: %s, err: %w", txLabel(tx), dn.DNNormStr(), err)
 		}
 	}
 
-	return dest.id, dest.parentID, dest.rdnOrig, jsonMap, nil
+	return dest.ID, dest.ParentID, dest.RDNOrig, jsonMap, dest.HasSub, nil
 }
 
 // oldRDN: set when keeping current entry
@@ -564,7 +586,7 @@ func (r *HybridRepository) UpdateDN(oldDN, newDN *DN, oldRDN *RelativeDN) error 
 	tx := r.db.MustBegin()
 
 	// Fetch target entry with lock
-	oID, oParentID, _, oJSONMap, err := r.findByDNForUpdate(tx, oldDN)
+	oID, oParentID, _, oJSONMap, oHasSub, err := r.findByDNForUpdate(tx, oldDN)
 	if err != nil {
 		rollback(tx)
 		return err
@@ -576,6 +598,7 @@ func (r *HybridRepository) UpdateDN(oldDN, newDN *DN, oldRDN *RelativeDN) error 
 	}
 	entry.dbEntryID = oID
 	entry.dbParentID = oParentID
+	entry.hasSub = oHasSub
 
 	if !oldDN.ParentDN().Equal(newDN.ParentDN()) {
 		// Move or copy under the new parent case
@@ -757,6 +780,8 @@ func (r *HybridRepository) updateRDN(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *Rela
 		}
 	}
 
+	log.Printf("Update RDN. newDN: %s, hasSub: %v", newDN.DNOrigStr(), oldEntry.hasSub)
+
 	// Modify RDN doesn't affect the member, ignore it
 	dbEntry, _, _, err := r.modifyEntryToDBEntry(tx, newEntry)
 	if err != nil {
@@ -773,6 +798,30 @@ func (r *HybridRepository) updateRDN(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *Rela
 
 	if err != nil {
 		return xerrors.Errorf("Failed to update entry DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
+	}
+
+	// Modify DN orig of container record if the entry has sub.
+	// Don't update if the entry is root which has suffix as the RDN.
+	if oldEntry.hasSub && oldEntry.dbParentID != 0 {
+		_, err = tx.NamedStmt(updateContainerDNByIdStmt).Exec(map[string]interface{}{
+			"id":          oldEntry.dbEntryID,
+			"new_dn_norm": newDN.RDNNormStr(),
+			"new_dn_orig": newDN.RDNOrigStr(),
+		})
+		if err != nil {
+			return xerrors.Errorf("Failed to update container DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
+		}
+
+		_, err = tx.NamedStmt(updateContainerDNsByIdStmt).Exec(map[string]interface{}{
+			"new_dn_norm":         "\\1" + newDN.RDNNormStr(),
+			"new_dn_orig":         "\\1" + newDN.RDNOrigStr(),
+			"old_dn_norm_pattern": "(.*,)" + escapeRegex(oldDN.DNNormStrWithoutSuffix(r.server.Suffix)) + "$",
+			"old_dn_orig_pattern": "(.*,)" + escapeRegex(oldDN.DNOrigStrWithoutSuffix(r.server.Suffix)) + "$",
+		})
+		if err != nil {
+			return xerrors.Errorf("Failed to update sub containers DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
+		}
+
 	}
 
 	return nil
@@ -1341,7 +1390,7 @@ type HybridDBFilterTranslatorResult struct {
 }
 
 func (q *HybridDBFilterTranslatorResult) nextParamKey(name string) string {
-	return fmt.Sprintf("%d", len(q.params))
+	return strconv.Itoa(len(q.params))
 }
 
 func (t *HybridDBFilterTranslator) translate(schemaMap *SchemaMap, packet message.Filter, q *HybridDBFilterTranslatorResult, isNot bool) (err error) {
@@ -1429,7 +1478,8 @@ func (t *HybridDBFilterTranslator) translate(schemaMap *SchemaMap, packet messag
 		filterKey := q.nextParamKey(s.Name)
 		q.params[filterKey] = sb.String()
 
-		q.where.WriteString(`e.attrs_norm @@ :` + filterKey)
+		q.where.WriteString(`e.attrs_norm @@ :`)
+		q.where.WriteString(filterKey)
 	case message.FilterEqualityMatch:
 		if s, ok := findSchema(schemaMap, string(f.AttributeDesc())); ok {
 			t.EqualityMatch(s, q, string(f.AssertionValue()), isNot)
@@ -1455,6 +1505,16 @@ func (t *HybridDBFilterTranslator) translate(schemaMap *SchemaMap, packet messag
 	return nil
 }
 
+func writeFalseJsonpath(attrName string, sb *strings.Builder) {
+	sb.WriteString(`$."`)
+	sb.WriteString(escapeName(attrName))
+	sb.WriteString(`" == false`)
+}
+
+func writeFalse(sb *strings.Builder) {
+	sb.WriteString(`FALSE`)
+}
+
 func (t *HybridDBFilterTranslator) StartsWithMatch(s *Schema, sb *strings.Builder, val string, i int) {
 	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
 	if err != nil {
@@ -1464,15 +1524,15 @@ func (t *HybridDBFilterTranslator) StartsWithMatch(s *Schema, sb *strings.Builde
 
 	if s.IsAssociationAttribute() || s.IsReverseAssociationAttribute() {
 		log.Printf("Filter for association doesn't support substring initial")
-		sb.WriteString(fmt.Sprintf(`$.%s == false`, escape(s.Name)))
+		writeFalseJsonpath(s.Name, sb)
 		return
 	}
 
 	// attrs_norm @@ '$.cn starts with "foo"';
-	sb.WriteString(`$.`)
-	sb.WriteString(escape(s.Name))
-	sb.WriteString(` starts with "`)
-	sb.WriteString(escape(sv.Norm()[0]))
+	sb.WriteString(`$."`)
+	sb.WriteString(escapeName(s.Name))
+	sb.WriteString(`" starts with "`)
+	sb.WriteString(escapeValue(sv.Norm()[0]))
 	sb.WriteString(`"`)
 }
 
@@ -1485,14 +1545,14 @@ func (t *HybridDBFilterTranslator) AnyMatch(s *Schema, sb *strings.Builder, val 
 
 	if s.IsAssociationAttribute() || s.IsReverseAssociationAttribute() {
 		log.Printf("Filter for association doesn't support substring any")
-		sb.WriteString(fmt.Sprintf(`$.%s == false`, escape(s.Name)))
+		writeFalseJsonpath(s.Name, sb)
 		return
 	}
 
 	// attrs_norm @@ '$.cn like_regex ".*foo.*"';
-	sb.WriteString(`$.`)
-	sb.WriteString(escape(s.Name))
-	sb.WriteString(` like_regex ".*`)
+	sb.WriteString(`$."`)
+	sb.WriteString(escapeName(s.Name))
+	sb.WriteString(`" like_regex ".*`)
 	sb.WriteString(escapeRegex(sv.Norm()[0]))
 	sb.WriteString(`.*"`)
 }
@@ -1506,14 +1566,14 @@ func (t *HybridDBFilterTranslator) EndsMatch(s *Schema, sb *strings.Builder, val
 
 	if s.IsAssociationAttribute() || s.IsReverseAssociationAttribute() {
 		log.Printf("Filter for association doesn't support substring final")
-		sb.WriteString(fmt.Sprintf(`$.%s == false`, escape(s.Name)))
+		writeFalseJsonpath(s.Name, sb)
 		return
 	}
 
 	// attrs_norm @@ '$.cn like_regex ".*foo.*"';
-	sb.WriteString(`$.`)
-	sb.WriteString(escape(s.Name))
-	sb.WriteString(` like_regex ".*`)
+	sb.WriteString(`$."`)
+	sb.WriteString(escapeName(s.Name))
+	sb.WriteString(`" like_regex ".*`)
 	sb.WriteString(escapeRegex(sv.Norm()[0]))
 	sb.WriteString(`$"`)
 }
@@ -1711,10 +1771,10 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *Schema, q *HybridDBFilterTra
 		if isNot {
 			sb.WriteString(`!(`)
 		}
-		sb.WriteString(`$.`)
-		sb.WriteString(escape(s.Name))
+		sb.WriteString(`$."`)
+		sb.WriteString(escapeName(s.Name))
 		sb.WriteString(` == "`)
-		sb.WriteString(escape(sv.Norm()[0]))
+		sb.WriteString(escapeValue(sv.Norm()[0]))
 		sb.WriteString(`"`)
 		if isNot {
 			sb.WriteString(`)`)
@@ -1724,7 +1784,8 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *Schema, q *HybridDBFilterTra
 		q.params[filterKey] = sb.String()
 
 		// attrs_norm @@ '$.cn == "foo"';
-		q.where.WriteString(`e.attrs_norm @@ :` + filterKey)
+		q.where.WriteString(`e.attrs_norm @@ :`)
+		q.where.WriteString(filterKey)
 	}
 }
 
@@ -1737,12 +1798,12 @@ func (t *HybridDBFilterTranslator) GreaterOrEqualMatch(s *Schema, q *HybridDBFil
 
 	if s.IsAssociationAttribute() || s.IsReverseAssociationAttribute() {
 		log.Printf("Filter for association doesn't support greater or equal")
-		q.where.WriteString(fmt.Sprintf(`attrs_norm @@ '$.%s == false'`, escape(s.Name)))
+		writeFalse(q.where)
 		return
 	}
 	if !s.IsNumberOrdering() {
 		log.Printf("Not number ordering doesn't support reater or equal")
-		q.where.WriteString(fmt.Sprintf(`attrs_norm @@ '$.%s == false'`, escape(s.Name)))
+		writeFalse(q.where)
 		return
 	}
 
@@ -1752,10 +1813,10 @@ func (t *HybridDBFilterTranslator) GreaterOrEqualMatch(s *Schema, q *HybridDBFil
 	if isNot {
 		sb.WriteString(`!(`)
 	}
-	sb.WriteString(`$.`)
-	sb.WriteString(escape(s.Name))
-	sb.WriteString(` >= `)
-	sb.WriteString(escape(sv.Norm()[0]))
+	sb.WriteString(`$."`)
+	sb.WriteString(escapeName(s.Name))
+	sb.WriteString(`" >= `)
+	sb.WriteString(escapeValue(sv.Norm()[0]))
 	if isNot {
 		sb.WriteString(`)`)
 	}
@@ -1765,7 +1826,8 @@ func (t *HybridDBFilterTranslator) GreaterOrEqualMatch(s *Schema, q *HybridDBFil
 	q.params[filterKey] = sb.String()
 
 	// attrs_norm @@ '$.createTimestamp >= "20070101000000Z"';
-	q.where.WriteString(`e.attrs_norm @@ :` + filterKey)
+	q.where.WriteString(`e.attrs_norm @@ :`)
+	q.where.WriteString(filterKey)
 }
 
 func (t *HybridDBFilterTranslator) LessOrEqualMatch(s *Schema, q *HybridDBFilterTranslatorResult, val string, isNot bool) {
@@ -1777,12 +1839,12 @@ func (t *HybridDBFilterTranslator) LessOrEqualMatch(s *Schema, q *HybridDBFilter
 
 	if s.IsAssociationAttribute() || s.IsReverseAssociationAttribute() {
 		log.Printf("Filter for association doesn't support less or equal")
-		q.where.WriteString(fmt.Sprintf(`attrs_norm @@ '$.%s == false'`, escape(s.Name)))
+		writeFalse(q.where)
 		return
 	}
 	if !s.IsNumberOrdering() {
 		log.Printf("Not number ordering doesn't support less or equal")
-		q.where.WriteString(fmt.Sprintf(`attrs_norm @@ '$.%s == false'`, escape(s.Name)))
+		writeFalse(q.where)
 		return
 	}
 
@@ -1792,10 +1854,10 @@ func (t *HybridDBFilterTranslator) LessOrEqualMatch(s *Schema, q *HybridDBFilter
 	if isNot {
 		sb.WriteString(`!(`)
 	}
-	sb.WriteString(`$.`)
-	sb.WriteString(escape(s.Name))
-	sb.WriteString(` <= `)
-	sb.WriteString(escape(sv.Norm()[0]))
+	sb.WriteString(`$."`)
+	sb.WriteString(escapeName(s.Name))
+	sb.WriteString(`" <= `)
+	sb.WriteString(escapeValue(sv.Norm()[0]))
 	if isNot {
 		sb.WriteString(`)`)
 	}
@@ -1805,7 +1867,8 @@ func (t *HybridDBFilterTranslator) LessOrEqualMatch(s *Schema, q *HybridDBFilter
 	q.params[filterKey] = sb.String()
 
 	// attrs_norm @@ '$.createTimestamp <= "20070101000000Z"';
-	q.where.WriteString(`e.attrs_norm @@ :` + filterKey)
+	q.where.WriteString(`e.attrs_norm @@ :`)
+	q.where.WriteString(filterKey)
 }
 
 func (t *HybridDBFilterTranslator) PresentMatch(s *Schema, q *HybridDBFilterTranslatorResult, isNot bool) {
@@ -1813,12 +1876,14 @@ func (t *HybridDBFilterTranslator) PresentMatch(s *Schema, q *HybridDBFilterTran
 		nameKey := q.nextParamKey(s.Name)
 		q.params[nameKey] = s.Name
 
-		q.where.WriteString(fmt.Sprintf(`
+		q.where.WriteString(`
 		(SELECT EXISTS (
 			SELECT 1 FROM ldap_association a
 			WHERE
-				a.name = :%s AND e.id = a.id
-	    ))`, nameKey))
+				a.name = :`)
+		q.where.WriteString(nameKey)
+		q.where.WriteString(` AND e.id = a.id
+	    ))`)
 
 	} else if s.IsReverseAssociationAttribute() {
 		q.where.WriteString(`
@@ -1835,9 +1900,9 @@ func (t *HybridDBFilterTranslator) PresentMatch(s *Schema, q *HybridDBFilterTran
 		if isNot {
 			sb.WriteString(`!(`)
 		}
-		sb.WriteString(`exists($.`)
-		sb.WriteString(escape(s.Name))
-		sb.WriteString(`)`)
+		sb.WriteString(`exists($."`)
+		sb.WriteString(escapeName(s.Name))
+		sb.WriteString(`")`)
 		if isNot {
 			sb.WriteString(`)`)
 		}
@@ -1846,7 +1911,8 @@ func (t *HybridDBFilterTranslator) PresentMatch(s *Schema, q *HybridDBFilterTran
 		q.params[filterKey] = sb.String()
 
 		// attrs_norm @@ 'exists($.cn)';
-		q.where.WriteString(`e.attrs_norm @@ :` + filterKey)
+		q.where.WriteString(`e.attrs_norm @@ :`)
+		q.where.WriteString(filterKey)
 	}
 }
 
@@ -1859,7 +1925,7 @@ func (t *HybridDBFilterTranslator) ApproxMatch(s *Schema, q *HybridDBFilterTrans
 
 	if s.IsAssociationAttribute() || s.IsReverseAssociationAttribute() {
 		log.Printf("Filter for association doesn't support approx match")
-		q.where.WriteString(fmt.Sprintf(`e.attrs_norm @@ '$.%s == false'`, escape(s.Name)))
+		writeFalse(q.where)
 		return
 	}
 
@@ -1869,10 +1935,10 @@ func (t *HybridDBFilterTranslator) ApproxMatch(s *Schema, q *HybridDBFilterTrans
 	if isNot {
 		sb.WriteString(`!(`)
 	}
-	sb.WriteString(`$.`)
-	sb.WriteString(escape(s.Name))
-	sb.WriteString(` like_regex ".*`)
-	sb.WriteString(escape(sv.Norm()[0]))
+	sb.WriteString(`$."`)
+	sb.WriteString(escapeName(s.Name))
+	sb.WriteString(`" like_regex ".*`)
+	sb.WriteString(escapeRegex(sv.Norm()[0]))
 	sb.WriteString(`.*"`)
 	if isNot {
 		sb.WriteString(`)`)
@@ -1883,7 +1949,8 @@ func (t *HybridDBFilterTranslator) ApproxMatch(s *Schema, q *HybridDBFilterTrans
 
 	// TODO Find better solution?
 	// attrs_norm @@ '$.cn like_regex ".*foo.*"';
-	q.where.WriteString(`e.attrs_norm @@ :` + filterKey)
+	q.where.WriteString(`e.attrs_norm @@ :`)
+	q.where.WriteString(filterKey)
 }
 
 //////////////////////////////////////////
