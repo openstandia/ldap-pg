@@ -84,7 +84,7 @@ func (r *HybridRepository) Init() error {
 	`)
 
 	findCredByDN, err = db.PrepareNamed(`SELECT
-		e.id, e.attrs_orig->'userPassword' 
+		e.id, e.attrs_orig->'userPassword' AS credential
 	FROM
 		ldap_entry e
 		LEFT JOIN ldap_container c ON e.parent_id = c.id
@@ -2231,10 +2231,13 @@ func (r *HybridRepository) modifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry)
 func (r *HybridRepository) FindCredByDN(dn *DN) ([]string, error) {
 	dest := struct {
 		ID   int64          `db:"id"`
-		Cred types.JSONText `db:"cred"`
+		Cred types.JSONText `db:"credential"`
 	}{}
 
-	err := findCredByDN.Get(&dest, map[string]interface{}{})
+	err := findCredByDN.Get(&dest, map[string]interface{}{
+		"rdn_norm":       dn.RDNNormStr(),
+		"parent_dn_norm": dn.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix),
+	})
 	if err != nil {
 		if isNoResult(err) {
 			return nil, NewInvalidCredentials()
