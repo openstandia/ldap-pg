@@ -312,6 +312,10 @@ func (r *HybridRepository) insertLevel0(tx *sqlx.Tx, dbEntry *HybridDBEntry) (in
 
 	_, err = tx.NamedStmt(insertContainerStmt).Exec(params)
 	if err != nil {
+		if isDuplicateKeyError(err) {
+			log.Printf("debug: The new entry already exists. parentId: %d, rdn_norm: %s", parentId, dbEntry.RDNNorm)
+			return 0, 0, NewAlreadyExists()
+		}
 		return 0, 0, xerrors.Errorf("Failed to insert level 0 parent container record. err: %w", err)
 	}
 
@@ -977,12 +981,12 @@ type HybridFetchedDBEntry struct {
 	ParentID        int64          `db:"parent_id"`
 	RDNOrig         string         `db:"rdn_orig"`
 	RawAttrsOrig    types.JSONText `db:"attrs_orig"`
-	RawMember       types.JSONText `db:"member"`          // No real column in the table
-	RawUniqueMember types.JSONText `db:"uniquemember"`    // No real column in the table
-	RawMemberOf     types.JSONText `db:"memberof"`        // No real column in the table
-	HasSubordinates string         `db:"hassubordinates"` // No real column in the table
-	DNOrig          string         `db:"dn_orig"`         // No real column in the table
-	Count           int32          `db:"count"`           // No real column in the table
+	RawMember       types.JSONText `db:"member"`       // No real column in the table
+	RawUniqueMember types.JSONText `db:"uniquemember"` // No real column in the table
+	RawMemberOf     types.JSONText `db:"memberof"`     // No real column in the table
+	HasSubordinates string         `db:"has_sub"`      // No real column in the table
+	DNOrig          string         `db:"dn_orig"`      // No real column in the table
+	Count           int32          `db:"count"`        // No real column in the table
 }
 
 func (e *HybridFetchedDBEntry) Clear() {
@@ -1101,7 +1105,7 @@ FROM
 		if isNoResult(err) {
 			return 0, 0, nil
 		}
-		return 0, 0, xerrors.Errorf("Failed to search, err: %w", err)
+		return 0, 0, xerrors.Errorf("Failed to search. query:\n %s\nparams:%v\n err: %w", q, params, err)
 	}
 
 	var maxCount int32 = 0
@@ -1321,15 +1325,31 @@ func (r *HybridRepository) collectScopeWhereSQL(baseDN *DN, option *SearchOption
 						id != 0
 				)`
 		} else {
-			subWhere = `
+			if baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix) == "" {
+				subWhere = `
 				e.parent_id IN (SELECT
-						e.id
+						e.parent_id
 					FROM
 						ldap_entry e
 						LEFT JOIN ldap_container c ON e.parent_id = c.id
 					WHERE
-						REVERSE(c.dn_norm) LIKE REVERSE('%,' || :parent_dn_norm)
+						c.dn_norm = :dn_norm
+						OR
+						REVERSE(c.dn_norm) LIKE REVERSE('%,' || :dn_norm)
 				)`
+			} else {
+				subWhere = `
+				e.parent_id IN (SELECT
+						e.parent_id
+					FROM
+						ldap_entry e
+						LEFT JOIN ldap_container c ON e.parent_id = c.id
+					WHERE
+						c.dn_norm = :dn_norm
+						OR
+						REVERSE(c.dn_norm) LIKE REVERSE('%,' || :dn_norm)
+				)`
+			}
 		}
 
 		if option.Scope == 2 {
@@ -1347,9 +1367,11 @@ func (r *HybridRepository) collectScopeWhereSQL(baseDN *DN, option *SearchOption
 			)`)
 			params["rdn_norm"] = baseDN.RDNNormStr()
 			params["parent_dn_norm"] = baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
+			params["dn_norm"] = baseDN.DNNormStrWithoutSuffix(r.server.Suffix)
 		} else {
 			where.WriteString(subWhere)
 			params["parent_dn_norm"] = baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
+			params["dn_norm"] = baseDN.DNNormStrWithoutSuffix(r.server.Suffix)
 		}
 	}
 }
@@ -1764,7 +1786,7 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *Schema, q *HybridDBFilterTra
 		}
 		sb.WriteString(`$."`)
 		sb.WriteString(escapeName(s.Name))
-		sb.WriteString(` == "`)
+		sb.WriteString(`" == "`)
 		sb.WriteString(escapeValue(sv.Norm()[0]))
 		sb.WriteString(`"`)
 		if isNot {

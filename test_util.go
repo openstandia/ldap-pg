@@ -178,6 +178,11 @@ type Add struct {
 	assert Assert
 }
 
+func (a Add) SetAssert(assert Assert) Add {
+	a.assert = assert
+	return a
+}
+
 type ModifyAdd struct {
 	rdn    string
 	baseDN string
@@ -382,6 +387,10 @@ func (a AssertResponse) AssertResponse(conn *ldap.Conn, err error) error {
 		}
 	}
 	return nil
+}
+
+func (a AssertResponse) AssertEntry(conn *ldap.Conn, err error, rdn, baseDN string, attrs map[string][]string) error {
+	return a.AssertResponse(conn, err)
 }
 
 type Assert interface {
@@ -632,7 +641,7 @@ func searchEntry(c *ldap.Conn, rdn, baseDN string, scope int, filter string, att
 		bd = rdn + "," + bd
 	}
 
-	log.Printf("debug: searchEntry %s", bd)
+	log.Printf("info: searchEntry. baseDN: %s, scope: %d, filter: %s, reqAttrs: %v", bd, scope, filter, attrs)
 
 	search := ldap.NewSearchRequest(
 		bd,
@@ -720,7 +729,11 @@ func truncateTables() {
 	if err != nil {
 		log.Fatal("truncate table error:", err)
 	}
-	_, err = db.Exec("TRUNCATE ldap_tree")
+	_, err = db.Exec("TRUNCATE ldap_container")
+	if err != nil {
+		log.Fatal("truncate table error:", err)
+	}
+	_, err = db.Exec("TRUNCATE ldap_association")
 	if err != nil {
 		log.Fatal("truncate table error:", err)
 	}

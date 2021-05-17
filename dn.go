@@ -319,6 +319,7 @@ func (d *DN) ParentDN() *DN {
 }
 
 func (d *DN) IsRoot() bool {
+	// TODO
 	return len(d.RDNs) == 1
 }
 

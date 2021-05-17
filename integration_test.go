@@ -25,11 +25,11 @@ func TestParallel(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
-		AddDC("com"),
+		AddDC("com").SetAssert(&AssertResponse{53}),
 		AddDC("example", "dc=com"),
 		AddOU("Users"),
 		Parallel{
-			100,
+			2,
 			[][]Command{
 				[]Command{
 					Conn{},
@@ -151,7 +151,6 @@ func TestBind(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
-		AddDC("com"),
 		AddDC("example", "dc=com"),
 		AddOU("Users"),
 		Add{
@@ -242,7 +241,6 @@ func TestSearch(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
-		AddDC("com"),
 		AddDC("example", "dc=com"),
 		AddOU("Users"),
 		Add{
@@ -355,7 +353,6 @@ func TestScopeSearch(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
-		AddDC("com"),
 		AddDC("example", "dc=com"),
 		AddOU("Users"),
 		AddOU("SubUsers", "ou=Users"),
@@ -619,7 +616,6 @@ func TestBasicCRUD(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
-		AddDC("com"),
 		AddDC("example", "dc=com"),
 		AddOU("Users"),
 		AddOU("Groups"),
@@ -780,7 +776,6 @@ func TestOperationalAttributes(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
-		AddDC("com"),
 		AddDC("example", "dc=com"),
 		AddOU("Users"),
 		Add{
@@ -810,7 +805,6 @@ func TestOperationalAttributesMigration(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
-		AddDC("com"),
 		AddDC("example", "dc=com"),
 		AddOU("Users"),
 		Add{
@@ -850,7 +844,6 @@ func TestMemberOf(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
-		AddDC("com"),
 		AddDC("example", "dc=com"),
 		AddOU("Groups"),
 		AddOU("Users"),
