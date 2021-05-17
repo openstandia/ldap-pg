@@ -14,7 +14,7 @@
     - [x] SSHA
     - [x] SSHA256
     - [x] SSHA512
-    - [x] Pass-through authentication (Support `{SASL}foo@domain`)
+    - [x] Pass-through authentication (Support `{SASL}foo@domain` format)
   - Search
     - [x] base
     - [x] one
@@ -31,9 +31,10 @@
   - [ ] Extended
 - LDAP Controls
   - [x] Simple Paged Results Control
-- Support member/memberOf association (like OpenLDAP memberOf overlay)
+  - [ ] Sort Control
+- Support association (like OpenLDAP memberOf overlay)
   - [x] Return memberOf attribute as operational attribute
-  - [x] Maintain member/memberOf
+  - [x] Maintain member uniqueMember / memberOf
   - [x] Search filter using memberOf
 - Schema
   - [x] Basic schema processing
@@ -133,6 +134,24 @@ Options:
 
 #### Example
 
+Start PostgreSQL server.
+
+```
+docker run --rm -d \
+  -e POSTGRES_DB=testdb \
+  -e POSTGRES_USER=testuser \
+  -e POSTGRES_PASSWORD=testpass \
+  -p 35432:5432 \
+  postgres:13-alpine \
+  -c log_destination=stderr \
+  -c log_statement=all \
+  -c log_connections=on \
+  -c log_disconnections=on \
+  -c jit=off
+```
+
+Start `ldap-pg` server.
+
 ```
 ldap-pg -h localhost -u testuser -w testpass -d testdb -s public \
  -suffix dc=example,dc=com -root-dn cn=Manager,dc=example,dc=com -root-pw secret \
@@ -142,18 +161,11 @@ ldap-pg -h localhost -u testuser -w testpass -d testdb -s public \
 [  info ] 2019/10/03 15:13:37 main.go:234: Starting ldap-pg on 127.0.0.1:8389
 ```
 
-`ldap-pg` creates required tables and indexes into PostgreSQL if not exists.
+`ldap-pg` creates required tables and indexes into the PostgreSQL if not exists.
 You can import your LDIF file by using standard LDAP tools like `ldapadd` command.
 
 ```
 $ cat << EOS > base.ldif
-
-dn: dc=com
-objectClass: top
-objectClass: dcObject
-objectClass: organization
-o: com
-dc: com
 
 dn: dc=example,dc=com
 objectClass: top
@@ -173,8 +185,6 @@ ou: Group
 EOS
 
 $ ldapadd -H ldap://localhost:8389 -x -D cn=manager,dc=example,dc=com -w secret -f base.ldif
-adding new entry "dc=com"
-
 adding new entry "dc=example,dc=com"
 
 adding new entry "ou=Users,dc=example,dc=com"
