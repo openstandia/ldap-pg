@@ -1524,6 +1524,7 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *Schema, q *HybridDBFilterTra
 	if err != nil {
 		// TODO error no entry response
 		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s, err: %+v", s.Name, val, err)
+		q.where.WriteString(`FALSE`)
 		return
 	}
 
@@ -1531,6 +1532,7 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *Schema, q *HybridDBFilterTra
 		reqDN, err := s.server.NormalizeDN(val)
 		if err != nil {
 			log.Printf("warn: Ignore filter due to invalid DN syntax of member. attrName: %s, value: %s, err: %+v", s.Name, val, err)
+			q.where.WriteString(`FALSE`)
 			return
 		}
 
@@ -1614,6 +1616,8 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *Schema, q *HybridDBFilterTra
 			q.where.WriteString(`t`)
 			q.where.WriteString(nameKey)
 			q.where.WriteString(`.id IS NULL`)
+		} else {
+			q.where.WriteString(`TRUE`)
 		}
 
 	} else if s.IsReverseAssociationAttribute() {
@@ -1696,6 +1700,8 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *Schema, q *HybridDBFilterTra
 			q.where.WriteString(`t`)
 			q.where.WriteString(rdnNormKey)
 			q.where.WriteString(`.member_id IS NULL`)
+		} else {
+			q.where.WriteString(`TRUE`)
 		}
 
 	} else {
