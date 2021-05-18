@@ -254,30 +254,37 @@ func (r *HybridRepository) Insert(entry *AddEntry) (int64, error) {
 
 	if entry.DN().Equal(r.server.Suffix) {
 		// Insert level 0
-		newID, _, err = r.insertLevel0(tx, dbEntry)
+		newID, err = r.insertLevel0(tx, dbEntry)
 
 	} else {
 		// Insert level 1+
-		newID, _, err = r.insertInternal(tx, dbEntry)
+		newID, err = r.insertInternal(tx, dbEntry)
 	}
 
-	// Insert association if necessary
-	r.insertAssociation(tx, entry.dn, newID, association)
-
 	if err != nil {
+		log.Printf("warn: Failed to insert entry. dn_norm: %s, err: %v", entry.DN().DNNormStr(), err)
 		rollback(tx)
 		return 0, err
 	}
 
-	err = tx.Commit()
+	// Insert association if necessary
+	err = r.insertAssociation(tx, entry.dn, newID, association)
+
 	if err != nil {
+		log.Printf("warn: Failed to insert association. dn_norm: %s, newID: %d, err: %v", entry.DN().DNNormStr(), newID, err)
 		rollback(tx)
-		return 0, NewUnavailable()
+		return 0, err
 	}
+
+	if err := commit(tx); err != nil {
+		log.Printf("error: Failed to commit insert. dn_norm: %s, newID: %d, err: %v", entry.DN().DNNormStr(), newID, err)
+		return 0, err
+	}
+
 	return newID, nil
 }
 
-func (r *HybridRepository) insertLevel0(tx *sqlx.Tx, dbEntry *HybridDBEntry) (int64, int64, error) {
+func (r *HybridRepository) insertLevel0(tx *sqlx.Tx, dbEntry *HybridDBEntry) (int64, error) {
 	// Step 1: Insert entry
 	var parentId int64 = 0
 
@@ -296,9 +303,9 @@ func (r *HybridRepository) insertLevel0(tx *sqlx.Tx, dbEntry *HybridDBEntry) (in
 	if err != nil {
 		if isDuplicateKeyError(err) {
 			log.Printf("debug: The new entry already exists. parentId: %d, rdn_norm: %s", parentId, dbEntry.RDNNorm)
-			return 0, 0, NewAlreadyExists()
+			return 0, NewAlreadyExists()
 		}
-		return 0, 0, xerrors.Errorf("Failed to insert entry record. dbEntry: %v, err: %w", dbEntry, err)
+		return 0, xerrors.Errorf("Failed to insert entry record. dbEntry: %v, err: %w", dbEntry, err)
 	}
 
 	// Step 2: Insert parent container for level 0 entry
@@ -313,16 +320,16 @@ func (r *HybridRepository) insertLevel0(tx *sqlx.Tx, dbEntry *HybridDBEntry) (in
 	_, err = tx.NamedStmt(insertContainerStmt).Exec(params)
 	if err != nil {
 		if isDuplicateKeyError(err) {
-			log.Printf("debug: The new entry already exists. parentId: %d, rdn_norm: %s", parentId, dbEntry.RDNNorm)
-			return 0, 0, NewAlreadyExists()
+			log.Printf("warn: The new entry already exists. parentId: %d, rdn_norm: %s", parentId, dbEntry.RDNNorm)
+			return 0, NewAlreadyExists()
 		}
-		return 0, 0, xerrors.Errorf("Failed to insert level 0 parent container record. err: %w", err)
+		return 0, xerrors.Errorf("Failed to insert level 0 parent container record. err: %w", err)
 	}
 
-	return newID, parentId, nil
+	return newID, nil
 }
 
-func (r *HybridRepository) insertInternal(tx *sqlx.Tx, dbEntry *HybridDBEntry) (int64, int64, error) {
+func (r *HybridRepository) insertInternal(tx *sqlx.Tx, dbEntry *HybridDBEntry) (int64, error) {
 	parentDN := dbEntry.ParentDN
 
 	// Step 1: Find the parent ID
@@ -346,11 +353,11 @@ func (r *HybridRepository) insertInternal(tx *sqlx.Tx, dbEntry *HybridDBEntry) (
 	if err != nil {
 		if isNoResult(err) {
 			// TODO
-			log.Printf("warn: No Parent case")
+			log.Printf("warn: No Parent case. query: %s, params: %v, err: %v", findEntryIDByDNWithShareLock.QueryString, params, err)
 			// TODO error when no parent
-			return 0, 0, NewNoSuchObject()
+			return 0, NewNoSuchObject()
 		}
-		return 0, 0, xerrors.Errorf("Failed to fetch parent entry. dn_norm: %s, err: %w", parentDN.DNNormStr(), err)
+		return 0, xerrors.Errorf("Failed to fetch parent entry. dn_norm: %s, err: %w", parentDN.DNNormStr(), err)
 	}
 
 	parentId := dest.ID
@@ -376,10 +383,10 @@ func (r *HybridRepository) insertInternal(tx *sqlx.Tx, dbEntry *HybridDBEntry) (
 	err = tx.NamedStmt(insertEntryStmt).Get(&newID, params)
 	if err != nil {
 		if isDuplicateKeyError(err) {
-			log.Printf("debug: The new entry already exists. parentId: %d, rdn_norm: %s", parentId, dbEntry.RDNNorm)
-			return 0, 0, NewAlreadyExists()
+			log.Printf("warn: The new entry already exists. parentId: %d, rdn_norm: %s", parentId, dbEntry.RDNNorm)
+			return 0, NewAlreadyExists()
 		}
-		return 0, 0, xerrors.Errorf("Failed to insert entry record. dbEntry: %v, err: %w", dbEntry, err)
+		return 0, xerrors.Errorf("Failed to insert entry record. dbEntry: %v, err: %w", dbEntry, err)
 	}
 
 	// Step 3: Insert parent container if necessary
@@ -394,13 +401,17 @@ func (r *HybridRepository) insertInternal(tx *sqlx.Tx, dbEntry *HybridDBEntry) (
 
 		rows, err := tx.NamedStmt(insertContainerStmt).Queryx(params)
 		if err != nil {
-			return 0, 0, xerrors.Errorf("Failed to insert container record. id: %d, dn_norm: %s, err: %w",
+			if isDuplicateKeyError(err) {
+				log.Printf("warn: The new container already exists. Inserted from others? Ignore it. parentId: %d, rdn_norm: %s", parentId, dbEntry.RDNNorm)
+				return newID, nil
+			}
+			return 0, xerrors.Errorf("Failed to insert container record. id: %d, dn_norm: %s, err: %w",
 				newID, dbEntry.DNNormWithoutSuffix, err)
 		}
 		defer rows.Close()
 	}
 
-	return newID, parentId, nil
+	return newID, nil
 }
 
 func (r *HybridRepository) insertAssociation(tx *sqlx.Tx, dn *DN, newID int64, association map[string][]int64) error {
@@ -577,11 +588,12 @@ func (r *HybridRepository) findByDNForUpdate(tx *sqlx.Tx, dn *DN) (int64, int64,
 
 	var jsonMap map[string][]string
 	if len(dest.AttrsOrig) > 0 {
-		jsonMap := make(map[string][]string)
 		if err := dest.AttrsOrig.Unmarshal(&jsonMap); err != nil {
 			return 0, 0, "", nil, false, xerrors.Errorf("Unexpected unmarshal error in %s. dn_norm: %s, err: %w", txLabel(tx), dn.DNNormStr(), err)
 		}
 	}
+
+	log.Printf("findByDNForUpdate jsonMap: %v", jsonMap)
 
 	return dest.ID, dest.ParentID, dest.RDNOrig, jsonMap, dest.HasSub, nil
 }
@@ -856,7 +868,7 @@ func (r HybridRepository) DeleteByDN(dn *DN) error {
 		if isNoResult(err) {
 			return NewNoSuchObject()
 		}
-		return xerrors.Errorf("Failed to execute findEntryIDByDNWithShareLock in %s: %v, err: %w", txLabel(tx), dn, err)
+		return xerrors.Errorf("Failed to execute findEntryIDByDNWithUpdateLock in %s: %v, err: %w", txLabel(tx), dn, err)
 	}
 
 	// Not allowed error if the entry has children yet
@@ -872,25 +884,19 @@ func (r HybridRepository) DeleteByDN(dn *DN) error {
 		return err
 	}
 
-	log.Printf("Deleted id: %d, dn: %v", fetchedEntry.ID, dn)
-
 	// Step 3: Delete container if the parent doesn't have children
 	hasSub, err := r.hasSub(tx, fetchedEntry.ParentID)
 	if err != nil {
 		rollback(tx)
 		return err
 	}
-	log.Printf("HasSub: %v", hasSub)
 
 	if !hasSub {
 		if err := r.deleteContainerByID(tx, fetchedEntry.ParentID); err != nil {
 			rollback(tx)
 			return err
 		}
-		log.Printf("deleteContainerByID end")
 	}
-
-	log.Printf("removeAssociationById start")
 
 	// Step 4: Remove all association
 	err = r.removeAssociationById(tx, delID)
@@ -898,9 +904,15 @@ func (r HybridRepository) DeleteByDN(dn *DN) error {
 		rollback(tx)
 		return err
 	}
-	log.Printf("removeAssociationById end")
 
-	return commit(tx)
+	if err := commit(tx); err != nil {
+		log.Printf("error: Failed to commit deletion. dn_norm: %s, err: %v", dn.DNNormStr(), err)
+		return err
+	}
+
+	log.Printf("Delete commited. id: %d, dn_norm: %s", fetchedEntry.ID, dn.DNNormStr())
+
+	return nil
 }
 
 func (r *HybridRepository) hasSub(tx *sqlx.Tx, id int64) (bool, error) {
