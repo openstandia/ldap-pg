@@ -1,10 +1,13 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -23,13 +26,13 @@ type HybridRepository struct {
 
 var (
 	// repo_insert
-	insertContainerStmt *sqlx.NamedStmt
-	insertEntryStmt     *sqlx.NamedStmt
+	insertContainerStmtWithUpdateLock *sqlx.NamedStmt
+	insertEntryStmt                   *sqlx.NamedStmt
 
 	// repo_read for update
 	findEntryIDByDNWithShareLock  *sqlx.NamedStmt
 	findEntryIDByDNWithUpdateLock *sqlx.NamedStmt
-	findEntryByDNWithShareLock    *sqlx.NamedStmt
+	findEntryByDNWithUpdateLock   *sqlx.NamedStmt
 
 	// repo_update
 	updateAttrsByIdStmt        *sqlx.NamedStmt
@@ -98,8 +101,7 @@ func (r *HybridRepository) Init() error {
 	}
 
 	// Lock the entry to block update or delete.
-	// By using 'FOR SHARE', other transactions can read the entry without lock.
-	findEntryByDNWithShareLock, err = db.PrepareNamed(`SELECT
+	findEntryByDNWithUpdateLock, err = db.PrepareNamed(`SELECT
 		e.id, e.parent_id, e.rdn_orig, e.attrs_orig, has_sub.has_sub
 	FROM
 		ldap_entry e
@@ -110,7 +112,7 @@ func (r *HybridRepository) Init() error {
 	WHERE
 		e.rdn_norm = :rdn_norm
 		AND c.dn_norm = :parent_dn_norm
-	FOR SHARE
+	FOR UPDATE
 	`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
@@ -150,13 +152,18 @@ func (r *HybridRepository) Init() error {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
-	insertContainerStmt, err = db.PrepareNamed(`INSERT INTO ldap_container (id, dn_norm, dn_orig)
-	VALUES (:id, :dn_norm, :dn_orig)`)
+	insertContainerStmtWithUpdateLock, err = db.PrepareNamed(`INSERT INTO ldap_container (id, dn_norm, dn_orig)
+	VALUES (:id, :dn_norm, :dn_orig)
+	-- Lock the record without change if already exists
+	ON CONFLICT (id) DO UPDATE SET id = :id WHERE FALSE`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
-	deleteContainerStmt, err = db.PrepareNamed(`DELETE FROM ldap_container WHERE id = :id RETURNING id`)
+	deleteContainerStmt, err = db.PrepareNamed(`DELETE FROM ldap_container WHERE id = :id
+	AND
+	NOT EXISTS (SELECT 1 FROM ldap_entry WHERE parent_id = :id)
+	RETURNING id`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
@@ -247,6 +254,8 @@ func (r *HybridRepository) Insert(entry *AddEntry) (int64, error) {
 	var newID int64
 	var err error
 
+	// We lock the association entries here first.
+	// From a performance standpoint, lock with share mode.
 	dbEntry, association, err := r.AddEntryToDBEntry(tx, entry)
 	if err != nil {
 		return 0, err
@@ -281,49 +290,38 @@ func (r *HybridRepository) Insert(entry *AddEntry) (int64, error) {
 		return 0, err
 	}
 
+	log.Printf("info: Added. id: %d, dn_norm: %s", newID, entry.DN().DNNormStr())
+
 	return newID, nil
 }
 
 func (r *HybridRepository) insertLevel0(tx *sqlx.Tx, dbEntry *HybridDBEntry) (int64, error) {
-	// Step 1: Insert entry
 	var parentId int64 = 0
 
-	params := map[string]interface{}{
+	// Step 1: Insert parent container for level 0 entry
+	if _, err := r.exec(tx, insertContainerStmtWithUpdateLock, map[string]interface{}{
+		"id":      parentId,
+		"dn_norm": "",
+		"dn_orig": "",
+	}); err != nil {
+		return 0, xerrors.Errorf("Failed to insert level 0 parent container record. err: %w", err)
+	}
+
+	// Step 2: Insert entry
+	var newID int64
+	err := r.get(tx, insertEntryStmt, &newID, map[string]interface{}{
 		"parent_id":  parentId,
 		"rdn_norm":   dbEntry.RDNNorm,
 		"rdn_orig":   dbEntry.RDNOrig,
 		"attrs_norm": dbEntry.AttrsNorm,
 		"attrs_orig": dbEntry.AttrsOrig,
-	}
-
-	log.Printf("insert entry query:\n%s\nparams:\n%v", insertEntryStmt.QueryString, params)
-
-	var newID int64
-	err := tx.NamedStmt(insertEntryStmt).Get(&newID, params)
-	if err != nil {
-		if isDuplicateKeyError(err) {
-			log.Printf("debug: The new entry already exists. parentId: %d, rdn_norm: %s", parentId, dbEntry.RDNNorm)
-			return 0, NewAlreadyExists()
-		}
-		return 0, xerrors.Errorf("Failed to insert entry record. dbEntry: %v, err: %w", dbEntry, err)
-	}
-
-	// Step 2: Insert parent container for level 0 entry
-	params = map[string]interface{}{
-		"id":      parentId,
-		"dn_norm": "",
-		"dn_orig": "",
-	}
-
-	log.Printf("insert container query:\n%s\nparams:\n%v", insertContainerStmt.QueryString, params)
-
-	_, err = tx.NamedStmt(insertContainerStmt).Exec(params)
+	})
 	if err != nil {
 		if isDuplicateKeyError(err) {
 			log.Printf("warn: The new entry already exists. parentId: %d, rdn_norm: %s", parentId, dbEntry.RDNNorm)
 			return 0, NewAlreadyExists()
 		}
-		return 0, xerrors.Errorf("Failed to insert level 0 parent container record. err: %w", err)
+		return 0, xerrors.Errorf("Failed to insert entry record. dbEntry: %v, err: %w", dbEntry, err)
 	}
 
 	return newID, nil
@@ -332,89 +330,66 @@ func (r *HybridRepository) insertLevel0(tx *sqlx.Tx, dbEntry *HybridDBEntry) (in
 func (r *HybridRepository) insertInternal(tx *sqlx.Tx, dbEntry *HybridDBEntry) (int64, error) {
 	parentDN := dbEntry.ParentDN
 
-	// Step 1: Find the parent ID
-	params := map[string]interface{}{
-		"rdn_norm":       parentDN.RDNNormStr(),
-		"parent_dn_norm": parentDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix),
-	}
-
+	// Step 1: Find the parent ID container or insert the container
 	dest := struct {
 		ID       int64 `db:"id"`
 		ParentID int64 `db:"parent_id"`
 		HasSub   bool  `db:"has_sub"`
 	}{}
 
-	log.Printf("findEntryIDByDNWithShareLock start. query: %s, params: %v",
-		findEntryIDByDNWithShareLock.QueryString, params)
-
 	// When inserting new entry, we need to lock the parent DN entry while the processing
-	// because there is a chance other thread deletes the parent DN entry before the inserting if no lock.
-	err := tx.NamedStmt(findEntryIDByDNWithShareLock).Get(&dest, params)
-	if err != nil {
+	// because there is a chance other thread deletes the parent DN entry or container before the inserting if no lock.
+	// From a performance standpoint, lock with share mode.
+	if err := r.get(tx, findEntryIDByDNWithShareLock, &dest, map[string]interface{}{
+		"rdn_norm":       parentDN.RDNNormStr(),
+		"parent_dn_norm": parentDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix),
+	}); err != nil {
 		if isNoResult(err) {
-			// TODO
-			log.Printf("warn: No Parent case. query: %s, params: %v, err: %v", findEntryIDByDNWithShareLock.QueryString, params, err)
-			// TODO error when no parent
+			log.Printf("warn: No Parent entry but try to insert the sub. dn_norm: %s,%s",
+				dbEntry.RDNNorm, dbEntry.ParentDN.DNNormStr())
+			// TODO Add matched DN
 			return 0, NewNoSuchObject()
 		}
-		return 0, xerrors.Errorf("Failed to fetch parent entry. dn_norm: %s, err: %w", parentDN.DNNormStr(), err)
+		return 0, xerrors.Errorf("Failed to fetch parent container. dn_norm: %s,%s, err: %w",
+			dbEntry.RDNNorm, dbEntry.ParentDN.DNNormStr(), err)
 	}
 
 	parentId := dest.ID
-	needCreateContainer := false
 	if !dest.HasSub {
 		// Not found parent container yet
-		// We need to insert new container later
-		needCreateContainer = true
+		// We need to insert new container first and lock it
+		if _, err := r.exec(tx, insertContainerStmtWithUpdateLock, map[string]interface{}{
+			"id":      parentId,
+			"dn_norm": parentDN.DNNormStrWithoutSuffix(r.server.Suffix),
+			"dn_orig": parentDN.DNOrigStrWithoutSuffix(r.server.Suffix),
+		}); err != nil {
+			return 0, xerrors.Errorf("Failed to insert container record.dn_norm: %s,%s, err: %w",
+				dbEntry.RDNNorm, dbEntry.ParentDN.DNNormStr(), err)
+		}
 	}
 
 	// Step 2: Insert entry
-	params = map[string]interface{}{
+	var newID int64
+	if err := r.get(tx, insertEntryStmt, &newID, map[string]interface{}{
 		"parent_id":  parentId,
 		"rdn_norm":   dbEntry.RDNNorm,
 		"rdn_orig":   dbEntry.RDNOrig,
 		"attrs_norm": dbEntry.AttrsNorm,
 		"attrs_orig": dbEntry.AttrsOrig,
-	}
-
-	log.Printf("insert entry query:\n%s\nparams:\n%v", insertEntryStmt.QueryString, params)
-
-	var newID int64
-	err = tx.NamedStmt(insertEntryStmt).Get(&newID, params)
-	if err != nil {
+	}); err != nil {
 		if isDuplicateKeyError(err) {
-			log.Printf("warn: The new entry already exists. parentId: %d, rdn_norm: %s", parentId, dbEntry.RDNNorm)
+			log.Printf("warn: The new entry already exists. dn_norm: %s,%s", dbEntry.RDNNorm, dbEntry.ParentDN.DNNormStr())
 			return 0, NewAlreadyExists()
 		}
-		return 0, xerrors.Errorf("Failed to insert entry record. dbEntry: %v, err: %w", dbEntry, err)
-	}
-
-	// Step 3: Insert parent container if necessary
-	if needCreateContainer {
-		params := map[string]interface{}{
-			"id":      parentId,
-			"dn_norm": parentDN.DNNormStrWithoutSuffix(r.server.Suffix),
-			"dn_orig": parentDN.DNOrigStrWithoutSuffix(r.server.Suffix),
-		}
-
-		log.Printf("insert container query:\n%s\nparams:\n%v", insertContainerStmt.QueryString, params)
-
-		rows, err := tx.NamedStmt(insertContainerStmt).Queryx(params)
-		if err != nil {
-			if isDuplicateKeyError(err) {
-				log.Printf("warn: The new container already exists. Inserted from others? Ignore it. parentId: %d, rdn_norm: %s", parentId, dbEntry.RDNNorm)
-				return newID, nil
-			}
-			return 0, xerrors.Errorf("Failed to insert container record. id: %d, dn_norm: %s, err: %w",
-				newID, dbEntry.DNNormWithoutSuffix, err)
-		}
-		defer rows.Close()
+		return 0, xerrors.Errorf("Failed to insert entry record. dn_norm: %s, err: %w",
+			dbEntry.RDNNorm, dbEntry.ParentDN.DNNormStr(), err)
 	}
 
 	return newID, nil
 }
 
 func (r *HybridRepository) insertAssociation(tx *sqlx.Tx, dn *DN, newID int64, association map[string][]int64) error {
+	// TODO Use strings.Builder
 	values := []string{}
 	for k, v := range association {
 		// Use bulk insert
@@ -432,9 +407,7 @@ func (r *HybridRepository) insertAssociation(tx *sqlx.Tx, dn *DN, newID int64, a
 		q := fmt.Sprintf(`INSERT INTO ldap_association (name, id, member_id) VALUES %s`,
 			strings.Join(values, ","))
 
-		log.Printf("insert association query:\n%s", q)
-
-		result, err := tx.Exec(q)
+		result, err := r.execQuery(tx, q)
 		if err != nil {
 			return xerrors.Errorf("Failed to insert association record. id: %d, dn_norm: %s, err: %w",
 				newID, dn.DNNormStr(), err)
@@ -455,7 +428,7 @@ func (r *HybridRepository) insertAssociation(tx *sqlx.Tx, dn *DN, newID int64, a
 func (r *HybridRepository) Update(dn *DN, callback func(current *ModifyEntry) error) error {
 	tx := r.db.MustBegin()
 
-	// Step 1: Fetch current entry with share lock(blocking update and delete)
+	// Step 1: Fetch current entry with update lock
 	// TODO: Need to fetch all associations
 	oID, oParentID, _, oJSONMap, oHasSub, err := r.findByDNForUpdate(tx, dn)
 	if err != nil {
@@ -563,7 +536,14 @@ func (r *HybridRepository) Update(dn *DN, callback func(current *ModifyEntry) er
 		}
 	}
 
-	return commit(tx)
+	if err := commit(tx); err != nil {
+		log.Printf("error: Failed to commit update. dn_norm: %s, err: %v", dn.DNNormStr(), err)
+		return err
+	}
+
+	log.Printf("info: Updated. id: %d, dn_norm: %s", oID, dn.DNNormStr())
+
+	return nil
 }
 
 func (r *HybridRepository) findByDNForUpdate(tx *sqlx.Tx, dn *DN) (int64, int64, string, map[string][]string, bool, error) {
@@ -575,41 +555,41 @@ func (r *HybridRepository) findByDNForUpdate(tx *sqlx.Tx, dn *DN) (int64, int64,
 		HasSub    bool           `db:"has_sub"`
 	}{}
 
-	err := namedStmt(tx, findEntryByDNWithShareLock).Get(&dest, map[string]interface{}{
+	if err := r.get(tx, findEntryByDNWithUpdateLock, &dest, map[string]interface{}{
 		"rdn_norm":       dn.RDNNormStr(),
 		"parent_dn_norm": dn.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix),
-	})
-	if err != nil {
+	}); err != nil {
 		if isNoResult(err) {
 			return 0, 0, "", nil, false, NewNoSuchObject()
 		}
-		return 0, 0, "", nil, false, xerrors.Errorf("Failed to execute findByDNForUpdate in %s. dn_norm: %s, err: %w", txLabel(tx), dn.DNNormStr(), err)
+		return 0, 0, "", nil, false, xerrors.Errorf("Failed to fetch current entry. dn_norm: %s, err: %w", dn.DNNormStr(), err)
 	}
 
-	var jsonMap map[string][]string
+	// Convert JSON => map
+	var attrsOrig map[string][]string
 	if len(dest.AttrsOrig) > 0 {
-		if err := dest.AttrsOrig.Unmarshal(&jsonMap); err != nil {
-			return 0, 0, "", nil, false, xerrors.Errorf("Unexpected unmarshal error in %s. dn_norm: %s, err: %w", txLabel(tx), dn.DNNormStr(), err)
+		if err := dest.AttrsOrig.Unmarshal(&attrsOrig); err != nil {
+			return 0, 0, "", nil, false, xerrors.Errorf("Unexpected unmarshal error. dn_norm: %s, err: %w", dn.DNNormStr(), err)
 		}
 	}
 
-	log.Printf("findByDNForUpdate jsonMap: %v", jsonMap)
+	log.Printf("Fetched current attrs_orig: %v", attrsOrig)
 
-	return dest.ID, dest.ParentID, dest.RDNOrig, jsonMap, dest.HasSub, nil
+	return dest.ID, dest.ParentID, dest.RDNOrig, attrsOrig, dest.HasSub, nil
 }
 
 // oldRDN: set when keeping current entry
 func (r *HybridRepository) UpdateDN(oldDN, newDN *DN, oldRDN *RelativeDN) error {
 	tx := r.db.MustBegin()
 
-	// Fetch target entry with lock
-	oID, oParentID, _, oJSONMap, oHasSub, err := r.findByDNForUpdate(tx, oldDN)
+	// Fetch current entry with update lock
+	oID, oParentID, _, attrsOrig, oHasSub, err := r.findByDNForUpdate(tx, oldDN)
 	if err != nil {
 		rollback(tx)
 		return err
 	}
 
-	entry, err := NewModifyEntry(r.server.schemaMap, oldDN, oJSONMap)
+	entry, err := NewModifyEntry(r.server.schemaMap, oldDN, attrsOrig)
 	if err != nil {
 		return err
 	}
@@ -630,7 +610,14 @@ func (r *HybridRepository) UpdateDN(oldDN, newDN *DN, oldRDN *RelativeDN) error 
 		return err
 	}
 
-	return commit(tx)
+	if err := commit(tx); err != nil {
+		log.Printf("error: Failed to commit update. id: %d, old_dn_norm: %s, new_dn_norm: %s, err: %v", oID, oldDN.DNNormStr(), newDN.DNNormStr(), err)
+		return err
+	}
+
+	log.Printf("info: Updated DN. id: %d, old_dn_norm: %s, new_dn_norm: %s", oID, oldDN.DNNormStr(), newDN.DNNormStr())
+
+	return nil
 }
 
 func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *RelativeDN, oldEntry *ModifyEntry) error {
@@ -639,13 +626,10 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 
 	var oldParentID int64
 	var newParentID int64
-	var needCreateContainer bool
-	var needDeleteContainer bool
 
 	// Determine old parent ID
 	if oldParentDN.IsRoot() {
 		oldParentID = 0
-		needDeleteContainer = false
 	} else {
 		oldParentID = oldEntry.dbParentID
 		// After updating DN, determine if we need to delete the container for old parent
@@ -655,7 +639,6 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 	if newParentDN.IsRoot() {
 		oldParentID = 0
 		// Root entry doesn't need to insert container record always
-		needCreateContainer = false
 	} else {
 		dest := struct {
 			ID       int64 `db:"id"`
@@ -663,18 +646,29 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 			HasSub   bool  `db:"has_sub"`
 		}{}
 
-		err := namedStmt(tx, findEntryIDByDNWithShareLock).Get(&dest, map[string]interface{}{
+		// Find the new parent entry and the container with share lock
+		if err := r.get(tx, findEntryIDByDNWithShareLock, &dest, map[string]interface{}{
 			"rdn_norm":       newParentDN.RDNNormStr(),
 			"parent_dn_norm": newParentDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix),
-		})
-		if err != nil {
+		}); err != nil {
 			if isNoResult(err) {
 				return NewNoSuchObject()
 			}
 			return xerrors.Errorf("Failed to execute findEntryIDByDNWithShareLock in %s: %v, err: %w", txLabel(tx), newParentDN, err)
 		}
 		newParentID = dest.ID
-		needCreateContainer = !dest.HasSub
+
+		// If the new parent doesn't have any sub, we need to insert new container first and lock it
+		if !dest.HasSub {
+			if _, err := r.exec(tx, insertContainerStmtWithUpdateLock, map[string]interface{}{
+				"id":      newParentID,
+				"dn_norm": newParentDN.DNNormStrWithoutSuffix(r.server.Suffix),
+				"dn_orig": newParentDN.DNNormStrWithoutSuffix(r.server.Suffix),
+			}); err != nil {
+				return xerrors.Errorf("Failed to insert container record. id: %d, dn_norm: %s, err: %w",
+					newParentID, oldParentDN.DNNormStr(), err)
+			}
+		}
 	}
 
 	// Move tree if the operation is for tree which means the old entry has children
@@ -700,85 +694,53 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 	}
 
 	// Update RDN
-	result, err := tx.NamedStmt(updateDNByIdStmt).Exec(map[string]interface{}{
+	if _, err := r.exec(tx, updateDNByIdStmt, map[string]interface{}{
 		"id":           oldEntry.dbEntryID,
 		"parent_id":    newParentID,
 		"new_rdn_norm": newDN.RDNNormStr(),
 		"new_rdn_orig": newDN.RDNOrigStr(),
 		"attrs_norm":   dbEntry.AttrsNorm,
 		"attrs_orig":   dbEntry.AttrsOrig,
-	})
-	if err != nil {
+	}); err != nil {
 		return xerrors.Errorf("Failed to update entry DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
 	}
-	if num, err := result.RowsAffected(); err != nil {
-		log.Printf("MOD RDN updated row num: %d", num)
+
+	// Modify DN orig of container record if the entry has sub.
+	// Don't update if the entry is root which has suffix as the RDN.
+	if oldEntry.hasSub && oldEntry.dbParentID != 0 {
+		if _, err = r.exec(tx, updateContainerDNByIdStmt, map[string]interface{}{
+			"id":          oldEntry.dbEntryID,
+			"new_dn_norm": newDN.RDNNormStr(),
+			"new_dn_orig": newDN.RDNOrigStr(),
+		}); err != nil {
+			return xerrors.Errorf("Failed to update container DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
+		}
+
+		if _, err = tx.NamedStmt(updateContainerDNByIdStmt).Exec(map[string]interface{}{
+			"new_dn_norm":         "\\1" + newDN.RDNNormStr(),
+			"new_dn_orig":         "\\1" + newDN.RDNOrigStr(),
+			"old_dn_norm_pattern": "(.*,)" + escapeRegex(oldDN.DNNormStrWithoutSuffix(r.server.Suffix)) + "$",
+			"old_dn_orig_pattern": "(.*,)" + escapeRegex(oldDN.DNOrigStrWithoutSuffix(r.server.Suffix)) + "$",
+		}); err != nil {
+			return xerrors.Errorf("Failed to update sub containers DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
+		}
 	}
 
 	// Determine we need to delete container for old parent
-	dest := struct {
-		ID       int64 `db:"id"`
-		ParentID int64 `db:"parent_id"`
-		HasSub   bool  `db:"has_sub"`
-	}{}
-
-	err = namedStmt(tx, findEntryIDByDNWithShareLock).Get(&dest, map[string]interface{}{
-		"rdn_norm":       newParentDN.RDNNormStr(),
-		"parent_dn_norm": newParentDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix),
-	})
+	hasSub, err := r.hasSub(tx, oldParentID)
 	if err != nil {
-		if isNoResult(err) {
-			return NewNoSuchObject()
-		}
-		return xerrors.Errorf("Failed to execute findEntryIDByDNWithShareLock in %s: %v, err: %w", txLabel(tx), newParentDN, err)
-	}
-	if !dest.HasSub {
-		needDeleteContainer = true
-	}
-
-	// If the new parent doesn't have any sub, need to insert container record.
-	if needCreateContainer {
-		params := map[string]interface{}{
-			"id":      newParentID,
-			"dn_norm": newParentDN.DNNormStrWithoutSuffix(r.server.Suffix),
-			"dn_orig": newParentDN.DNNormStrWithoutSuffix(r.server.Suffix),
-		}
-
-		log.Printf("insert container query:\n%s\nparams:\n%v", insertContainerStmt.QueryString, params)
-
-		rows, err := tx.NamedStmt(insertContainerStmt).Queryx(params)
-		if err != nil {
-			return xerrors.Errorf("Failed to insert container record. id: %d, dn_norm: %s, dn_orig: %s, err: %w",
-				newParentID, newParentDN.DNNormStr(), newParentDN.DNOrigStr(), err)
-		}
-		defer rows.Close()
-		result, err := namedStmt(tx, insertContainerStmt).Exec(params)
-		if err != nil {
-			return xerrors.Errorf("Failed to insert container record. id: %d, dn_norm: %s, dn_orig: %s, err: %w",
-				newParentID, oldParentDN.DNNormStr(), newParentDN.DNOrigStr(), err)
-		}
-		if num, err := result.RowsAffected(); err != nil {
-			log.Printf("Insert container row num: %d", num)
-		}
+		rollback(tx)
+		return err
 	}
 
 	// If the old parent doesn't have any sub, need to delete container record.
-	if needDeleteContainer {
-		params := map[string]interface{}{
-			"id":      oldParentID,
-			"dn_norm": oldParentDN.DNNormStrWithoutSuffix(r.server.Suffix),
-			"dn_orig": oldParentDN.DNNormStrWithoutSuffix(r.server.Suffix),
-		}
-
-		log.Printf("delete container query:\n%s\nparams:\n%v", deleteContainerStmt.QueryString, params)
-
-		result, err := namedStmt(tx, deleteContainerStmt).Exec(params)
-		if err != nil {
-			return xerrors.Errorf("Failed to delete container record. id: %d, dn_norm: %s, dn_orig: %s, err: %w",
-				oldParentID, oldParentDN.DNNormStr(), oldParentDN.DNOrigStr(), err)
-		}
-		if num, err := result.RowsAffected(); err != nil {
-			log.Printf("Deleted container row num: %d", num)
+	if !hasSub {
+		if err := r.deleteContainerByID(tx, oldParentID); err != nil {
+			if !isNoResult(err) {
+				rollback(tx)
+				return err
+			}
+			// Other threads inserted sub. Ignore the error.
 		}
 	}
 
@@ -814,31 +776,34 @@ func (r *HybridRepository) updateRDN(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *Rela
 	})
 
 	if err != nil {
-		return xerrors.Errorf("Failed to update entry DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
+		return xerrors.Errorf("Failed to update RDN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
+	}
+
+	if _, err := r.execQuery(tx, `LOCK TABLE ldap_entry, ldap_container IN EXCLUSIVE MODE`); err != nil {
+		rollback(tx)
+		return xerrors.Errorf("Failed to lock the entry table for update RDN. oldDN: %s, newDN: %s, err: %w",
+			oldDN.DNNormStr(), newDN.DNNormStr(), err)
 	}
 
 	// Modify DN orig of container record if the entry has sub.
 	// Don't update if the entry is root which has suffix as the RDN.
 	if oldEntry.hasSub && oldEntry.dbParentID != 0 {
-		_, err = tx.NamedStmt(updateContainerDNByIdStmt).Exec(map[string]interface{}{
+		if _, err = r.exec(tx, updateContainerDNByIdStmt, map[string]interface{}{
 			"id":          oldEntry.dbEntryID,
 			"new_dn_norm": newDN.RDNNormStr(),
 			"new_dn_orig": newDN.RDNOrigStr(),
-		})
-		if err != nil {
+		}); err != nil {
 			return xerrors.Errorf("Failed to update container DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
 		}
 
-		_, err = tx.NamedStmt(updateContainerDNsByIdStmt).Exec(map[string]interface{}{
+		if _, err = tx.NamedStmt(updateContainerDNByIdStmt).Exec(map[string]interface{}{
 			"new_dn_norm":         "\\1" + newDN.RDNNormStr(),
 			"new_dn_orig":         "\\1" + newDN.RDNOrigStr(),
 			"old_dn_norm_pattern": "(.*,)" + escapeRegex(oldDN.DNNormStrWithoutSuffix(r.server.Suffix)) + "$",
 			"old_dn_orig_pattern": "(.*,)" + escapeRegex(oldDN.DNOrigStrWithoutSuffix(r.server.Suffix)) + "$",
-		})
-		if err != nil {
+		}); err != nil {
 			return xerrors.Errorf("Failed to update sub containers DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
 		}
-
 	}
 
 	return nil
@@ -893,12 +858,16 @@ func (r HybridRepository) DeleteByDN(dn *DN) error {
 
 	if !hasSub {
 		if err := r.deleteContainerByID(tx, fetchedEntry.ParentID); err != nil {
-			rollback(tx)
-			return err
+			if !isNoResult(err) {
+				rollback(tx)
+				return err
+			}
+			// Other threads inserted sub. Ignore the error.
 		}
 	}
 
 	// Step 4: Remove all association
+	// TODO LOCK
 	err = r.removeAssociationById(tx, delID)
 	if err != nil {
 		rollback(tx)
@@ -910,17 +879,16 @@ func (r HybridRepository) DeleteByDN(dn *DN) error {
 		return err
 	}
 
-	log.Printf("Delete commited. id: %d, dn_norm: %s", fetchedEntry.ID, dn.DNNormStr())
+	log.Printf("info: Deleted. id: %d, dn_norm: %s", fetchedEntry.ID, dn.DNNormStr())
 
 	return nil
 }
 
 func (r *HybridRepository) hasSub(tx *sqlx.Tx, id int64) (bool, error) {
 	var hasSub bool
-	err := tx.NamedStmt(hasSubStmt).Get(&hasSub, map[string]interface{}{
+	if err := r.get(tx, hasSubStmt, &hasSub, map[string]interface{}{
 		"id": id,
-	})
-	if err != nil {
+	}); err != nil {
 		return false, xerrors.Errorf("Failed to check existence. id: %d, err: %w", id, err)
 	}
 
@@ -950,19 +918,27 @@ func (r *HybridRepository) deleteByID(tx *sqlx.Tx, id int64) (int64, error) {
 	return delID, nil
 }
 
+// deleteContainerByID deletes the container record if the container doesn't have any sub entries.
 func (r *HybridRepository) deleteContainerByID(tx *sqlx.Tx, id int64) error {
-	result, err := tx.NamedStmt(deleteContainerStmt).Exec(map[string]interface{}{
+	// Before delete the container, we need to lock the entry table entirely
+	// to block other threads inserting new entry under the container.
+	if _, err := r.execQuery(tx, `LOCK TABLE ldap_entry IN EXCLUSIVE MODE`); err != nil {
+		rollback(tx)
+		return xerrors.Errorf("Failed to lock the entry table for deleting container. id: %d, err: %w", id, err)
+	}
+
+	result, err := r.exec(tx, deleteContainerStmt, map[string]interface{}{
 		"id": id,
 	})
 	if err != nil {
 		if isNoResult(err) {
 			log.Printf("warn: the container already deleted. id: %d", id)
-			return NewNoSuchObject()
+			return err
 		}
 		return xerrors.Errorf("Failed to delete container. id: %d, err: %w", id, err)
 	}
 	if num, err := result.RowsAffected(); err == nil {
-		log.Printf("Deleted container. id: %d, num: %d", id, num)
+		log.Printf("info: Deleted container. id: %d, num: %d", id, num)
 	}
 
 	return nil
@@ -2269,6 +2245,65 @@ func (r *HybridRepository) FindCredByDN(dn *DN) ([]string, error) {
 //////////////////////////////////////////
 // Utilities
 //////////////////////////////////////////
+func (r *HybridRepository) exec(tx *sqlx.Tx, stmt *sqlx.NamedStmt, params map[string]interface{}) (sql.Result, error) {
+	debugSQL(r.server.config.LogLevel, stmt.QueryString, params)
+	result, err := tx.NamedStmt(stmt).Exec(params)
+	errorSQL(err, stmt.QueryString, params)
+	return result, err
+}
+
+func (r *HybridRepository) execQuery(tx *sqlx.Tx, query string) (sql.Result, error) {
+	debugSQL(r.server.config.LogLevel, query, nil)
+	result, err := tx.Exec(query)
+	errorSQL(err, query, nil)
+	return result, err
+}
+
+func (r *HybridRepository) get(tx *sqlx.Tx, stmt *sqlx.NamedStmt, dest interface{}, params map[string]interface{}) error {
+	debugSQL(r.server.config.LogLevel, stmt.QueryString, params)
+	err := tx.NamedStmt(stmt).Get(dest, params)
+	errorSQL(err, stmt.QueryString, params)
+	return err
+}
+
+func debugSQL(logLevel string, query string, params map[string]interface{}) {
+	if logLevel == "debug" {
+		var fname, method string
+		var line int
+		if pc, f, l, ok := runtime.Caller(2); ok {
+			fname = filepath.Base(f)
+			line = l
+			method = runtime.FuncForPC(pc).Name()
+		}
+
+		log.Printf(`Exec SQL at %s:%d:%s
+--
+%s
+%v
+--`, fname, line, method, query, params)
+	}
+}
+
+func errorSQL(err error, query string, params map[string]interface{}) {
+	if err != nil {
+		var fname, method string
+		var line int
+		if pc, f, l, ok := runtime.Caller(2); ok {
+			fname = filepath.Base(f)
+			line = l
+			method = runtime.FuncForPC(pc).Name()
+		}
+		logLevel := "error"
+		if isDuplicateKeyError(err) {
+			logLevel = "info"
+		}
+		log.Printf(`%s: Failed to execute SQL at %s:%d:%s: err: %v
+--
+%s
+%v
+--`, logLevel, fname, line, method, err, query, params)
+	}
+}
 
 func findSchema(schemaMap *SchemaMap, attrName string) (*Schema, bool) {
 	var s *Schema

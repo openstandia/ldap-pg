@@ -17,7 +17,7 @@ type ModifyEntry struct {
 	DelChangeLog     map[string]*SchemaValue
 }
 
-func NewModifyEntry(schemaMap *SchemaMap, dn *DN, valuesOrig map[string][]string) (*ModifyEntry, error) {
+func NewModifyEntry(schemaMap *SchemaMap, dn *DN, attrsOrig map[string][]string) (*ModifyEntry, error) {
 	// TODO
 	modifyEntry := &ModifyEntry{
 		schemaMap:        schemaMap,
@@ -28,7 +28,7 @@ func NewModifyEntry(schemaMap *SchemaMap, dn *DN, valuesOrig map[string][]string
 		DelChangeLog:     map[string]*SchemaValue{},
 	}
 
-	for k, v := range valuesOrig {
+	for k, v := range attrsOrig {
 		err := modifyEntry.AddNoCheck(k, v)
 		if err != nil {
 			return nil, err

@@ -107,11 +107,11 @@ func (s *Server) Start() {
 	colog.SetDefaultLevel(colog.LDebug)
 	cl.SetFormatter(&colog.StdFormatter{
 		Colors: true,
-		Flag:   log.Ldate | log.Ltime | log.Lshortfile,
+		Flag:   log.Ldate | log.Ltime | log.Lmicroseconds | log.Lshortfile,
 	})
 	colog.SetFormatter(&colog.StdFormatter{
 		Colors: true,
-		Flag:   log.Ldate | log.Ltime | log.Lshortfile,
+		Flag:   log.Ldate | log.Ltime | log.Lmicroseconds | log.Lshortfile,
 	})
 	colog.Register()
 
