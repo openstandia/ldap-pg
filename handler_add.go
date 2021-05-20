@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 
 	ldap "github.com/openstandia/ldapserver"
@@ -8,6 +9,8 @@ import (
 )
 
 func handleAdd(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
+	ctx := context.Background()
+
 	r := m.GetAddRequest()
 
 	dn, err := s.NormalizeDN(string(r.Entry()))
@@ -38,7 +41,7 @@ func handleAdd(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	log.Printf("info: Adding entry: %s", r.Entry())
 
-	id, err := s.Repo().Insert(addEntry)
+	id, err := s.Repo().Insert(ctx, addEntry)
 	if err != nil {
 		responseAddError(w, err)
 		return

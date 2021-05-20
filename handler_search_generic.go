@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"strconv"
 	"strings"
@@ -12,6 +13,8 @@ import (
 )
 
 func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
+	ctx := context.Background()
+
 	r := m.GetSearchRequest()
 
 	var pageControl *message.SimplePagedResultsControl
@@ -101,7 +104,7 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		IsHasSubordinatesRequested: isHasSubOrdinatesRequested(r),
 	}
 
-	maxCount, limittedCount, err := s.Repo().Search(baseDN, option, func(searchEntry *SearchEntry) error {
+	maxCount, limittedCount, err := s.Repo().Search(ctx, baseDN, option, func(searchEntry *SearchEntry) error {
 		responseEntry(s, w, r, searchEntry)
 		return nil
 	})

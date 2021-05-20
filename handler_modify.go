@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"log"
 
@@ -9,6 +10,8 @@ import (
 )
 
 func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
+	ctx := context.Background()
+
 	r := m.GetModifyRequest()
 	dn, err := s.NormalizeDN(string(r.Object()))
 
@@ -28,7 +31,7 @@ func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	log.Printf("info: Modify entry: %s", dn.DNNormStr())
 
-	err = s.Repo().Update(dn, func(newEntry *ModifyEntry) error {
+	err = s.Repo().Update(ctx, dn, func(newEntry *ModifyEntry) error {
 		for _, change := range r.Changes() {
 			modification := change.Modification()
 			attrName := string(modification.Type_())

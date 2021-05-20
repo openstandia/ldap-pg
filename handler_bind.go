@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"strings"
 
@@ -12,6 +13,8 @@ import (
 )
 
 func handleBind(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
+	ctx := context.Background()
+
 	r := m.GetBindRequest()
 	res := ldap.NewBindResponse(ldap.LDAPResultSuccess)
 
@@ -55,7 +58,7 @@ func handleBind(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 		log.Printf("info: Find bind user. DN: %s", dn.DNNormStr())
 
-		bindUserCred, err := s.Repo().FindCredByDN(dn)
+		bindUserCred, err := s.Repo().FindCredByDN(ctx, dn)
 		if err != nil {
 			var lerr *LDAPError
 			if ok := xerrors.As(err, &lerr); ok {

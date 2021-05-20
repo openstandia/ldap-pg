@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 
 	ldap "github.com/openstandia/ldapserver"
@@ -8,6 +9,8 @@ import (
 )
 
 func handleModifyDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
+	ctx := context.Background()
+
 	r := m.GetModifyDNRequest()
 	dn, err := s.NormalizeDN(string(r.Entry()))
 
@@ -52,7 +55,7 @@ func handleModifyDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		}
 	}
 
-	err = s.Repo().UpdateDN(dn, newDN, oldRDN)
+	err = s.Repo().UpdateDN(ctx, dn, newDN, oldRDN)
 	if err != nil {
 		log.Printf("warn: Failed to modify dn: %s err: %+v", dn.DNNormStr(), err)
 		// TODO error code

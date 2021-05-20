@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -30,9 +31,8 @@ var (
 	insertEntryStmt                   *sqlx.NamedStmt
 
 	// repo_read for update
-	findEntryIDByDNWithShareLock  *sqlx.NamedStmt
-	findEntryIDByDNWithUpdateLock *sqlx.NamedStmt
-	findEntryByDNWithUpdateLock   *sqlx.NamedStmt
+	findEntryIDByDNWithShareLock *sqlx.NamedStmt
+	findEntryByDNWithUpdateLock  *sqlx.NamedStmt
 
 	// repo_update
 	updateAttrsByIdStmt        *sqlx.NamedStmt
@@ -94,13 +94,11 @@ func (r *HybridRepository) Init() error {
 	WHERE
 		e.rdn_norm = :rdn_norm
 		AND c.dn_norm = :parent_dn_norm
-	FOR SHARE
 	`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
-	// Lock the entry to block update or delete.
 	findEntryByDNWithUpdateLock, err = db.PrepareNamed(`SELECT
 		e.id, e.parent_id, e.rdn_orig, e.attrs_orig, has_sub.has_sub
 	FROM
@@ -112,7 +110,6 @@ func (r *HybridRepository) Init() error {
 	WHERE
 		e.rdn_norm = :rdn_norm
 		AND c.dn_norm = :parent_dn_norm
-	FOR UPDATE
 	`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
@@ -129,24 +126,6 @@ func (r *HybridRepository) Init() error {
 	WHERE
 		e.rdn_norm = :rdn_norm
 		AND c.dn_norm = :parent_dn_norm
-	FOR SHARE
-	`)
-	if err != nil {
-		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	}
-
-	findEntryIDByDNWithUpdateLock, err = db.PrepareNamed(`SELECT
-		e.id, e.parent_id, has_sub.has_sub
-	FROM
-		ldap_entry e
-		LEFT JOIN ldap_container c ON e.parent_id = c.id
-		LEFT JOIN LATERAL (
-			SELECT EXISTS (SELECT 1 FROM ldap_container WHERE id = e.id) AS has_sub
-	    ) AS has_sub ON true
-	WHERE
-		e.rdn_norm = :rdn_norm
-		AND c.dn_norm = :parent_dn_norm
-	FOR UPDATE 
 	`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
@@ -155,7 +134,7 @@ func (r *HybridRepository) Init() error {
 	insertContainerStmtWithUpdateLock, err = db.PrepareNamed(`INSERT INTO ldap_container (id, dn_norm, dn_orig)
 	VALUES (:id, :dn_norm, :dn_orig)
 	-- Lock the record without change if already exists
-	ON CONFLICT (id) DO UPDATE SET id = :id WHERE FALSE`)
+	ON CONFLICT (id) DO NOTHING`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
@@ -248,11 +227,13 @@ type HybridDBEntry struct {
 // ADD operation
 //////////////////////////////////////////
 
-func (r *HybridRepository) Insert(entry *AddEntry) (int64, error) {
-	tx := r.db.MustBegin()
+func (r *HybridRepository) Insert(ctx context.Context, entry *AddEntry) (int64, error) {
+	tx, err := r.begin(ctx)
+	if err != nil {
+		return 0, err
+	}
 
 	var newID int64
-	var err error
 
 	// We lock the association entries here first.
 	// From a performance standpoint, lock with share mode.
@@ -381,7 +362,7 @@ func (r *HybridRepository) insertInternal(tx *sqlx.Tx, dbEntry *HybridDBEntry) (
 			log.Printf("warn: The new entry already exists. dn_norm: %s,%s", dbEntry.RDNNorm, dbEntry.ParentDN.DNNormStr())
 			return 0, NewAlreadyExists()
 		}
-		return 0, xerrors.Errorf("Failed to insert entry record. dn_norm: %s, err: %w",
+		return 0, xerrors.Errorf("Failed to insert entry record. dn_norm: %s.%s, err: %w",
 			dbEntry.RDNNorm, dbEntry.ParentDN.DNNormStr(), err)
 	}
 
@@ -425,8 +406,11 @@ func (r *HybridRepository) insertAssociation(tx *sqlx.Tx, dn *DN, newID int64, a
 // MOD operation
 //////////////////////////////////////////
 
-func (r *HybridRepository) Update(dn *DN, callback func(current *ModifyEntry) error) error {
-	tx := r.db.MustBegin()
+func (r *HybridRepository) Update(ctx context.Context, dn *DN, callback func(current *ModifyEntry) error) error {
+	tx, err := r.begin(ctx)
+	if err != nil {
+		return err
+	}
 
 	// Step 1: Fetch current entry with update lock
 	// TODO: Need to fetch all associations
@@ -579,8 +563,11 @@ func (r *HybridRepository) findByDNForUpdate(tx *sqlx.Tx, dn *DN) (int64, int64,
 }
 
 // oldRDN: set when keeping current entry
-func (r *HybridRepository) UpdateDN(oldDN, newDN *DN, oldRDN *RelativeDN) error {
-	tx := r.db.MustBegin()
+func (r *HybridRepository) UpdateDN(ctx context.Context, oldDN, newDN *DN, oldRDN *RelativeDN) error {
+	tx, err := r.begin(ctx)
+	if err != nil {
+		return err
+	}
 
 	// Fetch current entry with update lock
 	oID, oParentID, _, attrsOrig, oHasSub, err := r.findByDNForUpdate(tx, oldDN)
@@ -779,12 +766,6 @@ func (r *HybridRepository) updateRDN(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *Rela
 		return xerrors.Errorf("Failed to update RDN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
 	}
 
-	if _, err := r.execQuery(tx, `LOCK TABLE ldap_entry, ldap_container IN EXCLUSIVE MODE`); err != nil {
-		rollback(tx)
-		return xerrors.Errorf("Failed to lock the entry table for update RDN. oldDN: %s, newDN: %s, err: %w",
-			oldDN.DNNormStr(), newDN.DNNormStr(), err)
-	}
-
 	// Modify DN orig of container record if the entry has sub.
 	// Don't update if the entry is root which has suffix as the RDN.
 	if oldEntry.hasSub && oldEntry.dbParentID != 0 {
@@ -813,8 +794,11 @@ func (r *HybridRepository) updateRDN(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *Rela
 // DEL operation
 //////////////////////////////////////////
 
-func (r HybridRepository) DeleteByDN(dn *DN) error {
-	tx := r.db.MustBegin()
+func (r HybridRepository) DeleteByDN(ctx context.Context, dn *DN) error {
+	tx, err := r.begin(ctx)
+	if err != nil {
+		return err
+	}
 
 	// Step 1: fetch the target entry and parent container with lock for update
 	fetchedEntry := struct {
@@ -823,7 +807,7 @@ func (r HybridRepository) DeleteByDN(dn *DN) error {
 		HasSub   bool  `db:"has_sub"`
 	}{}
 
-	err := namedStmt(tx, findEntryIDByDNWithUpdateLock).Get(&fetchedEntry, map[string]interface{}{
+	err = r.get(tx, findEntryIDByDNWithShareLock, &fetchedEntry, map[string]interface{}{
 		"rdn_norm":       dn.RDNNormStr(),
 		"parent_dn_norm": dn.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix),
 	})
@@ -833,7 +817,7 @@ func (r HybridRepository) DeleteByDN(dn *DN) error {
 		if isNoResult(err) {
 			return NewNoSuchObject()
 		}
-		return xerrors.Errorf("Failed to execute findEntryIDByDNWithUpdateLock in %s: %v, err: %w", txLabel(tx), dn, err)
+		return xerrors.Errorf("Unexpected query error. dn_norm: %v, err: %w", dn.DNNormStr(), err)
 	}
 
 	// Not allowed error if the entry has children yet
@@ -920,13 +904,6 @@ func (r *HybridRepository) deleteByID(tx *sqlx.Tx, id int64) (int64, error) {
 
 // deleteContainerByID deletes the container record if the container doesn't have any sub entries.
 func (r *HybridRepository) deleteContainerByID(tx *sqlx.Tx, id int64) error {
-	// Before delete the container, we need to lock the entry table entirely
-	// to block other threads inserting new entry under the container.
-	if _, err := r.execQuery(tx, `LOCK TABLE ldap_entry IN EXCLUSIVE MODE`); err != nil {
-		rollback(tx)
-		return xerrors.Errorf("Failed to lock the entry table for deleting container. id: %d, err: %w", id, err)
-	}
-
 	result, err := r.exec(tx, deleteContainerStmt, map[string]interface{}{
 		"id": id,
 	})
@@ -1026,7 +1003,12 @@ func (e *HybridFetchedDBEntry) AttrsOrig() map[string][]string {
 	return jsonMap
 }
 
-func (r *HybridRepository) Search(baseDN *DN, option *SearchOption, handler func(entry *SearchEntry) error) (int32, int32, error) {
+func (r *HybridRepository) Search(ctx context.Context, baseDN *DN, option *SearchOption, handler func(entry *SearchEntry) error) (int32, int32, error) {
+	tx, err := r.beginReadonly(ctx)
+	if err != nil {
+		return 0, 0, nil
+	}
+
 	log.Printf("Search option: %v", option)
 
 	// Filter
@@ -1081,19 +1063,18 @@ FROM
 %s
 	`, strings.Join(filterJoin, ""), scopeWhere.String(), strings.Join(filterWhere, " AND "), proj.String(), join.String())
 
-	log.Printf("Search SQL\n==\n%s\n==\n%v\n==", q, params)
-
 	start := time.Now()
-
-	rows, err := r.db.NamedQuery(q, params)
-
+	rows, err := r.namedQuery(tx, q, params)
 	end := time.Now()
+
+	defer rollback(tx)
 
 	if err != nil {
 		if isNoResult(err) {
+			// Need to return successful response
 			return 0, 0, nil
 		}
-		return 0, 0, xerrors.Errorf("Failed to search. query:\n %s\nparams:%v\n err: %w", q, params, err)
+		return 0, 0, xerrors.Errorf("Unexpected search query error. err: %w", err)
 	}
 
 	var maxCount int32 = 0
@@ -1103,22 +1084,18 @@ FROM
 	for rows.Next() {
 		err = rows.StructScan(&dbEntry)
 		if err != nil {
-			return 0, 0, xerrors.Errorf("Failed to scan, err: %w", err)
+			return 0, 0, xerrors.Errorf("Unexpected struct scan error. err: %w", err)
 		}
 		if maxCount == 0 {
 			maxCount = dbEntry.Count
 			log.Printf("info: Executed DB search: %d [ms], count: %d", end.Sub(start).Milliseconds(), maxCount)
 		}
 
-		readEntry, err := r.toSearchEntry(&dbEntry)
-		if err != nil {
-			log.Printf("error: Mapper error: %#v", err)
-			return 0, 0, err
-		}
+		readEntry := r.toSearchEntry(&dbEntry)
 
 		err = handler(readEntry)
 		if err != nil {
-			log.Printf("error: Handler error: %#v", err)
+			log.Printf("error: Unexpected handler error: %v", err)
 			return 0, 0, err
 		}
 
@@ -1129,7 +1106,7 @@ FROM
 	return maxCount, count, nil
 }
 
-func (r *HybridRepository) toSearchEntry(dbEntry *HybridFetchedDBEntry) (*SearchEntry, error) {
+func (r *HybridRepository) toSearchEntry(dbEntry *HybridFetchedDBEntry) *SearchEntry {
 	orig := dbEntry.AttrsOrig()
 
 	// hasSubordinates
@@ -1144,7 +1121,7 @@ func (r *HybridRepository) toSearchEntry(dbEntry *HybridFetchedDBEntry) (*Search
 
 	readEntry := NewSearchEntry(r.server.schemaMap, dbEntry.DNOrig, orig)
 
-	return readEntry, nil
+	return readEntry
 }
 
 func (r *HybridRepository) resolveAssociationSuffix(attrsOrig map[string][]string, attrName string) {
@@ -2216,17 +2193,21 @@ func (r *HybridRepository) modifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry)
 // Bind
 //////////////////////////////////////////
 
-func (r *HybridRepository) FindCredByDN(dn *DN) ([]string, error) {
+func (r *HybridRepository) FindCredByDN(ctx context.Context, dn *DN) ([]string, error) {
+	tx, err := r.beginReadonly(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	dest := struct {
 		ID   int64          `db:"id"`
 		Cred types.JSONText `db:"credential"`
 	}{}
 
-	err := findCredByDN.Get(&dest, map[string]interface{}{
+	if err := r.get(tx, findCredByDN, &dest, map[string]interface{}{
 		"rdn_norm":       dn.RDNNormStr(),
 		"parent_dn_norm": dn.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix),
-	})
-	if err != nil {
+	}); err != nil {
 		if isNoResult(err) {
 			return nil, NewInvalidCredentials()
 		}
@@ -2245,6 +2226,28 @@ func (r *HybridRepository) FindCredByDN(dn *DN) ([]string, error) {
 //////////////////////////////////////////
 // Utilities
 //////////////////////////////////////////
+
+func (r *HybridRepository) begin(ctx context.Context) (*sqlx.Tx, error) {
+	tx, err := r.db.BeginTxx(ctx, &sql.TxOptions{
+		Isolation: sql.LevelSerializable,
+	})
+	if err != nil {
+		return nil, xerrors.Errorf("Failed to begin transaction. err: %w", err)
+	}
+	return tx, nil
+}
+
+func (r *HybridRepository) beginReadonly(ctx context.Context) (*sqlx.Tx, error) {
+	tx, err := r.db.BeginTxx(ctx, &sql.TxOptions{
+		Isolation: sql.LevelSerializable,
+		ReadOnly:  true,
+	})
+	if err != nil {
+		return nil, xerrors.Errorf("Failed to begin transaction. err: %w", err)
+	}
+	return tx, nil
+}
+
 func (r *HybridRepository) exec(tx *sqlx.Tx, stmt *sqlx.NamedStmt, params map[string]interface{}) (sql.Result, error) {
 	debugSQL(r.server.config.LogLevel, stmt.QueryString, params)
 	result, err := tx.NamedStmt(stmt).Exec(params)
@@ -2257,6 +2260,13 @@ func (r *HybridRepository) execQuery(tx *sqlx.Tx, query string) (sql.Result, err
 	result, err := tx.Exec(query)
 	errorSQL(err, query, nil)
 	return result, err
+}
+
+func (r *HybridRepository) namedQuery(tx *sqlx.Tx, query string, params map[string]interface{}) (*sqlx.Rows, error) {
+	debugSQL(r.server.config.LogLevel, query, nil)
+	rows, err := tx.NamedQuery(query, params)
+	errorSQL(err, query, nil)
+	return rows, err
 }
 
 func (r *HybridRepository) get(tx *sqlx.Tx, stmt *sqlx.NamedStmt, dest interface{}, params map[string]interface{}) error {

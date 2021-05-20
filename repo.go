@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sync"
@@ -29,10 +30,6 @@ func (m *StmtCache) Put(key string, value *sqlx.NamedStmt) {
 type DBRepository struct {
 	server *Server
 	db     *sqlx.DB
-}
-
-func (r *DBRepository) BeginTx() *sqlx.Tx {
-	return r.db.MustBegin()
 }
 
 func NewRepository(server *Server) (Repository, error) {
@@ -71,25 +68,25 @@ type Repository interface {
 
 	// FindCredByDN returns the credential by specified DN.
 	// This is used for BIND operation.
-	FindCredByDN(dn *DN) ([]string, error)
+	FindCredByDN(ctx context.Context, dn *DN) ([]string, error)
 
 	// Search handles search request by filter.
 	// This is used for SEARCH operation.
-	Search(baseDN *DN, option *SearchOption, handler func(entry *SearchEntry) error) (int32, int32, error)
+	Search(ctx context.Context, baseDN *DN, option *SearchOption, handler func(entry *SearchEntry) error) (int32, int32, error)
 
 	// Update modifies the entry by specified change data.
 	// This is used for MOD operation.
-	Update(dn *DN, callback func(current *ModifyEntry) error) error
+	Update(ctx context.Context, dn *DN, callback func(current *ModifyEntry) error) error
 
 	// UpdateDN modifies the entry DN by specified change data.
 	// This is used for MODRDN operation.
-	UpdateDN(oldDN, newDN *DN, oldRDN *RelativeDN) error
+	UpdateDN(ctx context.Context, oldDN, newDN *DN, oldRDN *RelativeDN) error
 
 	// Insert creates the entry by specified entry data.
-	Insert(entry *AddEntry) (int64, error)
+	Insert(ctx context.Context, entry *AddEntry) (int64, error)
 
 	// DeleteByDN deletes the entry by specified DN.
-	DeleteByDN(dn *DN) error
+	DeleteByDN(ctx context.Context, dn *DN) error
 }
 
 type SearchOption struct {
