@@ -1034,6 +1034,7 @@ func (r *HybridRepository) Search(ctx context.Context, baseDN *DN, option *Searc
 	if err != nil {
 		return 0, 0, nil
 	}
+	defer rollback(tx)
 
 	log.Printf("Search option: %v", option)
 
@@ -1092,8 +1093,6 @@ FROM
 	start := time.Now()
 	rows, err := r.namedQuery(tx, q, params)
 	end := time.Now()
-
-	defer rollback(tx)
 
 	if err != nil {
 		if isNoResult(err) {
@@ -2224,6 +2223,7 @@ func (r *HybridRepository) FindCredByDN(ctx context.Context, dn *DN) ([]string, 
 	if err != nil {
 		return nil, err
 	}
+	defer rollback(tx)
 
 	dest := struct {
 		ID   int64          `db:"id"`
