@@ -449,7 +449,7 @@ func (r *HybridRepository) Update(ctx context.Context, dn *DN, callback func(cur
 	newEntry, err := NewModifyEntry(r.server.schemaMap, dn, oJSONMap)
 	if err != nil {
 		rollback(tx)
-		xerrors.Errorf("Failed to map to ModifyEntry in %s: %v, err: %w", txLabel(tx), dn, err)
+		xerrors.Errorf("Failed to map to ModifyEntry. dn_norm: %s, err: %w", dn.DNNormStr(), err)
 	}
 	newEntry.dbEntryID = oID
 	newEntry.dbParentID = oParentID
@@ -464,7 +464,7 @@ func (r *HybridRepository) Update(ctx context.Context, dn *DN, callback func(cur
 
 	// Then, update database
 	if newEntry.dbEntryID == 0 {
-		return xerrors.Errorf("Invalid dbEntryId for update DBEntry in %s.", txLabel(tx))
+		return xerrors.Errorf("Invalid dbEntryId for update DBEntry. dn_norm: %s", dn.DNNormStr())
 	}
 
 	dbEntry, addAssociation, delAssociation, err := r.modifyEntryToDBEntry(tx, newEntry)
@@ -473,13 +473,12 @@ func (r *HybridRepository) Update(ctx context.Context, dn *DN, callback func(cur
 	}
 
 	// Step 2: Update entry
-	_, err = tx.NamedStmt(updateAttrsByIdStmt).Exec(map[string]interface{}{
+	if _, err := r.exec(tx, updateAttrsByIdStmt, map[string]interface{}{
 		"id":         dbEntry.ID,
 		"attrs_norm": dbEntry.AttrsNorm,
 		"attrs_orig": dbEntry.AttrsOrig,
-	})
-	if err != nil {
-		return xerrors.Errorf("Failed to update entry in %s. entry: %v, err: %w", txLabel(tx), newEntry, err)
+	}); err != nil {
+		return xerrors.Errorf("Failed to update entry. entry: %v, err: %w", newEntry, err)
 	}
 
 	// Step 3: Update association if neccesary
@@ -502,9 +501,7 @@ func (r *HybridRepository) Update(ctx context.Context, dn *DN, callback func(cur
 		q := fmt.Sprintf(`INSERT INTO ldap_association (name, id, member_id) VALUES %s`,
 			strings.Join(values, ","))
 
-		log.Printf("insert association query:\n%s", q)
-
-		result, err := tx.Exec(q)
+		result, err := r.execQuery(tx, q)
 		if err != nil {
 			return xerrors.Errorf("Failed to insert association record. id: %d, dn_norm: %s, dn_orig: %s, err: %w",
 				dbEntry.ID, dn.DNNormStr(), dn.DNOrigStr(), err)
@@ -534,9 +531,7 @@ func (r *HybridRepository) Update(ctx context.Context, dn *DN, callback func(cur
 		q := fmt.Sprintf(`DELETE FROM ldap_association WHERE %s`,
 			strings.Join(where, " OR "))
 
-		log.Printf("delete association query:\n%s", q)
-
-		result, err := tx.Exec(q)
+		result, err := r.execQuery(tx, q)
 		if err != nil {
 			return xerrors.Errorf("Failed to delete association record. id: %d, dn_norm: %s, dn_orig: %s, err: %w",
 				dbEntry.ID, dn.DNNormStr(), dn.DNOrigStr(), err)
@@ -667,7 +662,7 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 			if isNoResult(err) {
 				return NewNoSuchObject()
 			}
-			return xerrors.Errorf("Failed to execute findEntryIDByDNWithShareLock in %s: %v, err: %w", txLabel(tx), newParentDN, err)
+			return xerrors.Errorf("Unexpected fetch parent entry error. parent_dn_norm: %s, err: %w", newParentDN.DNNormStr(), err)
 		}
 		newParentID = dest.ID
 
@@ -678,7 +673,7 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 				"dn_norm": newParentDN.DNNormStrWithoutSuffix(r.server.Suffix),
 				"dn_orig": newParentDN.DNNormStrWithoutSuffix(r.server.Suffix),
 			}); err != nil {
-				return xerrors.Errorf("Failed to insert container record. id: %d, dn_norm: %s, err: %w",
+				return xerrors.Errorf("Unexpected insert container error. id: %d, dn_norm: %s, err: %w",
 					newParentID, oldParentDN.DNNormStr(), err)
 			}
 		}
@@ -729,7 +724,7 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 			return xerrors.Errorf("Failed to update container DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
 		}
 
-		if _, err = tx.NamedStmt(updateContainerDNByIdStmt).Exec(map[string]interface{}{
+		if _, err = r.exec(tx, updateContainerDNByIdStmt, map[string]interface{}{
 			"new_dn_norm":         "\\1" + newDN.RDNNormStr(),
 			"new_dn_orig":         "\\1" + newDN.RDNOrigStr(),
 			"old_dn_norm_pattern": "(.*,)" + escapeRegex(oldDN.DNNormStrWithoutSuffix(r.server.Suffix)) + "$",
@@ -780,15 +775,13 @@ func (r *HybridRepository) updateRDN(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *Rela
 		return err
 	}
 
-	_, err = tx.NamedStmt(updateRDNByIdStmt).Exec(map[string]interface{}{
+	if _, err := r.exec(tx, updateRDNByIdStmt, map[string]interface{}{
 		"id":           oldEntry.dbEntryID,
 		"new_rdn_norm": newDN.RDNNormStr(),
 		"new_rdn_orig": newDN.RDNOrigStr(),
 		"attrs_norm":   dbEntry.AttrsNorm,
 		"attrs_orig":   dbEntry.AttrsOrig,
-	})
-
-	if err != nil {
+	}); err != nil {
 		return xerrors.Errorf("Failed to update RDN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
 	}
 
@@ -803,7 +796,7 @@ func (r *HybridRepository) updateRDN(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *Rela
 			return xerrors.Errorf("Failed to update container DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
 		}
 
-		if _, err = tx.NamedStmt(updateContainerDNByIdStmt).Exec(map[string]interface{}{
+		if _, err = r.exec(tx, updateContainerDNByIdStmt, map[string]interface{}{
 			"new_dn_norm":         "\\1" + newDN.RDNNormStr(),
 			"new_dn_orig":         "\\1" + newDN.RDNOrigStr(),
 			"old_dn_norm_pattern": "(.*,)" + escapeRegex(oldDN.DNNormStrWithoutSuffix(r.server.Suffix)) + "$",
@@ -908,11 +901,9 @@ func (r *HybridRepository) hasSub(tx *sqlx.Tx, id int64) (bool, error) {
 func (r *HybridRepository) deleteByID(tx *sqlx.Tx, id int64) (int64, error) {
 	var delID int64 = -1
 
-	err := namedStmt(tx, deleteByIDStmt).Get(&delID, map[string]interface{}{
+	if err := r.get(tx, deleteByIDStmt, &delID, map[string]interface{}{
 		"id": id,
-	})
-
-	if err != nil {
+	}); err != nil {
 		if isNoResult(err) {
 			return 0, NewNoSuchObject()
 		}
@@ -948,7 +939,7 @@ func (r *HybridRepository) deleteContainerByID(tx *sqlx.Tx, id int64) error {
 }
 
 func (r *HybridRepository) removeAssociationById(tx *sqlx.Tx, id int64) error {
-	result, err := tx.NamedStmt(deleteAllAssociationByIDStmt).Exec(map[string]interface{}{
+	result, err := r.exec(tx, deleteAllAssociationByIDStmt, map[string]interface{}{
 		"id": id,
 	})
 	if err != nil {

@@ -456,20 +456,6 @@ func isForeignKeyError(err error) bool {
 	return false
 }
 
-func namedStmt(tx *sqlx.Tx, stmt *sqlx.NamedStmt) *sqlx.NamedStmt {
-	if tx != nil {
-		return tx.NamedStmt(stmt)
-	}
-	return stmt
-}
-
-func txLabel(tx *sqlx.Tx) string {
-	if tx == nil {
-		return "non-tx"
-	}
-	return "tx"
-}
-
 func rollback(tx *sqlx.Tx) {
 	err := tx.Rollback()
 	if err != nil {
