@@ -41,8 +41,21 @@ func handleAdd(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	log.Printf("info: Adding entry: %s", r.Entry())
 
+	i := 0
+Retry:
+
 	id, err := s.Repo().Insert(ctx, addEntry)
 	if err != nil {
+		var retryError *RetryError
+		if ok := xerrors.As(err, &retryError); ok {
+			if i < maxRetry {
+				i++
+				log.Printf("warn: Detect consistency error. Do retry. try_count: %d", i)
+				goto Retry
+			}
+			log.Printf("error: Give up to retry. try_count: %d", i)
+		}
+
 		responseAddError(w, err)
 		return
 	}

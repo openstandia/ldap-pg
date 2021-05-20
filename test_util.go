@@ -725,15 +725,7 @@ func truncateTables() {
 	}
 	defer db.Close()
 
-	_, err = db.Exec("TRUNCATE ldap_entry")
-	if err != nil {
-		log.Fatal("truncate table error:", err)
-	}
-	_, err = db.Exec("TRUNCATE ldap_container")
-	if err != nil {
-		log.Fatal("truncate table error:", err)
-	}
-	_, err = db.Exec("TRUNCATE ldap_association")
+	_, err = db.Exec("TRUNCATE ldap_entry, ldap_container, ldap_association")
 	if err != nil {
 		log.Fatal("truncate table error:", err)
 	}

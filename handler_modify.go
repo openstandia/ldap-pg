@@ -31,6 +31,9 @@ func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	log.Printf("info: Modify entry: %s", dn.DNNormStr())
 
+	i := 0
+Retry:
+
 	err = s.Repo().Update(ctx, dn, func(newEntry *ModifyEntry) error {
 		for _, change := range r.Changes() {
 			modification := change.Modification()
@@ -66,6 +69,16 @@ func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	})
 
 	if err != nil {
+		var retryError *RetryError
+		if ok := xerrors.As(err, &retryError); ok {
+			if i < maxRetry {
+				i++
+				log.Printf("warn: Detect consistency error. Do retry. try_count: %d", i)
+				goto Retry
+			}
+			log.Printf("error: Give up to retry. try_count: %d", i)
+		}
+
 		if err == sql.ErrNoRows {
 			responseModifyError(w, NewNoSuchObject())
 			return

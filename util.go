@@ -440,9 +440,18 @@ func isNoResult(err error) bool {
 
 func isDuplicateKeyError(err error) bool {
 	// The error code is 23505.
-	// see https://www.postgresql.org/docs/9.3/errcodes-appendix.html
+	// see https://www.postgresql.org/docs/13/errcodes-appendix.html
 	if err, ok := err.(*pq.Error); ok {
 		return err.Code == pq.ErrorCode("23505")
+	}
+	return false
+}
+
+func isForeignKeyError(err error) bool {
+	// The error code is 23503.
+	// see https://www.postgresql.org/docs/13/errcodes-appendix.html
+	if err, ok := err.(*pq.Error); ok {
+		return err.Code == pq.ErrorCode("23503")
 	}
 	return false
 }

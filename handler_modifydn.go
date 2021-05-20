@@ -55,8 +55,21 @@ func handleModifyDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		}
 	}
 
+	i := 0
+Retry:
+
 	err = s.Repo().UpdateDN(ctx, dn, newDN, oldRDN)
 	if err != nil {
+		var retryError *RetryError
+		if ok := xerrors.As(err, &retryError); ok {
+			if i < maxRetry {
+				i++
+				log.Printf("warn: Detect consistency error. Do retry. try_count: %d", i)
+				goto Retry
+			}
+			log.Printf("error: Give up to retry. try_count: %d", i)
+		}
+
 		log.Printf("warn: Failed to modify dn: %s err: %+v", dn.DNNormStr(), err)
 		// TODO error code
 		responseModifyDNError(w, err)

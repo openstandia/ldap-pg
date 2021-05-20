@@ -10,6 +10,8 @@ import (
 	"github.com/openstandia/goldap/message"
 )
 
+var maxRetry = 10
+
 // For generic filter
 type StmtCache struct {
 	sm sync.Map

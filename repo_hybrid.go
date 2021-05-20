@@ -31,8 +31,10 @@ var (
 	insertEntryStmt                   *sqlx.NamedStmt
 
 	// repo_read for update
-	findEntryIDByDNWithShareLock *sqlx.NamedStmt
-	findEntryByDNWithUpdateLock  *sqlx.NamedStmt
+	findEntryIDByDNWithShareLock  *sqlx.NamedStmt
+	findEntryIDByDNWithUpdateLock *sqlx.NamedStmt
+	findEntryByDNWithShareLock    *sqlx.NamedStmt
+	findEntryByDNWithUpdateLock   *sqlx.NamedStmt
 
 	// repo_update
 	updateAttrsByIdStmt        *sqlx.NamedStmt
@@ -64,14 +66,18 @@ func (r *HybridRepository) Init() error {
 		dn_orig VARCHAR(512) NOT NULL  -- cache
 	);
 	CREATE INDEX IF NOT EXISTS idx_ldap_container_dn_norm_reversed ON ldap_container (REVERSE(dn_norm));
-	
+
 	CREATE TABLE IF NOT EXISTS ldap_entry (
 		id BIGSERIAL PRIMARY KEY,
 		parent_id BIGINT,
 		rdn_norm VARCHAR(256) NOT NULL, -- cache
 		rdn_orig VARCHAR(256) NOT NULL, -- cache
 		attrs_norm JSONB NOT NULL,
-		attrs_orig JSONB NOT NULL
+		attrs_orig JSONB NOT NULL,
+		CONSTRAINT fk_parent_id
+			FOREIGN KEY (parent_id)
+			REFERENCES ldap_container (id)
+			ON DELETE RESTRICT ON UPDATE RESTRICT
 	);
 	CREATE UNIQUE INDEX IF NOT EXISTS idx_ldap_entry_rdn_norm ON ldap_entry (parent_id, rdn_norm);
 	CREATE INDEX IF NOT EXISTS idx_ldap_entry_attrs ON ldap_entry USING gin (attrs_norm jsonb_path_ops);
@@ -80,7 +86,15 @@ func (r *HybridRepository) Init() error {
 		name VARCHAR(32) NOT NULL,
 		id BIGINT NOT NULL,
 		member_id BIGINT NOT NULL,
-		UNIQUE (name, id, member_id)
+		UNIQUE (name, id, member_id),
+		CONSTRAINT fk_id
+			FOREIGN KEY (id)
+			REFERENCES ldap_entry (id)
+			ON DELETE RESTRICT ON UPDATE RESTRICT,
+		CONSTRAINT fk_member_id
+			FOREIGN KEY (member_id)
+			REFERENCES ldap_entry (id)
+			ON DELETE RESTRICT ON UPDATE RESTRICT
 	);
 	CREATE INDEX IF NOT EXISTS idx_ldap_association_id ON ldap_association(name, id);
 	CREATE INDEX IF NOT EXISTS idx_ldap_association_member_id ON ldap_association(name, member_id);
@@ -110,22 +124,34 @@ func (r *HybridRepository) Init() error {
 	WHERE
 		e.rdn_norm = :rdn_norm
 		AND c.dn_norm = :parent_dn_norm
+	FOR UPDATE
 	`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
-	findEntryIDByDNWithShareLock, err = db.PrepareNamed(`SELECT
+	findEntryIDByDN := `SELECT
 		e.id, e.parent_id, has_sub.has_sub
 	FROM
 		ldap_entry e
 		LEFT JOIN ldap_container c ON e.parent_id = c.id
 		LEFT JOIN LATERAL (
 			SELECT EXISTS (SELECT 1 FROM ldap_container WHERE id = e.id) AS has_sub
-	    ) AS has_sub ON true
+		) AS has_sub ON true
 	WHERE
 		e.rdn_norm = :rdn_norm
 		AND c.dn_norm = :parent_dn_norm
+	`
+
+	findEntryIDByDNWithShareLock, err = db.PrepareNamed(findEntryIDByDN + `
+	FOR SHARE
+	`)
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
+
+	findEntryIDByDNWithUpdateLock, err = db.PrepareNamed(findEntryIDByDN + `
+	FOR UPDATE
 	`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
@@ -807,7 +833,7 @@ func (r HybridRepository) DeleteByDN(ctx context.Context, dn *DN) error {
 		HasSub   bool  `db:"has_sub"`
 	}{}
 
-	err = r.get(tx, findEntryIDByDNWithShareLock, &fetchedEntry, map[string]interface{}{
+	err = r.get(tx, findEntryIDByDNWithUpdateLock, &fetchedEntry, map[string]interface{}{
 		"rdn_norm":       dn.RDNNormStr(),
 		"parent_dn_norm": dn.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix),
 	})
@@ -2229,8 +2255,12 @@ func (r *HybridRepository) FindCredByDN(ctx context.Context, dn *DN) ([]string, 
 
 func (r *HybridRepository) begin(ctx context.Context) (*sqlx.Tx, error) {
 	tx, err := r.db.BeginTxx(ctx, &sql.TxOptions{
-		Isolation: sql.LevelSerializable,
+		Isolation: sql.LevelReadCommitted,
 	})
+	// TODO Configurable isolation level
+	// tx, err := r.db.BeginTxx(ctx, &sql.TxOptions{
+	// 	Isolation: sql.LevelSerializable,
+	// })
 	if err != nil {
 		return nil, xerrors.Errorf("Failed to begin transaction. err: %w", err)
 	}
@@ -2239,9 +2269,13 @@ func (r *HybridRepository) begin(ctx context.Context) (*sqlx.Tx, error) {
 
 func (r *HybridRepository) beginReadonly(ctx context.Context) (*sqlx.Tx, error) {
 	tx, err := r.db.BeginTxx(ctx, &sql.TxOptions{
-		Isolation: sql.LevelSerializable,
-		ReadOnly:  true,
+		Isolation: sql.LevelReadCommitted,
 	})
+	// TODO Configurable isolation level
+	// tx, err := r.db.BeginTxx(ctx, &sql.TxOptions{
+	// 	Isolation: sql.LevelSerializable,
+	// 	ReadOnly:  true,
+	// })
 	if err != nil {
 		return nil, xerrors.Errorf("Failed to begin transaction. err: %w", err)
 	}
@@ -2259,6 +2293,9 @@ func (r *HybridRepository) execQuery(tx *sqlx.Tx, query string) (sql.Result, err
 	debugSQL(r.server.config.LogLevel, query, nil)
 	result, err := tx.Exec(query)
 	errorSQL(err, query, nil)
+	if isForeignKeyError(err) {
+		return nil, NewRetryError(err)
+	}
 	return result, err
 }
 
@@ -2266,6 +2303,9 @@ func (r *HybridRepository) namedQuery(tx *sqlx.Tx, query string, params map[stri
 	debugSQL(r.server.config.LogLevel, query, nil)
 	rows, err := tx.NamedQuery(query, params)
 	errorSQL(err, query, nil)
+	if isForeignKeyError(err) {
+		return nil, NewRetryError(err)
+	}
 	return rows, err
 }
 
@@ -2273,6 +2313,9 @@ func (r *HybridRepository) get(tx *sqlx.Tx, stmt *sqlx.NamedStmt, dest interface
 	debugSQL(r.server.config.LogLevel, stmt.QueryString, params)
 	err := tx.NamedStmt(stmt).Get(dest, params)
 	errorSQL(err, stmt.QueryString, params)
+	if isForeignKeyError(err) {
+		return NewRetryError(err)
+	}
 	return err
 }
 
@@ -2304,7 +2347,7 @@ func errorSQL(err error, query string, params map[string]interface{}) {
 			method = runtime.FuncForPC(pc).Name()
 		}
 		logLevel := "error"
-		if isDuplicateKeyError(err) {
+		if isDuplicateKeyError(err) || isForeignKeyError(err) {
 			logLevel = "info"
 		}
 		log.Printf(`%s: Failed to execute SQL at %s:%d:%s: err: %v

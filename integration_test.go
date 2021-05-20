@@ -29,7 +29,7 @@ func TestParallel(t *testing.T) {
 		AddDC("example", "dc=com"),
 		AddOU("Users"),
 		Parallel{
-			2,
+			100,
 			[][]Command{
 				[]Command{
 					Conn{},
