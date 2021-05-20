@@ -845,14 +845,21 @@ func (r HybridRepository) DeleteByDN(ctx context.Context, dn *DN) error {
 		return NewNotAllowedOnNonLeaf()
 	}
 
-	// Step 2: Delete entry
-	delID, err := r.deleteByID(tx, fetchedEntry.ID)
+	// Step 2: Remove all association
+	err = r.removeAssociationById(tx, fetchedEntry.ID)
 	if err != nil {
 		rollback(tx)
 		return err
 	}
 
-	// Step 3: Delete container if the parent doesn't have children
+	// Step 3: Delete entry
+	_, err = r.deleteByID(tx, fetchedEntry.ID)
+	if err != nil {
+		rollback(tx)
+		return err
+	}
+
+	// Step 4: Delete container if the parent doesn't have children
 	hasSub, err := r.hasSub(tx, fetchedEntry.ParentID)
 	if err != nil {
 		rollback(tx)
@@ -867,14 +874,6 @@ func (r HybridRepository) DeleteByDN(ctx context.Context, dn *DN) error {
 			}
 			// Other threads inserted sub. Ignore the error.
 		}
-	}
-
-	// Step 4: Remove all association
-	// TODO LOCK
-	err = r.removeAssociationById(tx, delID)
-	if err != nil {
-		rollback(tx)
-		return err
 	}
 
 	if err := commit(tx); err != nil {
