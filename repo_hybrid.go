@@ -975,7 +975,7 @@ type HybridFetchedDBEntry struct {
 	RawMember       types.JSONText `db:"member"`       // No real column in the table
 	RawUniqueMember types.JSONText `db:"uniquemember"` // No real column in the table
 	RawMemberOf     types.JSONText `db:"memberof"`     // No real column in the table
-	HasSubordinates string         `db:"has_sub"`      // No real column in the table
+	HasSubordinates *bool          `db:"has_sub"`      // No real column in the table
 	DNOrig          string         `db:"dn_orig"`      // No real column in the table
 	Count           int32          `db:"count"`        // No real column in the table
 }
@@ -989,7 +989,7 @@ func (e *HybridFetchedDBEntry) Clear() {
 	e.RawMemberOf = nil
 	e.RawMember = nil
 	e.RawUniqueMember = nil
-	e.HasSubordinates = ""
+	e.HasSubordinates = nil
 	e.Count = 0
 }
 
@@ -1135,8 +1135,8 @@ func (r *HybridRepository) toSearchEntry(dbEntry *HybridFetchedDBEntry) *SearchE
 	orig := dbEntry.AttrsOrig()
 
 	// hasSubordinates
-	if dbEntry.HasSubordinates != "" {
-		orig["hasSubordinates"] = []string{dbEntry.HasSubordinates}
+	if dbEntry.HasSubordinates != nil {
+		orig["hasSubordinates"] = []string{strings.ToUpper(strconv.FormatBool(*dbEntry.HasSubordinates))}
 	}
 
 	// resolve association suffix

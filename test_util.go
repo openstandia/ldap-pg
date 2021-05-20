@@ -469,7 +469,7 @@ func (e AssertEntries) AssertEntries(conn *ldap.Conn, err error, sr *ldap.Search
 		for k, expectAttrs := range expect.attrs {
 			actual := v.GetAttributeValues(k)
 			if !reflect.DeepEqual(expectAttrs, actual) {
-				return xerrors.Errorf("Unexpected entry attr [%s]. want = [%v] got = %d", k, expectAttrs, actual)
+				return xerrors.Errorf("Unexpected entry attr [%s]. want = [%v] got = %v", k, expectAttrs, actual)
 			}
 		}
 	}
