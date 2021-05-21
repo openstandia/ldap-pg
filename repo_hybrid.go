@@ -671,7 +671,7 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 			if _, err := r.exec(tx, insertContainerStmtWithUpdateLock, map[string]interface{}{
 				"id":      newParentID,
 				"dn_norm": newParentDN.DNNormStrWithoutSuffix(r.server.Suffix),
-				"dn_orig": newParentDN.DNNormStrWithoutSuffix(r.server.Suffix),
+				"dn_orig": newParentDN.DNOrigStrWithoutSuffix(r.server.Suffix),
 			}); err != nil {
 				return xerrors.Errorf("Unexpected insert container error. id: %d, dn_norm: %s, err: %w",
 					newParentID, oldParentDN.DNNormStr(), err)
@@ -679,10 +679,7 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 		}
 	}
 
-	// Move tree if the operation is for tree which means the old entry has children
-	if oldEntry.hasSub {
-		// TODO move children?
-	}
+	// TODO support copy tree
 
 	newEntry := oldEntry.ModifyRDN(newDN)
 
@@ -724,9 +721,9 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 			return xerrors.Errorf("Failed to update container DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
 		}
 
-		if _, err = r.exec(tx, updateContainerDNByIdStmt, map[string]interface{}{
-			"new_dn_norm":         "\\1" + newDN.RDNNormStr(),
-			"new_dn_orig":         "\\1" + newDN.RDNOrigStr(),
+		if _, err = r.exec(tx, updateContainerDNsByIdStmt, map[string]interface{}{
+			"new_dn_norm":         "\\1" + newDN.DNNormStrWithoutSuffix(r.server.Suffix),
+			"new_dn_orig":         "\\1" + newDN.DNOrigStrWithoutSuffix(r.server.Suffix),
 			"old_dn_norm_pattern": "(.*,)" + escapeRegex(oldDN.DNNormStrWithoutSuffix(r.server.Suffix)) + "$",
 			"old_dn_orig_pattern": "(.*,)" + escapeRegex(oldDN.DNOrigStrWithoutSuffix(r.server.Suffix)) + "$",
 		}); err != nil {

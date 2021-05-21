@@ -268,10 +268,13 @@ func (j *ModifyEntry) GetAttrs() (map[string]interface{}, map[string][]string) {
 
 func (e *ModifyEntry) Clone() *ModifyEntry {
 	clone := &ModifyEntry{
-		schemaMap:  e.schemaMap,
-		dn:         e.dn,
-		attributes: map[string]*SchemaValue{},
-		dbEntryID:  e.dbEntryID,
+		schemaMap:        e.schemaMap,
+		dn:               e.dn,
+		attributes:       map[string]*SchemaValue{},
+		AddChangeLog:     map[string]*SchemaValue{},
+		ReplaceChangeLog: map[string]*SchemaValue{},
+		DelChangeLog:     map[string]*SchemaValue{},
+		dbEntryID:        e.dbEntryID,
 	}
 	for k, v := range e.attributes {
 		clone.attributes[k] = v.Clone()
