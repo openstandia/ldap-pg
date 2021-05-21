@@ -293,7 +293,7 @@ func ParseDN(schemaMap *SchemaMap, str string) (*DN, error) {
 
 		sv, err := NewSchemaValue(schemaMap, t, []string{orig})
 		if err != nil {
-			log.Printf("warn: Invalid DN syntax. Not found in schema. dn: %s err: %+v", str, err)
+			log.Printf("warn: Invalid DN syntax. Not found in schema. dn: %s err: %v", str, err)
 			return "", "", NewInvalidDNSyntax()
 		}
 

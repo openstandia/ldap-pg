@@ -678,7 +678,8 @@ docker run --rm -e POSTGRES_DB=ldap -e POSTGRES_USER=dev  -e POSTGRES_PASSWORD=d
   -c log_destination=stderr \
   -c log_statement=all \
   -c log_connections=on \
-  -c log_disconnections=on
+  -c log_disconnections=on \
+  -c jit=off
 */
 
 var testPGPort int = 35432
