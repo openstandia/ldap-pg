@@ -73,7 +73,7 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 			out: &HybridDBFilterTranslatorResult{
 				where: sb("e.attrs_norm @@ :0"),
 				params: map[string]interface{}{
-					"0": `$.cn == "foo"`,
+					"0": `$."cn" == "foo"`,
 				},
 			},
 		},
@@ -99,8 +99,8 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 			out: &HybridDBFilterTranslatorResult{
 				where: sb("(e.attrs_norm @@ :0 AND e.attrs_norm @@ :1)"),
 				params: map[string]interface{}{
-					"0": `$.cn == "foo"`,
-					"1": `$.uid == "bar"`,
+					"0": `$."cn" == "foo"`,
+					"1": `$."uid" == "bar"`,
 				},
 			},
 		},
@@ -121,8 +121,8 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 			out: &HybridDBFilterTranslatorResult{
 				where: sb("(e.attrs_norm @@ :0 OR e.attrs_norm @@ :1)"),
 				params: map[string]interface{}{
-					"0": `$.cn == "foo"`,
-					"1": `$.cn == "bar"`,
+					"0": `$."cn" == "foo"`,
+					"1": `$."cn" == "bar"`,
 				},
 			},
 		},
@@ -144,9 +144,9 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 			out: &HybridDBFilterTranslatorResult{
 				where: sb("(e.attrs_norm @@ :0 OR e.attrs_norm @@ :1 OR e.attrs_norm @@ :2)"),
 				params: map[string]interface{}{
-					"0": `$.cn == "foo"`,
-					"1": `$.cn == "bar"`,
-					"2": `$.cn == "hoge"`,
+					"0": `$."cn" == "foo"`,
+					"1": `$."cn" == "bar"`,
+					"2": `$."cn" == "hoge"`,
 				},
 			},
 		},
@@ -180,9 +180,9 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 			out: &HybridDBFilterTranslatorResult{
 				where: sb("(e.attrs_norm @@ :0 OR (e.attrs_norm @@ :1 AND e.attrs_norm @@ :2))"),
 				params: map[string]interface{}{
-					"0": `$.cn == "foo"`,
-					"1": `$.uid == "bar"`,
-					"2": `$.sn == "hoge"`,
+					"0": `$."cn" == "foo"`,
+					"1": `$."uid" == "bar"`,
+					"2": `$."sn" == "hoge"`,
 				},
 			},
 		},
@@ -202,7 +202,7 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 			out: &HybridDBFilterTranslatorResult{
 				where: sb("e.attrs_norm @@ :0"),
 				params: map[string]interface{}{
-					"0": `!($.cn == "foo")`,
+					"0": `!($."cn" == "foo")`,
 				},
 			},
 		},
@@ -230,8 +230,8 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 			out: &HybridDBFilterTranslatorResult{
 				where: sb("(e.attrs_norm @@ :0 OR e.attrs_norm @@ :1)"),
 				params: map[string]interface{}{
-					"0": `!($.cn == "foo")`,
-					"1": `!($.uid == "bar")`,
+					"0": `!($."cn" == "foo")`,
+					"1": `!($."uid" == "bar")`,
 				},
 			},
 		},
@@ -259,8 +259,8 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 			out: &HybridDBFilterTranslatorResult{
 				where: sb("(e.attrs_norm @@ :0 AND e.attrs_norm @@ :1)"),
 				params: map[string]interface{}{
-					"0": `!($.cn == "foo")`,
-					"1": `!($.uid == "bar")`,
+					"0": `!($."cn" == "foo")`,
+					"1": `!($."uid" == "bar")`,
 				},
 			},
 		},
@@ -296,9 +296,9 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 			out: &HybridDBFilterTranslatorResult{
 				where: sb("((e.attrs_norm @@ :0 OR e.attrs_norm @@ :1) AND e.attrs_norm @@ :2)"),
 				params: map[string]interface{}{
-					"0": `!($.cn == "foo")`,
-					"1": `!($.uid == "bar")`,
-					"2": `!($.sn == "hoge")`,
+					"0": `!($."cn" == "foo")`,
+					"1": `!($."uid" == "bar")`,
+					"2": `!($."sn" == "hoge")`,
 				},
 			},
 		},
@@ -320,7 +320,7 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 			out: &HybridDBFilterTranslatorResult{
 				where: sb("e.attrs_norm @@ :0"),
 				params: map[string]interface{}{
-					"0": `$.cn == "foo"`,
+					"0": `$."cn" == "foo"`,
 				},
 			},
 		},
