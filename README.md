@@ -192,6 +192,30 @@ adding new entry "ou=Users,dc=example,dc=com"
 adding new entry "ou=Groups,dc=example,dc=com"
 ```
 
+## Integration Test
+
+Start PostgreSQL server.
+
+```
+docker run --rm -d \
+  -e POSTGRES_DB=testdb \
+  -e POSTGRES_USER=testuser \
+  -e POSTGRES_PASSWORD=testpass \
+  -p 35432:5432 \
+  postgres:13-alpine \
+  -c log_destination=stderr \
+  -c log_statement=all \
+  -c log_connections=on \
+  -c log_disconnections=on \
+  -c jit=off
+```
+
+Run test cases.
+
+```
+make it
+```
+
 ## License
 
 Licensed under the [GPL](/LICENSE) license.
