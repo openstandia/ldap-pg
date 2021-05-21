@@ -279,7 +279,7 @@ func (d *DN) ModifyRDN(schemaMap *SchemaMap, newRDN string, deleteOld bool) (*DN
 	var oldRDN *RelativeDN
 	for i, v := range d.RDNs {
 		if i == 0 {
-			if !deleteOld {
+			if !deleteOld && v.NormStr() != newDN.RDNNormStr() {
 				oldRDN = v
 			}
 			newRDNs[i] = newDN.RDNs[0]

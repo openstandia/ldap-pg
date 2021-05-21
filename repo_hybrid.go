@@ -645,7 +645,7 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 
 	// Determine new parent ID
 	if newParentDN.IsRoot() {
-		oldParentID = 0
+		newParentID = 0
 		// Root entry doesn't need to insert container record always
 	} else {
 		dest := struct {
@@ -679,10 +679,9 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 		}
 	}
 
-	// TODO support copy tree
-
 	newEntry := oldEntry.ModifyRDN(newDN)
 
+	// To remain old RDN, add the attribute as not a RDN value
 	if oldRDN != nil {
 		for _, attr := range oldRDN.Attributes {
 			if err := newEntry.Add(attr.TypeOrig, []string{attr.ValueOrig}); err != nil {
@@ -715,8 +714,8 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 	if oldEntry.hasSub && oldEntry.dbParentID != 0 {
 		if _, err = r.exec(tx, updateContainerDNByIdStmt, map[string]interface{}{
 			"id":          oldEntry.dbEntryID,
-			"new_dn_norm": newDN.RDNNormStr(),
-			"new_dn_orig": newDN.RDNOrigStr(),
+			"new_dn_norm": newDN.DNNormStrWithoutSuffix(r.server.Suffix),
+			"new_dn_orig": newDN.DNOrigStrWithoutSuffix(r.server.Suffix),
 		}); err != nil {
 			return xerrors.Errorf("Failed to update container DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
 		}
@@ -2334,7 +2333,7 @@ func errorSQL(err error, query string, params map[string]interface{}) {
 			method = runtime.FuncForPC(pc).Name()
 		}
 		logLevel := "error"
-		if isDuplicateKeyError(err) || isForeignKeyError(err) {
+		if isDuplicateKeyError(err) || isForeignKeyError(err) || isNoResult(err) {
 			logLevel = "info"
 		}
 		log.Printf(`%s: Failed to execute SQL at %s:%d:%s: err: %v
