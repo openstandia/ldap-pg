@@ -47,10 +47,10 @@ func TestDNNormalize(t *testing.T) {
 	server := NewServer(&ServerConfig{
 		Suffix: "dc=example,dc=com",
 	})
-	schemaMap = InitSchemaMap(server)
+	schemaMap := InitSchemaMap(server)
 
 	for i, tc := range testcases {
-		dn, err := NormalizeDN(tc.Value)
+		dn, err := NormalizeDN(schemaMap, tc.Value)
 		if err != nil {
 			t.Errorf("Unexpected error on %d:\n'%s' -> '%s' expected, got err: %+v\n", i, tc.Value, tc.ExpectedNorm, err)
 			continue

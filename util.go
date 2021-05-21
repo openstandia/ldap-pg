@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 	"github.com/openstandia/goldap/message"
 	ldap "github.com/openstandia/ldapserver"
 	"golang.org/x/xerrors"
@@ -215,7 +217,7 @@ func normalize(s *Schema, value string) (string, error) {
 	case "caseIgnoreMatch":
 		return strings.ToLower(normalizeSpace(value)), nil
 	case "distinguishedNameMatch":
-		return normalizeDistinguishedName(value)
+		return normalizeDistinguishedName(s.server.schemaMap, value)
 	case "caseExactIA5Match":
 		return normalizeSpace(value), nil
 	case "caseIgnoreIA5Match":
@@ -231,7 +233,7 @@ func normalize(s *Schema, value string) (string, error) {
 	case "UUIDMatch":
 		return normalizeUUID(value)
 	case "uniqueMemberMatch":
-		nv, err := normalizeDistinguishedName(value)
+		nv, err := normalizeDistinguishedName(s.server.schemaMap, value)
 		if err != nil {
 			// fallback
 			return strings.ToLower(normalizeSpace(value)), nil
@@ -269,7 +271,7 @@ func removeAllSpace(value string) string {
 // ParseDN returns a distinguishedName or an error.
 // The function respects https://tools.ietf.org/html/rfc4514
 // This function based on go-ldap/ldap/v3.
-func ParseDN(str string) (*DN, error) {
+func ParseDN(schemaMap *SchemaMap, str string) (*DN, error) {
 	dn := new(DN)
 	dn.RDNs = make([]*RelativeDN, 0)
 	rdn := new(RelativeDN)
@@ -289,9 +291,9 @@ func ParseDN(str string) (*DN, error) {
 	stringValueFromBuffer := func(t string) (string, string, error) {
 		orig := stringTypeFromBuffer()
 
-		sv, err := NewSchemaValue(t, []string{orig})
+		sv, err := NewSchemaValue(schemaMap, t, []string{orig})
 		if err != nil {
-			log.Printf("warn: Invalid DN syntax. Not found in schema. dn: %s err: %+v", str, err)
+			log.Printf("warn: Invalid DN syntax. Not found in schema. dn: %s err: %v", str, err)
 			return "", "", NewInvalidDNSyntax()
 		}
 
@@ -406,8 +408,8 @@ func ParseDN(str string) (*DN, error) {
 	return dn, nil
 }
 
-func normalizeDistinguishedName(value string) (string, error) {
-	dn, err := NormalizeDN(value)
+func normalizeDistinguishedName(schemaMap *SchemaMap, value string) (string, error) {
+	dn, err := NormalizeDN(schemaMap, value)
 	if err != nil {
 		return "", err
 	}
@@ -416,11 +418,11 @@ func normalizeDistinguishedName(value string) (string, error) {
 }
 
 func normalizeGeneralizedTime(value string) (string, error) {
-	_, err := time.Parse(TIMESTAMP_FORMAT, value)
+	t, err := time.Parse(TIMESTAMP_FORMAT, value)
 	if err != nil {
 		return "", err
 	}
-	return value, nil
+	return strconv.FormatInt(t.Unix(), 10), nil
 }
 
 func normalizeUUID(value string) (string, error) {
@@ -436,18 +438,22 @@ func isNoResult(err error) bool {
 	return err == sql.ErrNoRows
 }
 
-func namedStmt(tx *sqlx.Tx, stmt *sqlx.NamedStmt) *sqlx.NamedStmt {
-	if tx != nil {
-		return tx.NamedStmt(stmt)
+func isDuplicateKeyError(err error) bool {
+	// The error code is 23505.
+	// see https://www.postgresql.org/docs/13/errcodes-appendix.html
+	if err, ok := err.(*pq.Error); ok {
+		return err.Code == pq.ErrorCode("23505")
 	}
-	return stmt
+	return false
 }
 
-func txLabel(tx *sqlx.Tx) string {
-	if tx == nil {
-		return "non-tx"
+func isForeignKeyError(err error) bool {
+	// The error code is 23503.
+	// see https://www.postgresql.org/docs/13/errcodes-appendix.html
+	if err, ok := err.(*pq.Error); ok {
+		return err.Code == pq.ErrorCode("23503")
 	}
-	return "tx"
+	return false
 }
 
 func rollback(tx *sqlx.Tx) {
@@ -464,4 +470,19 @@ func commit(tx *sqlx.Tx) error {
 		rollback(tx)
 	}
 	return err
+}
+
+func resolveSuffix(s *Server, dnOrig string) string {
+	// Suffix DN or Level 1 DN have comma with end
+	if strings.HasSuffix(dnOrig, ",") {
+		// Detect whether the dnOrig is Suffix DN (The DN should have same RDN)
+		if s.Suffix.RDNNormStr() == strings.ToLower(strings.TrimSuffix(dnOrig, ",")) {
+			dnOrig = s.SuffixOrigStr()
+		} else {
+			dnOrig += s.SuffixOrigStr()
+		}
+	} else {
+		dnOrig += "," + s.SuffixOrigStr()
+	}
+	return dnOrig
 }

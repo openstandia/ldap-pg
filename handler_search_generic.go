@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"strconv"
 	"strings"
@@ -12,6 +13,8 @@ import (
 )
 
 func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
+	ctx := context.Background()
+
 	r := m.GetSearchRequest()
 
 	var pageControl *message.SimplePagedResultsControl
@@ -74,23 +77,6 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	// Phase 3: filter converting
-	q, err := ToQuery(s, schemaMap, r.Filter())
-	if err != nil {
-		log.Printf("info: query error: %#v", err)
-
-		// TODO return correct error code
-		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultOperationsError)
-		w.Write(res)
-		return
-	}
-	// If the filter doesn't contain supported attributes, return success.
-	if q.Query == "" && r.FilterString() != "" {
-		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultSuccess)
-		w.Write(res)
-		return
-	}
-
 	// Phase 4: execute SQL and return entries
 	// TODO configurable default pageSize
 	var pageSize int32 = 500
@@ -108,15 +94,20 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 			delete(sessionMap, reqCookie)
 		}
 	}
+	option := &SearchOption{
+		Scope:                      scope,
+		Filter:                     r.Filter(),
+		PageSize:                   pageSize,
+		Offset:                     offset,
+		RequestedAssocation:        getRequestedMemberAttrs(r),
+		IsMemberOfRequested:        isMemberOfRequested(r),
+		IsHasSubordinatesRequested: isHasSubOrdinatesRequested(r),
+	}
 
-	q.Params["pageSize"] = pageSize
-	q.Params["offset"] = offset
-
-	maxCount, limittedCount, err := s.Repo().Search(baseDN, scope, q,
-		getRequestedMemberAttrs(r), isMemberOfRequested(r), isHasSubOrdinatesRequested(r), func(searchEntry *SearchEntry) error {
-			responseEntry(s, w, r, searchEntry)
-			return nil
-		})
+	maxCount, limittedCount, err := s.Repo().Search(ctx, baseDN, option, func(searchEntry *SearchEntry) error {
+		responseEntry(s, w, r, searchEntry)
+		return nil
+	})
 	if err != nil {
 		responseSearchError(w, err)
 		return
@@ -157,7 +148,7 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 func responseEntry(s *Server, w ldap.ResponseWriter, r message.SearchRequest, searchEntry *SearchEntry) {
 	log.Printf("Response Entry: %+v", searchEntry)
 
-	e := ldap.NewSearchResultEntry(searchEntry.DNOrigStr())
+	e := ldap.NewSearchResultEntry(resolveSuffix(s, searchEntry.DNOrigStr()))
 
 	sentAttrs := map[string]struct{}{}
 

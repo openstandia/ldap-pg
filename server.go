@@ -24,8 +24,7 @@ import (
 )
 
 var (
-	schemaMap SchemaMap
-	mapper    *Mapper
+	mapper *Mapper
 )
 
 type ServerConfig struct {
@@ -55,7 +54,9 @@ type Server struct {
 	internal   *ldap.Server
 	suffixOrig []string
 	suffixNorm []string
-	repo       *Repository
+	Suffix     *DN
+	repo       Repository
+	schemaMap  *SchemaMap
 }
 
 func NewServer(c *ServerConfig) *Server {
@@ -80,7 +81,7 @@ func NewServer(c *ServerConfig) *Server {
 	}
 }
 
-func (s *Server) Repo() *Repository {
+func (s *Server) Repo() Repository {
 	return s.repo
 }
 
@@ -106,11 +107,11 @@ func (s *Server) Start() {
 	colog.SetDefaultLevel(colog.LDebug)
 	cl.SetFormatter(&colog.StdFormatter{
 		Colors: true,
-		Flag:   log.Ldate | log.Ltime | log.Lshortfile,
+		Flag:   log.Ldate | log.Ltime | log.Lmicroseconds | log.Lshortfile,
 	})
 	colog.SetFormatter(&colog.StdFormatter{
 		Colors: true,
-		Flag:   log.Ldate | log.Ltime | log.Lshortfile,
+		Flag:   log.Ldate | log.Ltime | log.Lmicroseconds | log.Lshortfile,
 	})
 	colog.Register()
 
@@ -146,8 +147,15 @@ func (s *Server) Start() {
 	// Init schema map
 	s.LoadSchema()
 
+	// Init suffix
+	var suffixDN *DN
+	if suffixDN, err = ParseDN(s.schemaMap, s.config.Suffix); err != nil {
+		log.Fatalf("alert: Invalid suffix: %s, err: %+v", s.config.Suffix, err)
+	}
+	s.Suffix = suffixDN
+
 	// Init mapper
-	mapper = NewMapper(s, schemaMap)
+	mapper = NewMapper(s)
 
 	// Init rootDN
 	s.rootDN, err = s.NormalizeDN(s.config.RootDN)
@@ -189,7 +197,7 @@ func (s *Server) Start() {
 		Scope(ldap.SearchRequestScopeBaseObject).
 		Label("Search - root DN")
 
-	routes.Search(handleSearchSubschema).
+	routes.Search(NewHandler(s, handleSearchSubschema)).
 		BaseDn("cn=Subschema").
 		Scope(ldap.SearchRequestScopeBaseObject).
 		Filter("(objectclass=*)").
@@ -219,26 +227,28 @@ func (s *Server) Start() {
 }
 
 func (s *Server) LoadSchema() {
-	schemaMap = InitSchemaMap(s)
-	if s, ok := schemaMap.Get("entryUUID"); ok {
-		s.UseIndependentColumn("uuid")
-	}
-	if s, ok := schemaMap.Get("createTimestamp"); ok {
-		s.UseIndependentColumn("created")
-	}
-	if s, ok := schemaMap.Get("modifyTimestamp"); ok {
-		s.UseIndependentColumn("updated")
-	}
+	schemaMap := InitSchemaMap(s)
+	// if s, ok := schemaMap.Get("entryUUID"); ok {
+	// 	s.UseIndependentColumn("uuid")
+	// }
+	// if s, ok := schemaMap.Get("createTimestamp"); ok {
+	// 	s.UseIndependentColumn("created")
+	// }
+	// if s, ok := schemaMap.Get("modifyTimestamp"); ok {
+	// 	s.UseIndependentColumn("updated")
+	// }
 	// TODO
-	memberAttrs := []string{"member", "uniqueMember"}
-	for _, v := range memberAttrs {
-		if s, ok := schemaMap.Get(v); ok {
-			s.UseMemberTable(true)
-		}
-	}
-	if s, ok := schemaMap.Get("memberOf"); ok {
-		s.UseMemberOfTable(true)
-	}
+	// memberAttrs := []string{"member", "uniqueMember"}
+	// for _, v := range memberAttrs {
+	// 	if s, ok := schemaMap.Get(v); ok {
+	// 		s.UseMemberTable(true)
+	// 	}
+	// }
+	// if s, ok := schemaMap.Get("memberOf"); ok {
+	// 	s.UseMemberOfTable(true)
+	// }
+
+	s.schemaMap = schemaMap
 }
 
 func (s *Server) Stop() {
@@ -378,5 +388,5 @@ func (s *Server) GetRootPW() string {
 }
 
 func (s *Server) NormalizeDN(dn string) (*DN, error) {
-	return NormalizeDN(dn)
+	return NormalizeDN(s.schemaMap, dn)
 }

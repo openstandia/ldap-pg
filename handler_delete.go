@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 
 	ldap "github.com/openstandia/ldapserver"
@@ -8,6 +9,8 @@ import (
 )
 
 func handleDelete(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
+	ctx := context.Background()
+
 	r := m.GetDeleteRequest()
 	dn, err := s.NormalizeDN(string(r))
 	if err != nil {
@@ -26,8 +29,21 @@ func handleDelete(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	log.Printf("info: Deleting entry: %s", dn.DNNormStr())
 
-	err = s.Repo().DeleteByDN(dn)
+	i := 0
+Retry:
+
+	err = s.Repo().DeleteByDN(ctx, dn)
 	if err != nil {
+		var retryError *RetryError
+		if ok := xerrors.As(err, &retryError); ok {
+			if i < maxRetry {
+				i++
+				log.Printf("warn: Detect consistency error. Do retry. try_count: %d", i)
+				goto Retry
+			}
+			log.Printf("error: Give up to retry. try_count: %d", i)
+		}
+
 		log.Printf("info: Failed to delete entry: %#v", err)
 
 		responseDeleteError(w, err)

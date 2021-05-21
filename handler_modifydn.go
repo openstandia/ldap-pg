@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 
 	ldap "github.com/openstandia/ldapserver"
@@ -8,6 +9,8 @@ import (
 )
 
 func handleModifyDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
+	ctx := context.Background()
+
 	r := m.GetModifyDNRequest()
 	dn, err := s.NormalizeDN(string(r.Entry()))
 
@@ -24,7 +27,7 @@ func handleModifyDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	newDN, oldRDN, err := dn.ModifyRDN(string(r.NewRDN()), bool(r.DeleteOldRDN()))
+	newDN, oldRDN, err := dn.ModifyRDN(s.schemaMap, string(r.NewRDN()), bool(r.DeleteOldRDN()))
 
 	if err != nil {
 		// TODO return correct error
@@ -52,8 +55,21 @@ func handleModifyDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		}
 	}
 
-	err = s.Repo().UpdateDN(dn, newDN, oldRDN)
+	i := 0
+Retry:
+
+	err = s.Repo().UpdateDN(ctx, dn, newDN, oldRDN)
 	if err != nil {
+		var retryError *RetryError
+		if ok := xerrors.As(err, &retryError); ok {
+			if i < maxRetry {
+				i++
+				log.Printf("warn: Detect consistency error. Do retry. try_count: %d", i)
+				goto Retry
+			}
+			log.Printf("error: Give up to retry. try_count: %d", i)
+		}
+
 		log.Printf("warn: Failed to modify dn: %s err: %+v", dn.DNNormStr(), err)
 		// TODO error code
 		responseModifyDNError(w, err)

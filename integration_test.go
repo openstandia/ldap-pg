@@ -25,7 +25,7 @@ func TestParallel(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
-		AddDC("com"),
+		AddDC("com").SetAssert(&AssertResponse{53}),
 		AddDC("example", "dc=com"),
 		AddOU("Users"),
 		Parallel{
@@ -151,7 +151,6 @@ func TestBind(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
-		AddDC("com"),
 		AddDC("example", "dc=com"),
 		AddOU("Users"),
 		Add{
@@ -235,6 +234,57 @@ func TestBind(t *testing.T) {
 	runTestCases(t, tcs)
 }
 
+func TestSearchSpecialCharacters(t *testing.T) {
+	type A []string
+	type M map[string][]string
+
+	tcs := []Command{
+		Conn{},
+		Bind{"cn=Manager", "secret", &AssertResponse{}},
+		AddDC("example", "dc=com"),
+		AddOU("Users"),
+		Add{
+			"uid=user1", "ou=Users",
+			M{
+				"objectClass":    A{"inetOrgPerson"},
+				"sn":             A{"!@#$%^&*()_+|~{}:;'<>?`-=\\[]'/.,\""},
+				"userPassword":   A{SSHA("password1")},
+				"employeeNumber": A{"emp1"},
+			},
+			&AssertEntry{},
+		},
+		Add{
+			// TODO Need to escape '='? (OpenLDAP desn't need it)
+			"uid=!@#$%^&*()_\\+|~{}:\\;'\\<\\>?`-\\=[]'/.\\,\"\\\\", "ou=Users",
+			M{
+				"objectClass":    A{"inetOrgPerson"},
+				"sn":             A{"user2"},
+				"userPassword":   A{SSHA("password1")},
+				"employeeNumber": A{"emp2"},
+			},
+			nil,
+		},
+		Search{
+			"ou=Users," + server.GetSuffix(),
+			"uid=!@#$%^&\\2a\\28\\29_+|~{}:;'<>?`-=[]'/.,\"\\5c",
+			ldap.ScopeWholeSubtree,
+			A{"*"},
+			&AssertEntries{
+				ExpectEntry{
+					// TODO Need to be encoded?
+					"uid=!@#$%^&*()_+|~{}:;'<>?`-=[]'/.,\"\\",
+					"ou=Users",
+					M{
+						"sn": A{"user2"},
+					},
+				},
+			},
+		},
+	}
+
+	runTestCases(t, tcs)
+}
+
 func TestSearch(t *testing.T) {
 	type A []string
 	type M map[string][]string
@@ -242,7 +292,6 @@ func TestSearch(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
-		AddDC("com"),
 		AddDC("example", "dc=com"),
 		AddOU("Users"),
 		Add{
@@ -355,7 +404,6 @@ func TestScopeSearch(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
-		AddDC("com"),
 		AddDC("example", "dc=com"),
 		AddOU("Users"),
 		AddOU("SubUsers", "ou=Users"),
@@ -619,7 +667,6 @@ func TestBasicCRUD(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
-		AddDC("com"),
 		AddDC("example", "dc=com"),
 		AddOU("Users"),
 		AddOU("Groups"),
@@ -698,7 +745,44 @@ func TestBasicCRUD(t *testing.T) {
 			},
 			&AssertEntry{},
 		},
-		// Rename with old delete
+		Delete{
+			"uid=user1", "ou=Users",
+			&AssertNoEntry{},
+		},
+		Add{
+			"uid=user1", "ou=Users",
+			M{
+				"objectClass":  A{"inetOrgPerson"},
+				"sn":           A{"user1"},
+				"userPassword": A{SSHA("password1")},
+			},
+			&AssertEntry{},
+		},
+	}
+
+	runTestCases(t, tcs)
+}
+
+func TestModRDN(t *testing.T) {
+	type A []string
+	type M map[string][]string
+
+	tcs := []Command{
+		Conn{},
+		Bind{"cn=Manager", "secret", &AssertResponse{}},
+		AddDC("example", "dc=com"),
+		AddOU("Users"),
+		AddOU("Groups"),
+		Add{
+			"uid=user1", "ou=Users",
+			M{
+				"objectClass":  A{"inetOrgPerson"},
+				"sn":           A{"user1"},
+				"userPassword": A{SSHA("password1")},
+			},
+			&AssertEntry{},
+		},
+		// Rename RDN
 		ModifyDN{
 			"uid=user1", "ou=Users",
 			"uid=user1-rename",
@@ -707,7 +791,7 @@ func TestBasicCRUD(t *testing.T) {
 			false,
 			&AssertRename{},
 		},
-		// Rename without old delete
+		// Rename with old RDN
 		ModifyDN{
 			"uid=user1-rename", "ou=Users",
 			"uid=user1-rename2",
@@ -716,7 +800,7 @@ func TestBasicCRUD(t *testing.T) {
 			false,
 			&AssertRename{},
 		},
-		// No rename without old delete
+		// No rename with old RDN
 		ModifyDN{
 			"uid=user1-rename2", "ou=Users",
 			"uid=user1-rename2",
@@ -725,7 +809,7 @@ func TestBasicCRUD(t *testing.T) {
 			false,
 			&AssertRename{},
 		},
-		// No rename with old delete
+		// No rename
 		ModifyDN{
 			"uid=user1-rename2", "ou=Users",
 			"uid=user1-rename2",
@@ -743,23 +827,56 @@ func TestBasicCRUD(t *testing.T) {
 			false,
 			&AssertRename{},
 		},
-		Delete{
+		// Change parent of the leaf case with old same RDN
+		ModifyDN{
 			"uid=user1-rename2", "ou=Groups",
-			&AssertNoEntry{},
+			"uid=user1-rename2",
+			false,
+			"ou=Users",
+			false,
+			&AssertRename{},
 		},
-		Add{
-			"uid=user1", "ou=Users",
-			M{
-				"objectClass":  A{"inetOrgPerson"},
-				"sn":           A{"user1"},
-				"userPassword": A{SSHA("password1")},
-			},
-			&AssertEntry{},
+		// Rename and change parent of the leaf case
+		ModifyDN{
+			"uid=user1-rename2", "ou=Users",
+			"uid=user1",
+			true,
+			"ou=Groups",
+			false,
+			&AssertRename{},
+		},
+		// Rename with old RDN and change parent of the leaf case
+		ModifyDN{
+			"uid=user1", "ou=Groups",
+			"uid=user1-rename",
+			false,
+			"ou=Users",
+			false,
+			&AssertRename{},
 		},
 		// Move tree case
 		ModifyDN{
 			"ou=Users", "",
 			"ou=Users",
+			true,
+			"ou=Groups",
+			true,
+			&AssertRename{},
+		},
+		// Add sub entry of the user
+		Add{
+			"uid=subuser1", "uid=user1-rename,ou=Users,ou=Groups",
+			M{
+				"objectClass":  A{"inetOrgPerson"},
+				"sn":           A{"subuser1"},
+				"userPassword": A{SSHA("password1")},
+			},
+			&AssertEntry{},
+		},
+		// Move tree case for more deep level
+		ModifyDN{
+			"uid=user1-rename", "ou=Users,ou=Groups",
+			"uid=user1-rename",
 			true,
 			"ou=Groups",
 			true,
@@ -780,7 +897,6 @@ func TestOperationalAttributes(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
-		AddDC("com"),
 		AddDC("example", "dc=com"),
 		AddOU("Users"),
 		Add{
@@ -810,7 +926,6 @@ func TestOperationalAttributesMigration(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
-		AddDC("com"),
 		AddDC("example", "dc=com"),
 		AddOU("Users"),
 		Add{
@@ -850,7 +965,6 @@ func TestMemberOf(t *testing.T) {
 	tcs := []Command{
 		Conn{},
 		Bind{"cn=Manager", "secret", &AssertResponse{}},
-		AddDC("com"),
 		AddDC("example", "dc=com"),
 		AddOU("Groups"),
 		AddOU("Users"),

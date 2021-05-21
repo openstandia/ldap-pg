@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 
 	ldap "github.com/openstandia/ldapserver"
@@ -8,6 +9,8 @@ import (
 )
 
 func handleAdd(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
+	ctx := context.Background()
+
 	r := m.GetAddRequest()
 
 	dn, err := s.NormalizeDN(string(r.Entry()))
@@ -22,6 +25,12 @@ func handleAdd(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
+	// Invalid suffix
+	if !dn.Equal(s.Suffix) && !dn.IsSubOf(s.Suffix) {
+		responseAddError(w, NewNoGlobalSuperiorKnowledge())
+		return
+	}
+
 	log.Printf("debug: Start adding DN: %v", dn)
 
 	addEntry, err := mapper.LDAPMessageToAddEntry(dn, r.Attributes())
@@ -32,8 +41,21 @@ func handleAdd(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	log.Printf("info: Adding entry: %s", r.Entry())
 
-	id, err := s.Repo().Insert(addEntry)
+	i := 0
+Retry:
+
+	id, err := s.Repo().Insert(ctx, addEntry)
 	if err != nil {
+		var retryError *RetryError
+		if ok := xerrors.As(err, &retryError); ok {
+			if i < maxRetry {
+				i++
+				log.Printf("warn: Detect consistency error. Do retry. try_count: %d", i)
+				goto Retry
+			}
+			log.Printf("error: Give up to retry. try_count: %d", i)
+		}
+
 		responseAddError(w, err)
 		return
 	}

@@ -119,6 +119,13 @@ func NewInsufficientAccess() *LDAPError {
 	}
 }
 
+func NewNoGlobalSuperiorKnowledge() *LDAPError {
+	return &LDAPError{
+		Code: ldap.LDAPResultUnwillingToPerform,
+		Msg:  fmt.Sprintf("no global superior knowledge"),
+	}
+}
+
 func NewObjectClassViolation() *LDAPError {
 	return &LDAPError{
 		Code: 65,
@@ -142,5 +149,29 @@ func NewAlreadyExists() *LDAPError {
 func NewUnavailable() *LDAPError {
 	return &LDAPError{
 		Code: ldap.LDAPResultUnavailable,
+	}
+}
+
+func NewOperationsError() *LDAPError {
+	return &LDAPError{
+		Code: ldap.LDAPResultOperationsError,
+	}
+}
+
+type RetryError struct {
+	err error
+}
+
+func (e *RetryError) Error() string {
+	return fmt.Sprintf("RetryError: %v", e.err)
+}
+
+func (e *RetryError) Unwrap() error {
+	return e.err
+}
+
+func NewRetryError(err error) *RetryError {
+	return &RetryError{
+		err: err,
 	}
 }

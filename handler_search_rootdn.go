@@ -23,7 +23,7 @@ func handleSearchRootDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	uuid, _ := uuid.NewRandom()
 
 	// Define all attributes
-	searchEntry := NewSearchEntry(nil, map[string][]string{
+	searchEntry := NewSearchEntry(s.schemaMap, "", map[string][]string{
 		"objectClass":           {"simpleSecurityObject", "organizationalRole"},
 		"structuralObjectClass": {"organizationalRole"},
 		"cn":                    {s.GetRootDN().RDN()["cn"]},

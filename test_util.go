@@ -178,6 +178,11 @@ type Add struct {
 	assert Assert
 }
 
+func (a Add) SetAssert(assert Assert) Add {
+	a.assert = assert
+	return a
+}
+
 type ModifyAdd struct {
 	rdn    string
 	baseDN string
@@ -384,6 +389,10 @@ func (a AssertResponse) AssertResponse(conn *ldap.Conn, err error) error {
 	return nil
 }
 
+func (a AssertResponse) AssertEntry(conn *ldap.Conn, err error, rdn, baseDN string, attrs map[string][]string) error {
+	return a.AssertResponse(conn, err)
+}
+
 type Assert interface {
 	AssertEntry(conn *ldap.Conn, err error, rdn, baseDN string, attrs map[string][]string) error
 }
@@ -460,7 +469,7 @@ func (e AssertEntries) AssertEntries(conn *ldap.Conn, err error, sr *ldap.Search
 		for k, expectAttrs := range expect.attrs {
 			actual := v.GetAttributeValues(k)
 			if !reflect.DeepEqual(expectAttrs, actual) {
-				return xerrors.Errorf("Unexpected entry attr [%s]. want = [%v] got = %d", k, expectAttrs, actual)
+				return xerrors.Errorf("Unexpected entry attr [%s]. want = [%v] got = %v", k, expectAttrs, actual)
 			}
 		}
 	}
@@ -508,9 +517,11 @@ func (s AssertRename) AssertRename(conn *ldap.Conn, err error, oldRDN, newRDN, b
 		return xerrors.Errorf("Unexpected error response when previous operation. err: %w", err)
 	}
 
+	// Fetch old entry with full dn (baseDN = target old DN)
 	sr, err := searchEntry(conn, oldRDN, baseDN, ldap.ScopeWholeSubtree, "(objectClass=*)", nil)
 
 	if newSup == "" {
+		// No move case
 		if oldRDN == newRDN {
 			// No RDN change case, should returns 1 entry
 			if err != nil {
@@ -520,15 +531,17 @@ func (s AssertRename) AssertRename(conn *ldap.Conn, err error, oldRDN, newRDN, b
 				return xerrors.Errorf("Unexpected new renamed count. want = [1] got = %d", len(sr.Entries))
 			}
 		} else {
-			// RDN change case, should returns no such entry error (32)
-			if err == nil {
-				return xerrors.Errorf("Unexpected error. err: %v", err)
-			}
-			if !ldap.IsErrorWithCode(err, 32) {
+			// RDN change case, should returns no search result (0) for old entry
+			if err != nil {
 				return xerrors.Errorf("Unexpected error when searching the old entry. err: %w", err)
+			}
+			if len(sr.Entries) != 0 {
+				return xerrors.Errorf("Unexpected search result for old RDN. Should returns no search result (0). oldRDN: %v, newRDN: %v",
+					oldRDN, newRDN)
 			}
 		}
 
+		// Fetch new entry with full dn (baseDN = target new DN)
 		sr, err = searchEntry(conn, newRDN, baseDN, ldap.ScopeWholeSubtree, "(objectClass=*)", nil)
 		if err != nil {
 			return xerrors.Errorf("Unexpected error when searching the renamed entry. err: %w", err)
@@ -547,14 +560,16 @@ func (s AssertRename) AssertRename(conn *ldap.Conn, err error, oldRDN, newRDN, b
 			}
 		}
 	} else {
-		// Move case, should returns no such entry error (32) for old entry
-		if err == nil {
-			return xerrors.Errorf("Unexpected error. err: %v", err)
-		}
-		if !ldap.IsErrorWithCode(err, 32) {
+		// Move case, should returns no search result (0) for old entry
+		if err != nil {
 			return xerrors.Errorf("Unexpected error when searching the old entry. err: %w", err)
 		}
+		if len(sr.Entries) != 0 {
+			return xerrors.Errorf("Unexpected search result for old RDN. Should returns no search result (0). oldRDN: %v, newRDN: %v",
+				oldRDN, newRDN)
+		}
 
+		// Fetch new entry with full dn (baseDN = target new DN)
 		sr, err = searchEntry(conn, newRDN, newSup, ldap.ScopeWholeSubtree, "(objectClass=*)", nil)
 		if err != nil {
 			return xerrors.Errorf("Unexpected error when searching the renamed entry. err: %w", err)
@@ -632,7 +647,7 @@ func searchEntry(c *ldap.Conn, rdn, baseDN string, scope int, filter string, att
 		bd = rdn + "," + bd
 	}
 
-	log.Printf("debug: searchEntry %s", bd)
+	log.Printf("info: searchEntry. baseDN: %s, scope: %d, filter: %s, reqAttrs: %v", bd, scope, filter, attrs)
 
 	search := ldap.NewSearchRequest(
 		bd,
@@ -663,7 +678,8 @@ docker run --rm -e POSTGRES_DB=ldap -e POSTGRES_USER=dev  -e POSTGRES_PASSWORD=d
   -c log_destination=stderr \
   -c log_statement=all \
   -c log_connections=on \
-  -c log_disconnections=on
+  -c log_disconnections=on \
+  -c jit=off
 */
 
 var testPGPort int = 35432
@@ -716,11 +732,7 @@ func truncateTables() {
 	}
 	defer db.Close()
 
-	_, err = db.Exec("TRUNCATE ldap_entry")
-	if err != nil {
-		log.Fatal("truncate table error:", err)
-	}
-	_, err = db.Exec("TRUNCATE ldap_tree")
+	_, err = db.Exec("TRUNCATE ldap_entry, ldap_container, ldap_association")
 	if err != nil {
 		log.Fatal("truncate table error:", err)
 	}

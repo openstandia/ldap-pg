@@ -5,27 +5,30 @@ import (
 )
 
 type ModifyEntry struct {
-	schemaMap  *SchemaMap
-	dn         *DN
-	attributes map[string]*SchemaValue
-	dbEntryID  int64
-	dbParentID int64
-	hasSub     bool
-	path       string
-	add        []*SchemaValue
-	replace    []*SchemaValue
-	del        []*SchemaValue
+	schemaMap        *SchemaMap
+	dn               *DN
+	attributes       map[string]*SchemaValue
+	dbEntryID        int64
+	dbParentID       int64
+	hasSub           bool
+	path             string
+	AddChangeLog     map[string]*SchemaValue
+	ReplaceChangeLog map[string]*SchemaValue
+	DelChangeLog     map[string]*SchemaValue
 }
 
-func NewModifyEntry(dn *DN, valuesOrig map[string][]string) (*ModifyEntry, error) {
+func NewModifyEntry(schemaMap *SchemaMap, dn *DN, attrsOrig map[string][]string) (*ModifyEntry, error) {
 	// TODO
 	modifyEntry := &ModifyEntry{
-		schemaMap:  &schemaMap,
-		dn:         dn,
-		attributes: map[string]*SchemaValue{},
+		schemaMap:        schemaMap,
+		dn:               dn,
+		attributes:       map[string]*SchemaValue{},
+		AddChangeLog:     map[string]*SchemaValue{},
+		ReplaceChangeLog: map[string]*SchemaValue{},
+		DelChangeLog:     map[string]*SchemaValue{},
 	}
 
-	for k, v := range valuesOrig {
+	for k, v := range attrsOrig {
 		err := modifyEntry.AddNoCheck(k, v)
 		if err != nil {
 			return nil, err
@@ -46,7 +49,7 @@ func (j *ModifyEntry) HasKey(s *Schema) bool {
 }
 
 func (j *ModifyEntry) HasAttr(attrName string) bool {
-	s, ok := schemaMap.Get(attrName)
+	s, ok := j.schemaMap.Get(attrName)
 	if !ok {
 		return false
 	}
@@ -61,7 +64,7 @@ func (j *ModifyEntry) SetDN(dn *DN) {
 	rdn := dn.RDN()
 	for k, v := range rdn {
 		// rdn is validated already, ignore error
-		sv, _ := NewSchemaValue(k, []string{v})
+		sv, _ := NewSchemaValue(j.schemaMap, k, []string{v})
 		j.attributes[sv.Name()] = sv
 	}
 }
@@ -89,7 +92,7 @@ func (j *ModifyEntry) Validate() error {
 
 // Append to current value(s).
 func (j *ModifyEntry) Add(attrName string, attrValue []string) error {
-	sv, err := NewSchemaValue(attrName, attrValue)
+	sv, err := NewSchemaValue(j.schemaMap, attrName, attrValue)
 	if err != nil {
 		return err
 	}
@@ -101,13 +104,18 @@ func (j *ModifyEntry) Add(attrName string, attrValue []string) error {
 	}
 
 	// Record changelog
-	j.add = append(j.add, sv)
+	if v, ok := j.AddChangeLog[sv.Name()]; !ok {
+		j.AddChangeLog[sv.Name()] = sv
+	} else {
+		// Need this case?
+		v.Add(sv)
+	}
 
 	return nil
 }
 
 func (j *ModifyEntry) AddNoCheck(attrName string, attrValue []string) error {
-	sv, err := NewSchemaValue(attrName, attrValue)
+	sv, err := NewSchemaValue(j.schemaMap, attrName, attrValue)
 	if err != nil {
 		return err
 	}
@@ -116,7 +124,12 @@ func (j *ModifyEntry) AddNoCheck(attrName string, attrValue []string) error {
 	}
 
 	// Record changelog
-	j.add = append(j.add, sv)
+	if v, ok := j.AddChangeLog[sv.Name()]; !ok {
+		j.AddChangeLog[sv.Name()] = sv
+	} else {
+		// Need this case?
+		v.Add(sv)
+	}
 
 	return nil
 }
@@ -135,7 +148,7 @@ func (j *ModifyEntry) addsv(value *SchemaValue) error {
 
 // Replace with the value(s).
 func (j *ModifyEntry) Replace(attrName string, attrValue []string) error {
-	sv, err := NewSchemaValue(attrName, attrValue)
+	sv, err := NewSchemaValue(j.schemaMap, attrName, attrValue)
 	if err != nil {
 		return err
 	}
@@ -147,7 +160,7 @@ func (j *ModifyEntry) Replace(attrName string, attrValue []string) error {
 	}
 
 	// Record changelog
-	j.replace = append(j.replace, sv)
+	j.ReplaceChangeLog[sv.Name()] = sv
 
 	return nil
 }
@@ -165,7 +178,7 @@ func (j *ModifyEntry) replacesv(value *SchemaValue) error {
 
 // Delete from current value(s) if the value matchs.
 func (j *ModifyEntry) Delete(attrName string, attrValue []string) error {
-	sv, err := NewSchemaValue(attrName, attrValue)
+	sv, err := NewSchemaValue(j.schemaMap, attrName, attrValue)
 	if err != nil {
 		return err
 	}
@@ -177,7 +190,12 @@ func (j *ModifyEntry) Delete(attrName string, attrValue []string) error {
 	}
 
 	// Record changelog
-	j.del = append(j.del, sv)
+	if v, ok := j.DelChangeLog[sv.Name()]; !ok {
+		j.DelChangeLog[sv.Name()] = sv
+	} else {
+		// TODO Need this case?
+		v.Add(sv)
+	}
 
 	return nil
 }
@@ -250,10 +268,13 @@ func (j *ModifyEntry) GetAttrs() (map[string]interface{}, map[string][]string) {
 
 func (e *ModifyEntry) Clone() *ModifyEntry {
 	clone := &ModifyEntry{
-		schemaMap:  e.schemaMap,
-		dn:         e.dn,
-		attributes: map[string]*SchemaValue{},
-		dbEntryID:  e.dbEntryID,
+		schemaMap:        e.schemaMap,
+		dn:               e.dn,
+		attributes:       map[string]*SchemaValue{},
+		AddChangeLog:     map[string]*SchemaValue{},
+		ReplaceChangeLog: map[string]*SchemaValue{},
+		DelChangeLog:     map[string]*SchemaValue{},
+		dbEntryID:        e.dbEntryID,
 	}
 	for k, v := range e.attributes {
 		clone.attributes[k] = v.Clone()

@@ -23,7 +23,7 @@ func handleSearchDSE(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	// e.AddAttribute("objectClass", "top")
 	// e.AddAttribute("namingContexts", "ou=system", "ou=schema", "dc=example,dc=com", "ou=config")
 
-	searchEntry := NewSearchEntry(nil, map[string][]string{
+	searchEntry := NewSearchEntry(s.schemaMap, "", map[string][]string{
 		"objectClass":          {"top"},
 		"subschemaSubentry":    {"cn=Subschema"},
 		"namingContexts":       {s.GetSuffix()},

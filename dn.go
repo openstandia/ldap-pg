@@ -43,9 +43,9 @@ func (f *FetchedDN) IsRoot() bool {
 	return !strings.Contains(f.Path, ".")
 }
 
-func (f *FetchedDN) DNNorm() string {
+func (f *FetchedDN) DNNorm(schemaMap *SchemaMap) string {
 	if f.dnNorm == "" {
-		dn, err := NormalizeDN(f.DNOrig)
+		dn, err := NormalizeDN(schemaMap, f.DNOrig)
 		if err != nil {
 			log.Printf("error: Invalid DN: %s, err: %v", f.DNOrig, err)
 			return ""
@@ -56,7 +56,7 @@ func (f *FetchedDN) DNNorm() string {
 	return f.dnNorm
 }
 
-func (f *FetchedDN) ParentDN() *FetchedDN {
+func (f *FetchedDN) ParentDN(schemaMap *SchemaMap) *FetchedDN {
 	if f.IsRoot() {
 		return nil
 	}
@@ -68,7 +68,7 @@ func (f *FetchedDN) ParentDN() *FetchedDN {
 		log.Printf("error: Invalid path: %s, err: %v", f.Path, err)
 		return nil
 	}
-	dn, err := NormalizeDN(f.DNOrig)
+	dn, err := NormalizeDN(schemaMap, f.DNOrig)
 	if err != nil {
 		log.Printf("error: Invalid DN: %s, err: %v", f.DNOrig, err)
 		return nil
@@ -131,13 +131,13 @@ var anonymousDN = &DN{
 	RDNs: nil,
 }
 
-func NormalizeDN(dn string) (*DN, error) {
+func NormalizeDN(schemaMap *SchemaMap, dn string) (*DN, error) {
 	// Anonymous
 	if dn == "" {
 		return anonymousDN, nil
 	}
 
-	return ParseDN(dn)
+	return ParseDN(schemaMap, dn)
 }
 
 func (d *DN) DNNormStr() string {
@@ -152,10 +152,46 @@ func (d *DN) DNNormStr() string {
 	return b.String()
 }
 
+func (d *DN) DNNormStrWithoutSuffix(suffix *DN) string {
+	sRDNs := suffix.RDNs
+	diff := len(d.RDNs) - len(sRDNs)
+
+	var b strings.Builder
+	b.Grow(256)
+	for i, rdn := range d.RDNs {
+		if i >= diff {
+			break
+		}
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString(rdn.NormStr())
+	}
+	return b.String()
+}
+
 func (d *DN) DNOrigStr() string {
 	var b strings.Builder
 	b.Grow(256)
 	for i, rdn := range d.RDNs {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString(rdn.OrigStr())
+	}
+	return b.String()
+}
+
+func (d *DN) DNOrigStrWithoutSuffix(suffix *DN) string {
+	sRDNs := suffix.RDNs
+	diff := len(d.RDNs) - len(sRDNs)
+
+	var b strings.Builder
+	b.Grow(256)
+	for i, rdn := range d.RDNs {
+		if i >= diff {
+			break
+		}
 		if i > 0 {
 			b.WriteString(",")
 		}
@@ -196,7 +232,19 @@ func (d *DN) Equal(o *DN) bool {
 	if d == nil {
 		return o == nil
 	}
-	return d.DNNormStr() == o.DNNormStr()
+	return len(d.RDNs) == len(o.RDNs) && d.DNNormStr() == o.DNNormStr()
+}
+
+// IsSubOf checks whether the arg DN is subset of self.
+// Example:
+//   self DN: ou=people,dc=exaple,dc=com
+//   arg DN: dc=example,dc=com
+// => true
+func (d *DN) IsSubOf(o *DN) bool {
+	if d == nil {
+		return false
+	}
+	return len(d.RDNs) > len(o.RDNs) && strings.HasSuffix(d.DNNormStr(), o.DNNormStr())
 }
 
 func (d *DN) RDN() map[string]string {
@@ -220,8 +268,8 @@ func (d *DN) RDN() map[string]string {
 	return m
 }
 
-func (d *DN) ModifyRDN(newRDN string, deleteOld bool) (*DN, *RelativeDN, error) {
-	newDN, err := ParseDN(newRDN)
+func (d *DN) ModifyRDN(schemaMap *SchemaMap, newRDN string, deleteOld bool) (*DN, *RelativeDN, error) {
+	newDN, err := ParseDN(schemaMap, newRDN)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -231,7 +279,7 @@ func (d *DN) ModifyRDN(newRDN string, deleteOld bool) (*DN, *RelativeDN, error) 
 	var oldRDN *RelativeDN
 	for i, v := range d.RDNs {
 		if i == 0 {
-			if !deleteOld {
+			if !deleteOld && v.NormStr() != newDN.RDNNormStr() {
 				oldRDN = v
 			}
 			newRDNs[i] = newDN.RDNs[0]
@@ -271,6 +319,7 @@ func (d *DN) ParentDN() *DN {
 }
 
 func (d *DN) IsRoot() bool {
+	// TODO
 	return len(d.RDNs) == 1
 }
 
@@ -285,4 +334,8 @@ func (d *DN) IsDC() bool {
 
 func (d *DN) IsAnonymous() bool {
 	return len(d.RDNs) == 0
+}
+
+func (d *DN) Level() int {
+	return len(d.RDNs)
 }

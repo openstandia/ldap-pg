@@ -1,24 +1,22 @@
 package main
 
 type SearchEntry struct {
-	dn         *DN
+	schemaMap  *SchemaMap
+	dnOrig     string
 	attributes map[string][]string
 }
 
-func NewSearchEntry(dn *DN, valuesOrig map[string][]string) *SearchEntry {
+func NewSearchEntry(schemaMap *SchemaMap, dnOrig string, valuesOrig map[string][]string) *SearchEntry {
 	readEntry := &SearchEntry{
-		dn:         dn,
+		schemaMap:  schemaMap,
+		dnOrig:     dnOrig,
 		attributes: valuesOrig,
 	}
 	return readEntry
 }
 
-func (j *SearchEntry) DNNormStr() string {
-	return j.dn.DNNormStr()
-}
-
 func (j *SearchEntry) DNOrigStr() string {
-	return j.dn.DNOrigStr()
+	return j.dnOrig
 }
 
 func (j *SearchEntry) GetAttrsOrig() map[string][]string {
@@ -26,7 +24,7 @@ func (j *SearchEntry) GetAttrsOrig() map[string][]string {
 }
 
 func (j *SearchEntry) GetAttrOrig(attrName string) (string, []string, bool) {
-	s, ok := schemaMap.Get(attrName)
+	s, ok := j.schemaMap.Get(attrName)
 	if !ok {
 		return "", nil, false
 	}
@@ -41,7 +39,7 @@ func (j *SearchEntry) GetAttrOrig(attrName string) (string, []string, bool) {
 func (j *SearchEntry) GetAttrsOrigWithoutOperationalAttrs() map[string][]string {
 	m := map[string][]string{}
 	for k, v := range j.attributes {
-		if s, ok := schemaMap.Get(k); ok {
+		if s, ok := j.schemaMap.Get(k); ok {
 			if !s.IsOperationalAttribute() {
 				m[k] = v
 			}
@@ -53,7 +51,7 @@ func (j *SearchEntry) GetAttrsOrigWithoutOperationalAttrs() map[string][]string 
 func (j *SearchEntry) GetOperationalAttrsOrig() map[string][]string {
 	m := map[string][]string{}
 	for k, v := range j.attributes {
-		if s, ok := schemaMap.Get(k); ok {
+		if s, ok := j.schemaMap.Get(k); ok {
 			if s.IsOperationalAttribute() {
 				m[k] = v
 			}

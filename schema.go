@@ -79,13 +79,11 @@ type Schema struct {
 	Usage              string
 	IndexType          string
 	ColumnName         string
-	IsUseMemberTable   bool
-	IsUseMemberOfTable bool
 	SingleValue        bool
 	NoUserModification bool
 }
 
-func InitSchemaMap(server *Server) SchemaMap {
+func InitSchemaMap(server *Server) *SchemaMap {
 	m := SchemaMap{}
 
 	mergedSchema = mergeSchema(SCHEMA_OPENLDAP24, customSchema)
@@ -96,7 +94,7 @@ func InitSchemaMap(server *Server) SchemaMap {
 		log.Printf("error: Resolving schema error. %+v", err)
 	}
 
-	return m
+	return &m
 }
 
 var (
@@ -333,7 +331,7 @@ type SchemaValue struct {
 	cachedNormIndex map[string]struct{}
 }
 
-func NewSchemaValue(attrName string, attrValue []string) (*SchemaValue, error) {
+func NewSchemaValue(schemaMap *SchemaMap, attrName string, attrValue []string) (*SchemaValue, error) {
 	// TODO refactoring
 	s, ok := schemaMap.Get(attrName)
 	if !ok {
@@ -396,8 +394,8 @@ func (s *SchemaValue) IsEmpty() bool {
 	return len(s.value) == 0
 }
 
-func (s *SchemaValue) IsMemberAttribute() bool {
-	return s.schema.IsMemberAttribute()
+func (s *SchemaValue) IsAssociationAttribute() bool {
+	return s.schema.IsAssociationAttribute()
 }
 
 func (s *SchemaValue) Clone() *SchemaValue {
@@ -554,7 +552,7 @@ func (s *Schema) IsOperationalAttribute() bool {
 	return false
 }
 
-func (s *Schema) IsMemberAttribute() bool {
+func (s *Schema) IsAssociationAttribute() bool {
 	if s.Name == "member" ||
 		s.Name == "uniqueMember" {
 		return true
@@ -562,18 +560,13 @@ func (s *Schema) IsMemberAttribute() bool {
 	return false
 }
 
-func (s *Schema) IsIndependentColumn() bool {
-	return s.ColumnName != ""
+func (s *Schema) IsReverseAssociationAttribute() bool {
+	return s.Name == "memberOf"
 }
 
-func (s *Schema) UseIndependentColumn(c string) {
-	s.ColumnName = c
-}
-
-func (s *Schema) UseMemberTable(use bool) {
-	s.IsUseMemberTable = use
-}
-
-func (s *Schema) UseMemberOfTable(use bool) {
-	s.IsUseMemberOfTable = use
+func (s *Schema) IsNumberOrdering() bool {
+	return s.Ordering == "generalizedTimeOrderingMatch" ||
+		s.Ordering == "integerOrderingMatch" ||
+		s.Ordering == "numericStringOrderingMatch" ||
+		s.Ordering == "UUIDOrderingMatch"
 }
