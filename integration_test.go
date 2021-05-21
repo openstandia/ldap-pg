@@ -234,6 +234,30 @@ func TestBind(t *testing.T) {
 	runTestCases(t, tcs)
 }
 
+func TestSearchSpecialCharacters(t *testing.T) {
+	type A []string
+	type M map[string][]string
+
+	tcs := []Command{
+		Conn{},
+		Bind{"cn=Manager", "secret", &AssertResponse{}},
+		AddDC("example", "dc=com"),
+		AddOU("Users"),
+		Add{
+			"uid=user1", "ou=Users",
+			M{
+				"objectClass":    A{"inetOrgPerson"},
+				"sn":             A{"!@#$%^&*()_+|~{}:;'<>?`-=\\[]'/.,\""},
+				"userPassword":   A{SSHA("password1")},
+				"employeeNumber": A{"emp1"},
+			},
+			&AssertEntry{},
+		},
+	}
+
+	runTestCases(t, tcs)
+}
+
 func TestSearch(t *testing.T) {
 	type A []string
 	type M map[string][]string

@@ -2286,9 +2286,9 @@ func (r *HybridRepository) execQuery(tx *sqlx.Tx, query string) (sql.Result, err
 }
 
 func (r *HybridRepository) namedQuery(tx *sqlx.Tx, query string, params map[string]interface{}) (*sqlx.Rows, error) {
-	debugSQL(r.server.config.LogLevel, query, nil)
+	debugSQL(r.server.config.LogLevel, query, params)
 	rows, err := tx.NamedQuery(query, params)
-	errorSQL(err, query, nil)
+	errorSQL(err, query, params)
 	if isForeignKeyError(err) {
 		return nil, NewRetryError(err)
 	}
@@ -2361,20 +2361,20 @@ func escapeRegex(s string) string {
 // escape escapes meta characters used in PostgreSQL jsonpath name.
 // See https://www.postgresql.org/docs/12/datatype-json.html#DATATYPE-JSONPATH
 func escapeName(s string) string {
-	s = strings.ReplaceAll(s, `"`, `\"`)
-	s = strings.ReplaceAll(s, `'`, `''`) // Write two adjacent single quotes
-	s = strings.ReplaceAll(s, `[`, `\[`)
 	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `[`, `\[`)
 	s = strings.ReplaceAll(s, `*`, `\*`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	// s = strings.ReplaceAll(s, `'`, `''`) // Write two adjacent single quotes
 	return s
 }
 
 // escapeValue escapes meta characters used in PostgreSQL jsonpath value.
 // See https://www.postgresql.org/docs/12/datatype-json.html#DATATYPE-JSONPATH
 func escapeValue(s string) string {
-	s = strings.ReplaceAll(s, `"`, `\"`)
-	s = strings.ReplaceAll(s, `'`, `''`)
 	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	// s = strings.ReplaceAll(s, `'`, `''`) // Don't neet it when using prepared statement
 	return s
 }
 
