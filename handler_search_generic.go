@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"strconv"
-	"strings"
 
 	"github.com/google/uuid"
 	"github.com/openstandia/goldap/message"
@@ -226,16 +224,4 @@ func responseSearchError(w ldap.ResponseWriter, err error) {
 		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultProtocolError)
 		w.Write(res)
 	}
-}
-
-func expandContainersIn(containers []*FetchedDNOrig) (string, map[string]int64) {
-	s := make([]string, len(containers))
-	m := make(map[string]int64, len(containers))
-
-	for i, c := range containers {
-		k := "parent_id_" + strconv.Itoa(i)
-		s[i] = ":" + k
-		m[k] = c.ID
-	}
-	return strings.Join(s, ","), m
 }

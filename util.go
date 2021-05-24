@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -140,7 +141,7 @@ func responseUnsupportedSearch(w ldap.ResponseWriter, r message.SearchRequest) {
 	w.Write(res)
 }
 
-func mergeMultipleValues(s *Schema, vals []interface{}, jsonMap map[string]interface{}) error {
+func mergeMultipleValues(s *AttributeType, vals []interface{}, jsonMap map[string]interface{}) error {
 	if mv, ok := jsonMap[s.Name]; ok {
 		if mvv, ok := mv.([]interface{}); ok {
 			mvvMap := arrayToMap(mvv)
@@ -183,7 +184,7 @@ func arrayContains(arr []string, str string) (int, bool) {
 	return -1, false
 }
 
-func hasDuplicate(s *Schema, arr []string) (int, bool) {
+func hasDuplicate(s *AttributeType, arr []string) (int, bool) {
 	m := make(map[string]int, len(arr))
 
 	for i, v := range arr {
@@ -210,14 +211,14 @@ func arrayDiff(a, b []string) []string {
 	return diff
 }
 
-func normalize(s *Schema, value string) (string, error) {
+func normalize(s *AttributeType, value string) (string, error) {
 	switch s.Equality {
 	case "caseExactMatch":
 		return normalizeSpace(value), nil
 	case "caseIgnoreMatch":
 		return strings.ToLower(normalizeSpace(value)), nil
 	case "distinguishedNameMatch":
-		return normalizeDistinguishedName(s.server.schemaMap, value)
+		return normalizeDistinguishedName(s.schemaDef, value)
 	case "caseExactIA5Match":
 		return normalizeSpace(value), nil
 	case "caseIgnoreIA5Match":
@@ -233,7 +234,7 @@ func normalize(s *Schema, value string) (string, error) {
 	case "UUIDMatch":
 		return normalizeUUID(value)
 	case "uniqueMemberMatch":
-		nv, err := normalizeDistinguishedName(s.server.schemaMap, value)
+		nv, err := normalizeDistinguishedName(s.schemaDef, value)
 		if err != nil {
 			// fallback
 			return strings.ToLower(normalizeSpace(value)), nil
@@ -485,4 +486,53 @@ func resolveSuffix(s *Server, dnOrig string) string {
 		dnOrig += "," + s.SuffixOrigStr()
 	}
 	return dnOrig
+}
+
+func sortObjectClasses(s *SchemaMap, objectClasses []*ObjectClass) {
+	sort.Slice(objectClasses, func(i, j int) bool {
+		sup := objectClasses[i].Sup
+
+		for {
+			// Top level
+			if sup == "" {
+				return false
+			}
+
+			oc, _ := s.ObjectClass(sup)
+			if oc.Name == objectClasses[j].Name {
+				return true
+			}
+			// next
+			sup = oc.Sup
+		}
+	})
+}
+
+func verifyChainedObjectClasses(s *SchemaMap, objectClasses []*ObjectClass) *LDAPError {
+	for i := range objectClasses {
+		if i > 0 {
+			prev := objectClasses[i-1]
+			cur := objectClasses[i]
+
+			sup := prev.Sup
+
+			for {
+				if sup == "" {
+					// e.g.
+					// ldap_add: Object class violation (65)
+					//   additional info: invalid structural object class chain (person/groupOfUniqueNames)
+					return NewObjectClassViolationInvalidStructualChain(objectClasses[0].Name, objectClasses[i].Name)
+				}
+				supOC, _ := s.ObjectClass(sup)
+				if supOC.Name == cur.Name {
+					break
+				}
+
+				// next
+				sup = supOC.Sup
+			}
+		}
+	}
+
+	return nil
 }

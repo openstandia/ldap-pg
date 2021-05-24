@@ -1,4 +1,4 @@
-// +build !integration
+// +build test
 
 package main
 
@@ -62,11 +62,13 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 	return []HybridFilterTestData{
 		{
 			label: "cn=foo",
-			schemaMap: map[string]*Schema{
-				"cn": {
-					Name:        "cn",
-					Equality:    "",
-					SingleValue: true,
+			schemaMap: SchemaMap{
+				AttributeTypes: map[string]*AttributeType{
+					"cn": {
+						Name:        "cn",
+						Equality:    "",
+						SingleValue: true,
+					},
 				},
 			},
 			filter: message.NewFilterEqualityMatch("cn", "foo"),
@@ -80,16 +82,18 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 
 		{
 			label: "(&(cn=foo)(uid=bar))",
-			schemaMap: map[string]*Schema{
-				"cn": {
-					Name:        "cn",
-					Equality:    "",
-					SingleValue: true,
-				},
-				"uid": {
-					Name:        "uid",
-					Equality:    "",
-					SingleValue: true,
+			schemaMap: SchemaMap{
+				AttributeTypes: map[string]*AttributeType{
+					"cn": {
+						Name:        "cn",
+						Equality:    "",
+						SingleValue: true,
+					},
+					"uid": {
+						Name:        "uid",
+						Equality:    "",
+						SingleValue: true,
+					},
 				},
 			},
 			filter: message.FilterAnd{
@@ -107,11 +111,13 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 
 		{
 			label: "(|(cn=foo)(cn=bar))",
-			schemaMap: map[string]*Schema{
-				"cn": {
-					Name:        "cn",
-					Equality:    "",
-					SingleValue: true,
+			schemaMap: SchemaMap{
+				AttributeTypes: map[string]*AttributeType{
+					"cn": {
+						Name:        "cn",
+						Equality:    "",
+						SingleValue: true,
+					},
 				},
 			},
 			filter: message.FilterOr{
@@ -129,11 +135,13 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 
 		{
 			label: "(|(cn=foo)(cn=bar)(cn=hoge))",
-			schemaMap: map[string]*Schema{
-				"cn": {
-					Name:        "cn",
-					Equality:    "",
-					SingleValue: true,
+			schemaMap: SchemaMap{
+				AttributeTypes: map[string]*AttributeType{
+					"cn": {
+						Name:        "cn",
+						Equality:    "",
+						SingleValue: true,
+					},
 				},
 			},
 			filter: message.FilterOr{
@@ -153,21 +161,23 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 
 		{
 			label: "(|(cn=foo)(&(uid=bar)(sn=hoge)))",
-			schemaMap: map[string]*Schema{
-				"cn": {
-					Name:        "cn",
-					Equality:    "",
-					SingleValue: true,
-				},
-				"uid": {
-					Name:        "uid",
-					Equality:    "",
-					SingleValue: true,
-				},
-				"sn": {
-					Name:        "sn",
-					Equality:    "",
-					SingleValue: true,
+			schemaMap: SchemaMap{
+				AttributeTypes: map[string]*AttributeType{
+					"cn": {
+						Name:        "cn",
+						Equality:    "",
+						SingleValue: true,
+					},
+					"uid": {
+						Name:        "uid",
+						Equality:    "",
+						SingleValue: true,
+					},
+					"sn": {
+						Name:        "sn",
+						Equality:    "",
+						SingleValue: true,
+					},
 				},
 			},
 			filter: message.FilterOr{
@@ -189,11 +199,13 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 
 		{
 			label: "(!(cn=foo))",
-			schemaMap: map[string]*Schema{
-				"cn": {
-					Name:        "cn",
-					Equality:    "",
-					SingleValue: true,
+			schemaMap: SchemaMap{
+				AttributeTypes: map[string]*AttributeType{
+					"cn": {
+						Name:        "cn",
+						Equality:    "",
+						SingleValue: true,
+					},
 				},
 			},
 			filter: message.FilterNot{
@@ -209,16 +221,18 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 
 		{
 			label: "(!(&(cn=foo)(uid=bar)))",
-			schemaMap: map[string]*Schema{
-				"cn": {
-					Name:        "cn",
-					Equality:    "",
-					SingleValue: true,
-				},
-				"uid": {
-					Name:        "uid",
-					Equality:    "",
-					SingleValue: true,
+			schemaMap: SchemaMap{
+				AttributeTypes: map[string]*AttributeType{
+					"cn": {
+						Name:        "cn",
+						Equality:    "",
+						SingleValue: true,
+					},
+					"uid": {
+						Name:        "uid",
+						Equality:    "",
+						SingleValue: true,
+					},
 				},
 			},
 			filter: message.FilterNot{
@@ -238,16 +252,18 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 
 		{
 			label: "(!(|(cn=foo)(uid=bar)))",
-			schemaMap: map[string]*Schema{
-				"cn": {
-					Name:        "cn",
-					Equality:    "",
-					SingleValue: true,
-				},
-				"uid": {
-					Name:        "uid",
-					Equality:    "",
-					SingleValue: true,
+			schemaMap: SchemaMap{
+				AttributeTypes: map[string]*AttributeType{
+					"cn": {
+						Name:        "cn",
+						Equality:    "",
+						SingleValue: true,
+					},
+					"uid": {
+						Name:        "uid",
+						Equality:    "",
+						SingleValue: true,
+					},
 				},
 			},
 			filter: message.FilterNot{
@@ -267,21 +283,23 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 
 		{
 			label: "(!(|(&(cn=foo)(uid=bar))(sn=hoge)))",
-			schemaMap: map[string]*Schema{
-				"cn": {
-					Name:        "cn",
-					Equality:    "",
-					SingleValue: true,
-				},
-				"uid": {
-					Name:        "uid",
-					Equality:    "",
-					SingleValue: true,
-				},
-				"sn": {
-					Name:        "sn",
-					Equality:    "",
-					SingleValue: true,
+			schemaMap: SchemaMap{
+				AttributeTypes: map[string]*AttributeType{
+					"cn": {
+						Name:        "cn",
+						Equality:    "",
+						SingleValue: true,
+					},
+					"uid": {
+						Name:        "uid",
+						Equality:    "",
+						SingleValue: true,
+					},
+					"sn": {
+						Name:        "sn",
+						Equality:    "",
+						SingleValue: true,
+					},
 				},
 			},
 			filter: message.FilterNot{
@@ -305,11 +323,13 @@ func createHybridFilterTestData() (ret []HybridFilterTestData) {
 
 		{
 			label: "(!(!(cn=foo)))",
-			schemaMap: map[string]*Schema{
-				"cn": {
-					Name:        "cn",
-					Equality:    "",
-					SingleValue: true,
+			schemaMap: SchemaMap{
+				AttributeTypes: map[string]*AttributeType{
+					"cn": {
+						Name:        "cn",
+						Equality:    "",
+						SingleValue: true,
+					},
 				},
 			},
 			filter: message.FilterNot{

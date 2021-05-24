@@ -1439,8 +1439,8 @@ func (t *HybridDBFilterTranslator) translate(schemaMap *SchemaMap, packet messag
 	case message.FilterSubstrings:
 		attrName := string(f.Type_())
 
-		var s *Schema
-		s, ok := schemaMap.Get(attrName)
+		var s *AttributeType
+		s, ok := schemaMap.AttributeType(attrName)
 		if !ok {
 			log.Printf("warn: Ignore filter due to unsupported attribute: %s", attrName)
 			return
@@ -1504,8 +1504,8 @@ func (t *HybridDBFilterTranslator) translate(schemaMap *SchemaMap, packet messag
 	return nil
 }
 
-func (t *HybridDBFilterTranslator) StartsWithMatch(s *Schema, sb *strings.Builder, val string, i int) {
-	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
+func (t *HybridDBFilterTranslator) StartsWithMatch(s *AttributeType, sb *strings.Builder, val string, i int) {
+	sv, err := NewSchemaValue(s.schemaDef, s.Name, []string{val})
 	if err != nil {
 		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
 		return
@@ -1525,8 +1525,8 @@ func (t *HybridDBFilterTranslator) StartsWithMatch(s *Schema, sb *strings.Builde
 	sb.WriteString(`"`)
 }
 
-func (t *HybridDBFilterTranslator) AnyMatch(s *Schema, sb *strings.Builder, val string, i int) {
-	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
+func (t *HybridDBFilterTranslator) AnyMatch(s *AttributeType, sb *strings.Builder, val string, i int) {
+	sv, err := NewSchemaValue(s.schemaDef, s.Name, []string{val})
 	if err != nil {
 		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
 		return
@@ -1546,8 +1546,8 @@ func (t *HybridDBFilterTranslator) AnyMatch(s *Schema, sb *strings.Builder, val 
 	sb.WriteString(`.*"`)
 }
 
-func (t *HybridDBFilterTranslator) EndsMatch(s *Schema, sb *strings.Builder, val string, i int) {
-	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
+func (t *HybridDBFilterTranslator) EndsMatch(s *AttributeType, sb *strings.Builder, val string, i int) {
+	sv, err := NewSchemaValue(s.schemaDef, s.Name, []string{val})
 	if err != nil {
 		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
 		return
@@ -1567,9 +1567,9 @@ func (t *HybridDBFilterTranslator) EndsMatch(s *Schema, sb *strings.Builder, val
 	sb.WriteString(`$"`)
 }
 
-func (t *HybridDBFilterTranslator) EqualityMatch(s *Schema, q *HybridDBFilterTranslatorResult, val string, isNot bool) {
+func (t *HybridDBFilterTranslator) EqualityMatch(s *AttributeType, q *HybridDBFilterTranslatorResult, val string, isNot bool) {
 
-	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
+	sv, err := NewSchemaValue(s.schemaDef, s.Name, []string{val})
 	if err != nil {
 		// TODO error no entry response
 		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s, err: %+v", s.Name, val, err)
@@ -1578,7 +1578,7 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *Schema, q *HybridDBFilterTra
 	}
 
 	if s.IsAssociationAttribute() {
-		reqDN, err := s.server.NormalizeDN(val)
+		reqDN, err := s.schemaDef.server.NormalizeDN(val)
 		if err != nil {
 			log.Printf("warn: Ignore filter due to invalid DN syntax of member. attrName: %s, value: %s, err: %+v", s.Name, val, err)
 			q.where.WriteString(`FALSE`)
@@ -1592,7 +1592,7 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *Schema, q *HybridDBFilterTra
 		q.params[rdnNormKey] = reqDN.RDNNormStr()
 
 		parentDNNormKey := q.nextParamKey(s.Name)
-		q.params[parentDNNormKey] = reqDN.ParentDN().DNNormStrWithoutSuffix(s.server.Suffix)
+		q.params[parentDNNormKey] = reqDN.ParentDN().DNNormStrWithoutSuffix(s.schemaDef.server.Suffix)
 
 		/*
 			[CASE EXISTS]
@@ -1670,7 +1670,7 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *Schema, q *HybridDBFilterTra
 		}
 
 	} else if s.IsReverseAssociationAttribute() {
-		reqDN, err := s.server.NormalizeDN(val)
+		reqDN, err := s.schemaDef.server.NormalizeDN(val)
 		if err != nil {
 			log.Printf("warn: Ignore filter due to invalid DN syntax of memberOf. attrName: %s, value: %s, err: %+v", s.Name, val, err)
 			return
@@ -1680,7 +1680,7 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *Schema, q *HybridDBFilterTra
 		q.params[rdnNormKey] = reqDN.RDNNormStr()
 
 		parentDNNormKey := q.nextParamKey(s.Name)
-		q.params[parentDNNormKey] = reqDN.ParentDN().DNNormStrWithoutSuffix(s.server.Suffix)
+		q.params[parentDNNormKey] = reqDN.ParentDN().DNNormStrWithoutSuffix(s.schemaDef.server.Suffix)
 
 		/*
 			[CASE EXISTS]
@@ -1778,8 +1778,8 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *Schema, q *HybridDBFilterTra
 	}
 }
 
-func (t *HybridDBFilterTranslator) GreaterOrEqualMatch(s *Schema, q *HybridDBFilterTranslatorResult, val string, isNot bool) {
-	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
+func (t *HybridDBFilterTranslator) GreaterOrEqualMatch(s *AttributeType, q *HybridDBFilterTranslatorResult, val string, isNot bool) {
+	sv, err := NewSchemaValue(s.schemaDef, s.Name, []string{val})
 	if err != nil {
 		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
 		return
@@ -1819,8 +1819,8 @@ func (t *HybridDBFilterTranslator) GreaterOrEqualMatch(s *Schema, q *HybridDBFil
 	q.where.WriteString(filterKey)
 }
 
-func (t *HybridDBFilterTranslator) LessOrEqualMatch(s *Schema, q *HybridDBFilterTranslatorResult, val string, isNot bool) {
-	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
+func (t *HybridDBFilterTranslator) LessOrEqualMatch(s *AttributeType, q *HybridDBFilterTranslatorResult, val string, isNot bool) {
+	sv, err := NewSchemaValue(s.schemaDef, s.Name, []string{val})
 	if err != nil {
 		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
 		return
@@ -1860,7 +1860,7 @@ func (t *HybridDBFilterTranslator) LessOrEqualMatch(s *Schema, q *HybridDBFilter
 	q.where.WriteString(filterKey)
 }
 
-func (t *HybridDBFilterTranslator) PresentMatch(s *Schema, q *HybridDBFilterTranslatorResult, isNot bool) {
+func (t *HybridDBFilterTranslator) PresentMatch(s *AttributeType, q *HybridDBFilterTranslatorResult, isNot bool) {
 	if s.IsAssociationAttribute() {
 		nameKey := q.nextParamKey(s.Name)
 		q.params[nameKey] = s.Name
@@ -1905,8 +1905,8 @@ func (t *HybridDBFilterTranslator) PresentMatch(s *Schema, q *HybridDBFilterTran
 	}
 }
 
-func (t *HybridDBFilterTranslator) ApproxMatch(s *Schema, q *HybridDBFilterTranslatorResult, val string, isNot bool) {
-	sv, err := NewSchemaValue(s.server.schemaMap, s.Name, []string{val})
+func (t *HybridDBFilterTranslator) ApproxMatch(s *AttributeType, q *HybridDBFilterTranslatorResult, val string, isNot bool) {
+	sv, err := NewSchemaValue(s.schemaDef, s.Name, []string{val})
 	if err != nil {
 		log.Printf("warn: Ignore filter due to invalid syntax. attrName: %s, value: %s", s.Name, val)
 		return
@@ -2344,9 +2344,9 @@ func errorSQL(err error, query string, params map[string]interface{}) {
 	}
 }
 
-func findSchema(schemaMap *SchemaMap, attrName string) (*Schema, bool) {
-	var s *Schema
-	s, ok := schemaMap.Get(attrName)
+func findSchema(schemaMap *SchemaMap, attrName string) (*AttributeType, bool) {
+	var s *AttributeType
+	s, ok := schemaMap.AttributeType(attrName)
 	if !ok {
 		log.Printf("Unsupported filter attribute: %s", attrName)
 		return nil, false

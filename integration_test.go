@@ -9,7 +9,7 @@ import (
 	"github.com/go-ldap/ldap/v3"
 )
 
-var server *Server
+var testServer *Server
 
 func TestMain(m *testing.M) {
 
@@ -31,13 +31,14 @@ func TestParallel(t *testing.T) {
 		Parallel{
 			100,
 			[][]Command{
-				[]Command{
+				{
 					Conn{},
 					Bind{"cn=Manager", "secret", &AssertResponse{}},
 					Add{
 						"uid=user1", "ou=Users",
 						M{
 							"objectClass": A{"inetOrgPerson"},
+							"cn":          A{"user1"},
 							"sn":          A{"user1"},
 						},
 						&AssertEntry{},
@@ -54,13 +55,14 @@ func TestParallel(t *testing.T) {
 						&AssertNoEntry{},
 					},
 				},
-				[]Command{
+				{
 					Conn{},
 					Bind{"cn=Manager", "secret", &AssertResponse{}},
 					Add{
 						"uid=user2", "ou=Users",
 						M{
 							"objectClass": A{"inetOrgPerson"},
+							"cn":          A{"user2"},
 							"sn":          A{"user2"},
 						},
 						&AssertEntry{},
@@ -103,7 +105,7 @@ func TestRootDSE(t *testing.T) {
 					M{
 						"objectClass":          A{"top"},
 						"subschemaSubentry":    A{"cn=Subschema"},
-						"namingContexts":       A{server.GetSuffix()},
+						"namingContexts":       A{testServer.GetSuffix()},
 						"supportedLDAPVersion": A{"3"},
 						"supportedFeatures":    A{"1.3.6.1.4.1.4203.1.5.1"},
 						"supportedControl":     A{"1.2.840.113556.1.4.319"},
@@ -157,6 +159,7 @@ func TestBind(t *testing.T) {
 			"uid=user1", "ou=Users",
 			M{
 				"objectClass":  A{"inetOrgPerson"},
+				"cn":           A{"user1"},
 				"sn":           A{"user1"},
 				"userPassword": A{SSHA("password1")},
 			},
@@ -166,6 +169,7 @@ func TestBind(t *testing.T) {
 			"uid=user2", "ou=Users",
 			M{
 				"objectClass":  A{"inetOrgPerson"},
+				"cn":           A{"user2"},
 				"sn":           A{"user2"},
 				"userPassword": A{SSHA256("password2")},
 			},
@@ -175,6 +179,7 @@ func TestBind(t *testing.T) {
 			"uid=user3", "ou=Users",
 			M{
 				"objectClass":  A{"inetOrgPerson"},
+				"cn":           A{"user3"},
 				"sn":           A{"user3"},
 				"userPassword": A{SSHA512("password3")},
 			},
@@ -184,6 +189,7 @@ func TestBind(t *testing.T) {
 			"uid=user4", "ou=Users",
 			M{
 				"objectClass":  A{"inetOrgPerson"},
+				"cn":           A{"user4"},
 				"sn":           A{"user4"},
 				"userPassword": A{"password4"},
 			},
@@ -247,6 +253,7 @@ func TestSearchSpecialCharacters(t *testing.T) {
 			"uid=user1", "ou=Users",
 			M{
 				"objectClass":    A{"inetOrgPerson"},
+				"cn":             A{"user1"},
 				"sn":             A{"!@#$%^&*()_+|~{}:;'<>?`-=\\[]'/.,\""},
 				"userPassword":   A{SSHA("password1")},
 				"employeeNumber": A{"emp1"},
@@ -258,6 +265,7 @@ func TestSearchSpecialCharacters(t *testing.T) {
 			"uid=!@#$%^&*()_\\+|~{}:\\;'\\<\\>?`-\\=[]'/.\\,\"\\\\", "ou=Users",
 			M{
 				"objectClass":    A{"inetOrgPerson"},
+				"cn":             A{"user2"},
 				"sn":             A{"user2"},
 				"userPassword":   A{SSHA("password1")},
 				"employeeNumber": A{"emp2"},
@@ -265,7 +273,7 @@ func TestSearchSpecialCharacters(t *testing.T) {
 			nil,
 		},
 		Search{
-			"ou=Users," + server.GetSuffix(),
+			"ou=Users," + testServer.GetSuffix(),
 			"uid=!@#$%^&\\2a\\28\\29_+|~{}:;'<>?`-=[]'/.,\"\\5c",
 			ldap.ScopeWholeSubtree,
 			A{"*"},
@@ -298,6 +306,7 @@ func TestSearch(t *testing.T) {
 			"uid=user1", "ou=Users",
 			M{
 				"objectClass":    A{"inetOrgPerson"},
+				"cn":             A{"user1"},
 				"sn":             A{"user1"},
 				"userPassword":   A{SSHA("password1")},
 				"employeeNumber": A{"emp1"},
@@ -308,6 +317,7 @@ func TestSearch(t *testing.T) {
 			"uid=user2", "ou=Users",
 			M{
 				"objectClass":    A{"inetOrgPerson"},
+				"cn":             A{"user2"},
 				"sn":             A{"user2"},
 				"userPassword":   A{SSHA("password2")},
 				"employeeNumber": A{"emp2"},
@@ -316,7 +326,7 @@ func TestSearch(t *testing.T) {
 		},
 		// Equal by Multi-value
 		Search{
-			"ou=Users," + server.GetSuffix(),
+			"ou=Users," + testServer.GetSuffix(),
 			"uid=user1",
 			ldap.ScopeWholeSubtree,
 			A{"*"},
@@ -332,7 +342,7 @@ func TestSearch(t *testing.T) {
 		},
 		// Equal by Single-value
 		Search{
-			"ou=Users," + server.GetSuffix(),
+			"ou=Users," + testServer.GetSuffix(),
 			"employeeNumber=emp1",
 			ldap.ScopeWholeSubtree,
 			A{"*"},
@@ -348,7 +358,7 @@ func TestSearch(t *testing.T) {
 		},
 		// Substr by Multi-value
 		Search{
-			"ou=Users," + server.GetSuffix(),
+			"ou=Users," + testServer.GetSuffix(),
 			"uid=user*",
 			ldap.ScopeWholeSubtree,
 			A{"*"},
@@ -371,7 +381,7 @@ func TestSearch(t *testing.T) {
 		},
 		// Substr by Single-value
 		Search{
-			"ou=Users," + server.GetSuffix(),
+			"ou=Users," + testServer.GetSuffix(),
 			"employeeNumber=emp*",
 			ldap.ScopeWholeSubtree,
 			A{"*"},
@@ -411,6 +421,7 @@ func TestScopeSearch(t *testing.T) {
 			"uid=user1", "ou=Users",
 			M{
 				"objectClass":    A{"inetOrgPerson"},
+				"cn":             A{"user1"},
 				"sn":             A{"user1"},
 				"userPassword":   A{SSHA("password1")},
 				"employeeNumber": A{"emp1"},
@@ -421,6 +432,7 @@ func TestScopeSearch(t *testing.T) {
 			"uid=user2", "ou=Users",
 			M{
 				"objectClass":    A{"inetOrgPerson"},
+				"cn":             A{"user2"},
 				"sn":             A{"user2"},
 				"userPassword":   A{SSHA("password2")},
 				"employeeNumber": A{"emp2"},
@@ -431,6 +443,7 @@ func TestScopeSearch(t *testing.T) {
 			"uid=user3", "ou=SubUsers,ou=Users",
 			M{
 				"objectClass":    A{"inetOrgPerson"},
+				"cn":             A{"user3"},
 				"sn":             A{"user3"},
 				"userPassword":   A{SSHA("password3")},
 				"employeeNumber": A{"emp3"},
@@ -441,6 +454,7 @@ func TestScopeSearch(t *testing.T) {
 			"uid=user4", "ou=SubUsers,ou=Users",
 			M{
 				"objectClass":    A{"inetOrgPerson"},
+				"cn":             A{"user4"},
 				"sn":             A{"user4"},
 				"userPassword":   A{SSHA("password4")},
 				"employeeNumber": A{"emp4"},
@@ -449,7 +463,7 @@ func TestScopeSearch(t *testing.T) {
 		},
 		// base for container
 		Search{
-			"ou=Users," + server.GetSuffix(),
+			"ou=Users," + testServer.GetSuffix(),
 			"objectclass=*",
 			ldap.ScopeBaseObject,
 			A{"*", "+"},
@@ -465,7 +479,7 @@ func TestScopeSearch(t *testing.T) {
 		},
 		// sub for container
 		Search{
-			"ou=Users," + server.GetSuffix(),
+			"ou=Users," + testServer.GetSuffix(),
 			"objectclass=*",
 			ldap.ScopeWholeSubtree,
 			A{"*", "+"},
@@ -516,7 +530,7 @@ func TestScopeSearch(t *testing.T) {
 		},
 		// one for container
 		Search{
-			"ou=Users," + server.GetSuffix(),
+			"ou=Users," + testServer.GetSuffix(),
 			"objectclass=*",
 			ldap.ScopeSingleLevel,
 			A{"*", "+"},
@@ -546,7 +560,7 @@ func TestScopeSearch(t *testing.T) {
 		},
 		// children for container
 		Search{
-			"ou=Users," + server.GetSuffix(),
+			"ou=Users," + testServer.GetSuffix(),
 			"objectclass=*",
 			3,
 			A{"*", "+"},
@@ -590,7 +604,7 @@ func TestScopeSearch(t *testing.T) {
 		},
 		// base for not container(admin virtual entry)
 		Search{
-			"cn=Manager," + server.GetSuffix(),
+			"cn=Manager," + testServer.GetSuffix(),
 			"objectClass=*",
 			ldap.ScopeBaseObject,
 			A{"*", "+"},
@@ -607,7 +621,7 @@ func TestScopeSearch(t *testing.T) {
 		},
 		// base for not container
 		Search{
-			"uid=user1,ou=Users," + server.GetSuffix(),
+			"uid=user1,ou=Users," + testServer.GetSuffix(),
 			"uid=user1",
 			ldap.ScopeBaseObject,
 			A{"*", "+"},
@@ -624,7 +638,7 @@ func TestScopeSearch(t *testing.T) {
 		},
 		// sub for not container
 		Search{
-			"uid=user1,ou=Users," + server.GetSuffix(),
+			"uid=user1,ou=Users," + testServer.GetSuffix(),
 			"uid=user1",
 			ldap.ScopeWholeSubtree,
 			A{"*", "+"},
@@ -641,7 +655,7 @@ func TestScopeSearch(t *testing.T) {
 		},
 		// one for not container
 		Search{
-			"uid=user1,ou=Users," + server.GetSuffix(),
+			"uid=user1,ou=Users," + testServer.GetSuffix(),
 			"uid=user1",
 			ldap.ScopeSingleLevel,
 			A{"*", "+"},
@@ -649,7 +663,7 @@ func TestScopeSearch(t *testing.T) {
 		},
 		// children for not container
 		Search{
-			"uid=user1,ou=Users," + server.GetSuffix(),
+			"uid=user1,ou=Users," + testServer.GetSuffix(),
 			"uid=user1",
 			3,
 			A{"*", "+"},
@@ -674,6 +688,7 @@ func TestBasicCRUD(t *testing.T) {
 			"uid=user1", "ou=Users",
 			M{
 				"objectClass":  A{"inetOrgPerson"},
+				"cn":           A{"user1"},
 				"sn":           A{"user1"},
 				"userPassword": A{SSHA("password1")},
 			},
@@ -753,6 +768,7 @@ func TestBasicCRUD(t *testing.T) {
 			"uid=user1", "ou=Users",
 			M{
 				"objectClass":  A{"inetOrgPerson"},
+				"cn":           A{"user1"},
 				"sn":           A{"user1"},
 				"userPassword": A{SSHA("password1")},
 			},
@@ -777,6 +793,7 @@ func TestModRDN(t *testing.T) {
 			"uid=user1", "ou=Users",
 			M{
 				"objectClass":  A{"inetOrgPerson"},
+				"cn":           A{"user1"},
 				"sn":           A{"user1"},
 				"userPassword": A{SSHA("password1")},
 			},
@@ -868,6 +885,7 @@ func TestModRDN(t *testing.T) {
 			"uid=subuser1", "uid=user1-rename,ou=Users,ou=Groups",
 			M{
 				"objectClass":  A{"inetOrgPerson"},
+				"cn":           A{"subuser1"},
 				"sn":           A{"subuser1"},
 				"userPassword": A{SSHA("password1")},
 			},
@@ -891,8 +909,8 @@ func TestOperationalAttributes(t *testing.T) {
 	type A []string
 	type M map[string][]string
 
-	server.config.MigrationEnabled = false
-	server.LoadSchema()
+	testServer.config.MigrationEnabled = false
+	testServer.LoadSchema()
 
 	tcs := []Command{
 		Conn{},
@@ -903,6 +921,7 @@ func TestOperationalAttributes(t *testing.T) {
 			"uid=user1", "ou=Users",
 			M{
 				"objectClass":  A{"inetOrgPerson"},
+				"cn":           A{"user1"},
 				"sn":           A{"user1"},
 				"userPassword": A{SSHA("password1")},
 				"entryUUID":    A{"0b05df74-1219-495d-9d95-dc0c05e00aa9"},
@@ -920,8 +939,8 @@ func TestOperationalAttributesMigration(t *testing.T) {
 	type A []string
 	type M map[string][]string
 
-	server.config.MigrationEnabled = true
-	server.LoadSchema()
+	testServer.config.MigrationEnabled = true
+	testServer.LoadSchema()
 
 	tcs := []Command{
 		Conn{},
@@ -932,6 +951,7 @@ func TestOperationalAttributesMigration(t *testing.T) {
 			"uid=user1", "ou=Users",
 			M{
 				"objectClass":  A{"inetOrgPerson"},
+				"cn":           A{"user1"},
 				"sn":           A{"user1"},
 				"userPassword": A{SSHA("password1")},
 				"entryUUID":    A{"0b05df74-1219-495d-9d95-dc0c05e00aa9"},
@@ -939,7 +959,7 @@ func TestOperationalAttributesMigration(t *testing.T) {
 			nil,
 		},
 		Search{
-			"ou=Users," + server.GetSuffix(),
+			"ou=Users," + testServer.GetSuffix(),
 			"uid=user1",
 			ldap.ScopeWholeSubtree,
 			A{"entryUUID"},
@@ -972,6 +992,7 @@ func TestMemberOf(t *testing.T) {
 			"uid=user1", "ou=Users",
 			M{
 				"objectClass":  A{"inetOrgPerson"},
+				"cn":           A{"user1"},
 				"sn":           A{"user1"},
 				"userPassword": A{SSHA("password1")},
 			},
@@ -982,7 +1003,7 @@ func TestMemberOf(t *testing.T) {
 			M{
 				"objectClass": A{"groupOfNames"},
 				"member": A{
-					"uid=user1,ou=Users," + server.GetSuffix(),
+					"uid=user1,ou=Users," + testServer.GetSuffix(),
 				},
 			},
 			&AssertEntry{},
@@ -992,7 +1013,7 @@ func TestMemberOf(t *testing.T) {
 			M{
 				"objectClass": A{"groupOfNames"},
 				"member": A{
-					"cn=A1,ou=Groups," + server.GetSuffix(),
+					"cn=A1,ou=Groups," + testServer.GetSuffix(),
 				},
 			},
 			&AssertEntry{},
@@ -1001,12 +1022,12 @@ func TestMemberOf(t *testing.T) {
 			"cn=top", "ou=Groups",
 			M{
 				"objectClass": A{"groupOfNames"},
-				"member":      A{"cn=A,ou=Groups," + server.GetSuffix()},
+				"member":      A{"cn=A,ou=Groups," + testServer.GetSuffix()},
 			},
 			&AssertEntry{},
 		},
 		Search{
-			"ou=Users," + server.GetSuffix(),
+			"ou=Users," + testServer.GetSuffix(),
 			"uid=user1",
 			ldap.ScopeWholeSubtree,
 			A{"memberOf"},
@@ -1015,7 +1036,7 @@ func TestMemberOf(t *testing.T) {
 					"uid=user1",
 					"ou=Users",
 					M{
-						"memberOf": A{"cn=A1,ou=Groups," + server.GetSuffix()},
+						"memberOf": A{"cn=A1,ou=Groups," + testServer.GetSuffix()},
 					},
 				},
 			},

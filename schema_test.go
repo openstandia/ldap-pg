@@ -1,4 +1,4 @@
-// +build !integration
+// +build test
 
 package main
 
@@ -123,6 +123,115 @@ func TestSchemaValueOp(t *testing.T) {
 				t.Errorf("Unexpected error on %d:\nSchema: %v\n'%v' -> %v' expected, got '%v'\n", i, tc.Name, tc.Value, tc.ExpectedOrig, sv.Orig())
 				continue
 			}
+		}
+	}
+}
+
+func TestObjectClassContains(t *testing.T) {
+	server := NewServer(&ServerConfig{
+		Suffix: "dc=example,dc=com",
+	})
+	schemaDef := InitSchemaMap(server)
+
+	oc := &ObjectClass{
+		schemaDef:  schemaDef,
+		Oid:        "",
+		Name:       "user",
+		Structural: true,
+		must:       []string{"cn", "UID"},
+		may:        []string{"sn", "GIVENNAME"},
+	}
+	testcases := []struct {
+		Attr     string
+		Expected bool
+	}{
+		{
+			"cn",
+			true,
+		},
+		{
+			"UID",
+			true,
+		},
+		{
+			"sn",
+			true,
+		},
+		{
+			"CN",
+			true,
+		},
+		{
+			"uid",
+			true,
+		},
+		{
+			"SN",
+			true,
+		},
+		{
+			"givenName",
+			true,
+		},
+		{
+			"email",
+			false,
+		},
+	}
+
+	for i, tc := range testcases {
+		result := oc.Contains(tc.Attr)
+		if result != tc.Expected {
+			t.Errorf("Unexpected error on %d: Contains %s -> '%v' expected, got '%v'\n", i, tc.Attr, tc.Expected, result)
+		}
+	}
+}
+
+func TestObjectClassNormalization(t *testing.T) {
+	server := NewServer(&ServerConfig{
+		Suffix: "dc=example,dc=com",
+	})
+	schemaDef := InitSchemaMap(server)
+
+	testcases := []struct {
+		Name     string
+		Value    []string
+		Expected []string
+	}{
+		{
+			"objectClass",
+			[]string{"top", "dcObject", "organization"},
+			[]string{"organization", "top", "dcobject"},
+		},
+		{
+			"objectClass",
+			[]string{"inetOrgPerson"},
+			[]string{"inetorgperson", "organizationalperson", "person", "top"},
+		},
+		{
+			"objectClass",
+			[]string{"organizationalPerson"},
+			[]string{"organizationalperson", "person", "top"},
+		},
+		// Auxiliary case
+		// Note: Auxiliary is NOT supported fully yet
+		//   The superior of the auxiliary objectClass is not resolved
+		{
+			"objectClass",
+			[]string{"mailAccount", "inetOrgPerson"},
+			[]string{"inetorgperson", "organizationalperson", "person", "top", "mailaccount"},
+		},
+	}
+
+	for i, tc := range testcases {
+		sv, err := NewSchemaValue(schemaDef, tc.Name, tc.Value)
+		if err != nil {
+			t.Errorf("Unexpected error on %d:\nValue: %v\nExpected: %v\ngot error %v\n", i, tc.Value, tc.Expected, err)
+			continue
+		}
+		if !reflect.DeepEqual(sv.Norm(), tc.Expected) {
+			t.Errorf("Unexpected error on %d:\nValue: %v\nExpected: %v\ngot '%v'\n", i, tc.Value, tc.Expected, sv.Norm())
+			continue
 		}
 	}
 }

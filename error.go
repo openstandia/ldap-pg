@@ -128,8 +128,43 @@ func NewNoGlobalSuperiorKnowledge() *LDAPError {
 
 func NewObjectClassViolation() *LDAPError {
 	return &LDAPError{
-		Code: 65,
+		Code: ldap.LDAPResultObjectClassViolation,
 		Msg:  fmt.Sprintf("no objectClass attribute"),
+	}
+}
+
+func NewObjectClassViolationRequiresAttribute(objectClass, attrName string) *LDAPError {
+	return &LDAPError{
+		Code: ldap.LDAPResultObjectClassViolation,
+		Msg:  fmt.Sprintf("object class '%s' requires attribute '%s'", objectClass, attrName),
+	}
+}
+
+func NewObjectClassViolationNoStructural() *LDAPError {
+	return &LDAPError{
+		Code: ldap.LDAPResultObjectClassViolation,
+		Msg:  fmt.Sprintf("no structural object class provided"),
+	}
+}
+
+func NewObjectClassViolationNotAllowed(attrName string) *LDAPError {
+	return &LDAPError{
+		Code: ldap.LDAPResultObjectClassViolation,
+		Msg:  fmt.Sprintf("attribute '%s' not allowed", attrName),
+	}
+}
+
+func NewObjectClassViolationInvalidStructualChain(oc1, oc2 string) *LDAPError {
+	return &LDAPError{
+		Code: ldap.LDAPResultObjectClassViolation,
+		Msg:  fmt.Sprintf("invalid structural object class chain (%s/%s)", oc1, oc2),
+	}
+}
+
+func NewObjectClassModsProhibited(from, to string) *LDAPError {
+	return &LDAPError{
+		Code: ldap.LDAPResultObjectClassModsProhibited,
+		Msg:  fmt.Sprintf(" structural object class modification from '%s' to '%s' not allowed", from, to),
 	}
 }
 
