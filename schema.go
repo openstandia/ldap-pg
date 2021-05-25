@@ -9,26 +9,119 @@ import (
 	"time"
 )
 
-type SchemaMap map[string]*Schema
+func NewSchema(server *Server) *SchemaMap {
+	return &SchemaMap{
+		server:         server,
+		ObjectClasses:  map[string]*ObjectClass{},
+		AttributeTypes: map[string]*AttributeType{},
+	}
+}
 
-func (s SchemaMap) Get(k string) (*Schema, bool) {
-	schema, ok := s[strings.ToLower(k)]
+type SchemaMap struct {
+	server         *Server
+	ObjectClasses  map[string]*ObjectClass
+	AttributeTypes map[string]*AttributeType
+}
+
+func (s *SchemaMap) ObjectClass(k string) (*ObjectClass, bool) {
+	schema, ok := s.ObjectClasses[strings.ToLower(k)]
 	return schema, ok
 }
 
-func (s SchemaMap) Put(k string, schema *Schema) {
-	s[strings.ToLower(k)] = schema
+func (s *SchemaMap) PutObjectClass(k string, objectClass *ObjectClass) {
+	s.ObjectClasses[strings.ToLower(k)] = objectClass
+}
+
+func (s *SchemaMap) AttributeType(k string) (*AttributeType, bool) {
+	schema, ok := s.AttributeTypes[strings.ToLower(k)]
+	return schema, ok
+}
+
+func (s *SchemaMap) PutAttributeType(k string, attributeType *AttributeType) {
+	s.AttributeTypes[strings.ToLower(k)] = attributeType
+}
+
+func (s *SchemaMap) ValidateObjectClass(ocs []string, attrs map[string]*SchemaValue) *LDAPError {
+	stoc := []*ObjectClass{}
+	for i, v := range ocs {
+		oc, ok := s.ObjectClass(v)
+		if !ok {
+			log.Printf("error: not found objectClass: %s", v)
+			// Not found objectClass
+			// e.g.
+			// ldap_add: Invalid syntax (21)
+			//   additional info: objectClass: value #0 invalid per syntax
+			return NewInvalidPerSyntax("objectClass", i)
+		}
+
+		if oc.Structural {
+			stoc = append(stoc, oc)
+		}
+
+		for _, mv := range oc.Must() {
+			_, ok := attrs[mv]
+			if !ok {
+				// e.g.
+				// ldap_add: Object class violation (65)
+				//   additional info: object class 'inetOrgPerson' requires attribute 'sn'
+				return NewObjectClassViolationRequiresAttribute(oc.Name, mv)
+			}
+		}
+	}
+	if len(stoc) == 0 {
+		return NewObjectClassViolationNoStructural()
+	}
+
+	// Validate structural objectClass chain
+	sortObjectClasses(s, stoc)
+	if err := verifyChainedObjectClasses(s, stoc); err != nil {
+		return err
+	}
+
+	for k, sv := range attrs {
+		if k == "objectClass" {
+			continue
+		}
+		if sv.IsNoUserModification() {
+			continue
+		}
+		contains := false
+		for i, v := range ocs {
+			oc, ok := s.ObjectClass(v)
+			if !ok {
+				// Not found objectClass
+				// e.g.
+				// ldap_add: Invalid syntax (21)
+				//   additional info: objectClass: value #0 invalid per syntax
+				return NewInvalidPerSyntax("objectClass", i)
+			}
+
+			if oc.Contains(k) {
+				contains = true
+				break
+			}
+		}
+		// Using unknown attribute
+		if !contains {
+			// e.g.
+			// ldap_add: Object class violation (65)
+			//   additional info: attribute 'uniqueMember' not allowed
+			return NewObjectClassViolationNotAllowed(k)
+		}
+	}
+
+	return nil
 }
 
 // TODO
 var mergedSchema string = ""
 
-func (s SchemaMap) Dump() string {
+func (s *SchemaMap) Dump() string {
 	return mergedSchema
 }
 
-func (s SchemaMap) resolve() error {
-	for _, v := range s {
+func (s *SchemaMap) resolve() error {
+	for _, v := range s.AttributeTypes {
 		// log.Printf("Schema resolve %s", v.Name)
 		vv := reflect.ValueOf(v)
 
@@ -39,13 +132,13 @@ func (s SchemaMap) resolve() error {
 
 			if val == "" {
 				cur := v
-				var parent *Schema
+				var parent *AttributeType
 				for {
 					if cur.Sup == "" {
 						break
 					}
 					var ok bool
-					parent, ok = s.Get(cur.Sup)
+					parent, ok = s.AttributeType(cur.Sup)
 					if !ok {
 						return fmt.Errorf("Not found '%s' in schema.", cur.Sup)
 					}
@@ -66,8 +159,8 @@ func (s SchemaMap) resolve() error {
 	return nil
 }
 
-type Schema struct {
-	server             *Server
+type AttributeType struct {
+	schemaDef          *SchemaMap
 	Name               string
 	AName              []string
 	Oid                string
@@ -83,36 +176,94 @@ type Schema struct {
 	NoUserModification bool
 }
 
+type ObjectClass struct {
+	schemaDef  *SchemaMap
+	Name       string
+	Oid        string
+	Sup        string
+	Structural bool
+	Abstruct   bool
+	Auxiliary  bool
+	must       []string
+	may        []string
+}
+
+func (o *ObjectClass) Must() []string {
+	m := []string{}
+	m = append(m, o.must...)
+
+	if p, ok := o.schemaDef.ObjectClass(o.Sup); ok {
+		m = append(m, p.Must()...)
+	}
+	return m
+}
+
+func (o *ObjectClass) May() []string {
+	m := []string{}
+	m = append(m, o.may...)
+
+	if p, ok := o.schemaDef.ObjectClass(o.Sup); ok {
+		m = append(m, p.May()...)
+	}
+	return m
+}
+
+func (o *ObjectClass) Contains(a string) bool {
+	for _, v := range o.Must() {
+		if strings.ToLower(v) == strings.ToLower(a) {
+			return true
+		}
+	}
+	for _, v := range o.May() {
+		if strings.ToLower(v) == strings.ToLower(a) {
+			return true
+		}
+	}
+	return false
+}
+
 func InitSchemaMap(server *Server) *SchemaMap {
-	m := SchemaMap{}
+	m := NewSchema(server)
 
 	mergedSchema = mergeSchema(SCHEMA_OPENLDAP24, customSchema)
 	parseSchema(server, m, mergedSchema)
+	err := parseObjectClass(server, m, mergedSchema)
+	if err != nil {
+		log.Fatalf("error: Failed to parse objectClass: %v", err)
+	}
 
-	err := m.resolve()
+	err = m.resolve()
 	if err != nil {
 		log.Printf("error: Resolving schema error. %+v", err)
 	}
 
-	return &m
+	return m
 }
 
 var (
-	oidPattern      = regexp.MustCompile("(^.*?): \\( (.*?) ")
-	namePattern     = regexp.MustCompile("^.*?: \\( .*? NAME '(.*?)' ")
-	namesPattern    = regexp.MustCompile("^.*?: \\( .*? NAME \\( (.*?) \\) ")
-	equalityPattern = regexp.MustCompile(" EQUALITY (.*?) ")
-	syntaxPattern   = regexp.MustCompile(" SYNTAX (.*?) ")
-	substrPattern   = regexp.MustCompile(" SUBSTR (.*?) ")
-	orderingPattern = regexp.MustCompile(" ORDERING (.*?) ")
-	supPattern      = regexp.MustCompile(" SUP (.*?) ")
-	usagePattern    = regexp.MustCompile(" USAGE (.*?) ")
+	oidPattern        = regexp.MustCompile("(^.*?): \\( (.*?) ")
+	namePattern       = regexp.MustCompile("^.*?: \\( .*? NAME '(.*?)' ")
+	namesPattern      = regexp.MustCompile("^.*?: \\( .*? NAME \\( (.*?) \\) ")
+	equalityPattern   = regexp.MustCompile(" EQUALITY (.*?) ")
+	syntaxPattern     = regexp.MustCompile(" SYNTAX (.*?) ")
+	substrPattern     = regexp.MustCompile(" SUBSTR (.*?) ")
+	orderingPattern   = regexp.MustCompile(" ORDERING (.*?) ")
+	supPattern        = regexp.MustCompile(" SUP (.*?) ")
+	usagePattern      = regexp.MustCompile(" USAGE (.*?) ")
+	structuralPattern = regexp.MustCompile(" STRUCTURAL ")
+	abstractPattern   = regexp.MustCompile(" ABSTRACT ")
+	auxiliaryPattern  = regexp.MustCompile(" AUXILIARY ")
+	mustPattern       = regexp.MustCompile(" MUST (.*?) ")
+	multiMustPattern  = regexp.MustCompile(" MUST \\( (.*?) \\) ")
+	mayPattern        = regexp.MustCompile(" MAY (.*?) ")
+	multiMayPattern   = regexp.MustCompile(" MAY \\( (.*?) \\) ")
 )
 
-func parseSchema(server *Server, m SchemaMap, schemaDef string) {
+func parseSchema(server *Server, m *SchemaMap, schemaDef string) {
 	for _, line := range strings.Split(strings.TrimSuffix(schemaDef, "\n"), "\n") {
-		if strings.HasPrefix(line, "attributeTypes") {
-			stype, oid := parseOid(line)
+		stype, oid := parseOid(line)
+
+		if strings.ToLower(stype) == "attributetypes" {
 			name := parseName(line)
 
 			eg := equalityPattern.FindStringSubmatch(line)
@@ -127,8 +278,8 @@ func parseSchema(server *Server, m SchemaMap, schemaDef string) {
 				continue
 			}
 
-			s := &Schema{
-				server:      server,
+			s := &AttributeType{
+				schemaDef:   m,
 				IndexType:   "", // TODO configurable
 				SingleValue: false,
 			}
@@ -164,11 +315,11 @@ func parseSchema(server *Server, m SchemaMap, schemaDef string) {
 			if strings.Contains(line, "SINGLE-VALUE") {
 				s.SingleValue = true
 			}
-			if !server.config.MigrationEnabled && strings.Contains(line, "NO-USER-MODIFICATION") {
+			if strings.Contains(line, "NO-USER-MODIFICATION") {
 				s.NoUserModification = true
 			}
 
-			m.Put(s.Name, s)
+			m.PutAttributeType(s.Name, s)
 		}
 	}
 
@@ -176,6 +327,79 @@ func parseSchema(server *Server, m SchemaMap, schemaDef string) {
 	// if dn, ok := m.Get("distinguishedName"); ok {
 	// 	m.Put("dn", dn)
 	// }
+}
+
+func parseObjectClass(server *Server, schemaDef *SchemaMap, rawSchemaDef string) error {
+	isDefined := func(a string) bool {
+		_, ok := schemaDef.AttributeType(a)
+		return ok
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(rawSchemaDef, "\n"), "\n") {
+		stype, oid := parseOid(line)
+
+		if strings.ToLower(stype) == "objectclasses" {
+			name := parseName(line)
+			supg := supPattern.FindStringSubmatch(line)
+			stru := structuralPattern.MatchString(line)
+			abst := abstractPattern.MatchString(line)
+			auxi := auxiliaryPattern.MatchString(line)
+			must := mustPattern.FindStringSubmatch(line)
+			mmust := multiMustPattern.FindStringSubmatch(line)
+			may := mayPattern.FindStringSubmatch(line)
+			mmay := multiMayPattern.FindStringSubmatch(line)
+
+			// TODO define schemas defined as hidden schema in OpenLDAP
+			oc := &ObjectClass{
+				schemaDef:  schemaDef,
+				Oid:        oid,
+				Name:       name[0],
+				Structural: stru,
+				Abstruct:   abst,
+				Auxiliary:  auxi,
+				must:       []string{},
+				may:        []string{},
+			}
+			if supg != nil {
+				oc.Sup = supg[1]
+			}
+			if mmust != nil {
+				for _, v := range strings.Split(mmust[1], "$") {
+					v = strings.TrimSpace(v)
+					if !isDefined(v) {
+						// log.Printf("warn: %s of %s isn't defined as attributeType in the schema", v, name)
+						// return xerrors.Errorf("%s of %s isn't defined as attributeType in the schema", v, name)
+					}
+					oc.must = append(oc.must, strings.TrimSpace(v))
+				}
+			} else if must != nil {
+				if !isDefined(must[1]) {
+					// log.Printf("warn: %s of %s isn't defined as attributeType in the schema", must[1], name)
+					// return xerrors.Errorf("%s of %s isn't defined as attributeType in the schema", must[1], name)
+				}
+				oc.must = append(oc.must, must[1])
+			}
+			if mmay != nil {
+				for _, v := range strings.Split(mmay[1], "$") {
+					v = strings.TrimSpace(v)
+					if !isDefined(v) {
+						// log.Printf("warn: %s of %s isn't defined as attributeType in the schema", v, name)
+						// return xerrors.Errorf("%s of %s isn't defined as attributeType in the schema", v, name)
+					}
+					oc.may = append(oc.may, strings.TrimSpace(v))
+				}
+			} else if may != nil {
+				if !isDefined(may[1]) {
+					// log.Printf("warn: %s of %s isn't defined as attributeType in the schema", may[1], name)
+					// return xerrors.Errorf("%s of %s isn't defined as attributeType in the schema", may[1], name)
+				}
+				oc.may = append(oc.may, may[1])
+			}
+
+			schemaDef.PutObjectClass(oc.Name, oc)
+		}
+	}
+
+	return nil
 }
 
 func parseOid(line string) (string, string) {
@@ -293,7 +517,7 @@ func mergeSchema(a string, b []string) string {
 	return strings.Join(all, "\n")
 }
 
-func (s *Schema) NewSchemaValueMap(size int) SchemaValueMap {
+func (s *AttributeType) NewSchemaValueMap(size int) SchemaValueMap {
 	valMap := SchemaValueMap{
 		schema:   s,
 		valueMap: make(map[string]struct{}, size),
@@ -302,7 +526,7 @@ func (s *Schema) NewSchemaValueMap(size int) SchemaValueMap {
 }
 
 type SchemaValueMap struct {
-	schema   *Schema
+	schema   *AttributeType
 	valueMap map[string]struct{}
 }
 
@@ -325,7 +549,7 @@ func (m SchemaValueMap) Has(val string) bool {
 }
 
 type SchemaValue struct {
-	schema          *Schema
+	schema          *AttributeType
 	value           []string
 	cachedNorm      []string
 	cachedNormIndex map[string]struct{}
@@ -333,7 +557,7 @@ type SchemaValue struct {
 
 func NewSchemaValue(schemaMap *SchemaMap, attrName string, attrValue []string) (*SchemaValue, error) {
 	// TODO refactoring
-	s, ok := schemaMap.Get(attrName)
+	s, ok := schemaMap.AttributeType(attrName)
 	if !ok {
 		return nil, NewUndefinedType(attrName)
 	}
@@ -350,12 +574,6 @@ func NewSchemaValue(schemaMap *SchemaMap, attrName string, attrValue []string) (
 	_, err := sv.Normalize()
 	if err != nil {
 		return nil, err
-	}
-
-	// Check if it contains duplicate value
-	if !s.SingleValue && len(sv.value) != len(sv.cachedNormIndex) {
-		// TODO index
-		return nil, NewMoreThanOnceError(attrName, 0)
 	}
 
 	return sv, nil
@@ -376,18 +594,16 @@ func (s *SchemaValue) HasDuplicate(value *SchemaValue) bool {
 	return false
 }
 
-func (s *SchemaValue) Validate() string {
-
-	//return NewInvalidPerSyntax(attrName, 0)
-	return s.schema.Name
-}
-
 func (s *SchemaValue) IsSingle() bool {
 	return s.schema.SingleValue
 }
 
 func (s *SchemaValue) IsNoUserModification() bool {
 	return s.schema.NoUserModification
+}
+
+func (s *SchemaValue) IsNoUserModificationWithMigrationDisabled() bool {
+	return !s.schema.schemaDef.server.config.MigrationEnabled && s.schema.NoUserModification
 }
 
 func (s *SchemaValue) IsEmpty() bool {
@@ -511,23 +727,107 @@ func (s *SchemaValue) Normalize() ([]string, error) {
 		return s.cachedNorm, nil
 	}
 
-	rtn := make([]string, len(s.value))
-	m := make(map[string]struct{}, len(s.value))
-	for i, v := range s.value {
-		var err error
-		rtn[i], err = normalize(s.schema, v)
-		if err != nil {
+	// objectClasses need additional nomalization
+	// - Sort structural objectClasses by chain
+	// - Expand sup objectClasses to search by sup objectClass later
+	if s.Name() == "objectClass" {
+		stocs := []*ObjectClass{}
+		dup := map[string]struct{}{}
+		resolved := map[string]struct{}{}
+		nstocs := []*ObjectClass{}
+		for i, v := range s.value {
+			oc, ok := s.schema.schemaDef.ObjectClass(v)
+			if !ok {
+				return nil, NewInvalidPerSyntax("objectClass", i)
+			}
+
+			// Check if it contains duplicate value
+			if _, ok := dup[oc.Name]; ok {
+				return nil, NewMoreThanOnceError(s.Name(), i)
+			}
+			dup[oc.Name] = struct{}{}
+
+			if oc.Structural || oc.Abstruct {
+				// Already resolve?
+				if _, ok := resolved[oc.Name]; ok {
+					continue
+				}
+				stocs = append(stocs, oc)
+				resolved[oc.Name] = struct{}{}
+
+				// Expand sup
+				sup := oc.Sup
+				for {
+					if sup == "" {
+						break
+					}
+					// Already resolve?
+					if _, ok := resolved[sup]; ok {
+						break
+					}
+
+					if soc, ok := s.schema.schemaDef.ObjectClass(sup); ok {
+						stocs = append(stocs, soc)
+						// Recored the sup is resolved already
+						resolved[soc.Name] = struct{}{}
+
+						// next
+						sup = soc.Sup
+					} else {
+						log.Printf("warn: Can't resolve superior objectClass when normalizing. objectClass: %s", oc.Sup)
+						break
+					}
+				}
+			} else {
+				nstocs = append(nstocs, oc)
+			}
+		}
+
+		sortObjectClasses(s.schema.schemaDef, stocs)
+		if err := verifyChainedObjectClasses(s.schema.schemaDef, stocs); err != nil {
 			return nil, err
 		}
-		m[rtn[i]] = struct{}{}
-	}
-	s.cachedNorm = rtn
-	s.cachedNormIndex = m
 
-	return rtn, nil
+		rtn := make([]string, len(stocs)+len(nstocs))
+		m := make(map[string]struct{}, len(stocs)+len(nstocs))
+
+		for i := range stocs {
+			rtn[i] = strings.ToLower(stocs[i].Name)
+			m[rtn[i]] = struct{}{}
+		}
+		for i := range nstocs {
+			j := i + len(stocs)
+			rtn[j] = strings.ToLower(nstocs[i].Name)
+			m[rtn[j]] = struct{}{}
+		}
+		s.cachedNorm = rtn
+		s.cachedNormIndex = m
+
+		return rtn, nil
+
+	} else {
+		rtn := make([]string, len(s.value))
+		m := make(map[string]struct{}, len(s.value))
+		for i, v := range s.value {
+			var err error
+			rtn[i], err = normalize(s.schema, v)
+			if err != nil {
+				return nil, err
+			}
+			// Check if it contains duplicate value
+			if _, ok := m[rtn[i]]; ok {
+				return nil, NewMoreThanOnceError(s.Name(), i)
+			}
+			m[rtn[i]] = struct{}{}
+		}
+		s.cachedNorm = rtn
+		s.cachedNormIndex = m
+
+		return rtn, nil
+	}
 }
 
-func (s *Schema) IsCaseIgnore() bool {
+func (s *AttributeType) IsCaseIgnore() bool {
 	if strings.HasPrefix(s.Equality, "caseIgnore") ||
 		s.Equality == "objectIdentifierMatch" {
 		return true
@@ -535,7 +835,7 @@ func (s *Schema) IsCaseIgnore() bool {
 	return false
 }
 
-func (s *Schema) IsCaseIgnoreSubstr() bool {
+func (s *AttributeType) IsCaseIgnoreSubstr() bool {
 	if strings.HasPrefix(s.Substr, "caseIgnore") ||
 		s.Substr == "numericStringSubstringsMatch" {
 		return true
@@ -543,7 +843,7 @@ func (s *Schema) IsCaseIgnoreSubstr() bool {
 	return false
 }
 
-func (s *Schema) IsOperationalAttribute() bool {
+func (s *AttributeType) IsOperationalAttribute() bool {
 	if s.Usage == "directoryOperation" ||
 		s.Usage == "dSAOperation" {
 		return true
@@ -552,7 +852,7 @@ func (s *Schema) IsOperationalAttribute() bool {
 	return false
 }
 
-func (s *Schema) IsAssociationAttribute() bool {
+func (s *AttributeType) IsAssociationAttribute() bool {
 	if s.Name == "member" ||
 		s.Name == "uniqueMember" {
 		return true
@@ -560,11 +860,11 @@ func (s *Schema) IsAssociationAttribute() bool {
 	return false
 }
 
-func (s *Schema) IsReverseAssociationAttribute() bool {
+func (s *AttributeType) IsReverseAssociationAttribute() bool {
 	return s.Name == "memberOf"
 }
 
-func (s *Schema) IsNumberOrdering() bool {
+func (s *AttributeType) IsNumberOrdering() bool {
 	return s.Ordering == "generalizedTimeOrderingMatch" ||
 		s.Ordering == "integerOrderingMatch" ||
 		s.Ordering == "numericStringOrderingMatch" ||

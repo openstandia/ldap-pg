@@ -43,13 +43,13 @@ func (j *ModifyEntry) Put(value *SchemaValue) error {
 	return nil
 }
 
-func (j *ModifyEntry) HasKey(s *Schema) bool {
+func (j *ModifyEntry) HasKey(s *AttributeType) bool {
 	_, ok := j.attributes[s.Name]
 	return ok
 }
 
 func (j *ModifyEntry) HasAttr(attrName string) bool {
-	s, ok := j.schemaMap.Get(attrName)
+	s, ok := j.schemaMap.AttributeType(attrName)
 	if !ok {
 		return false
 	}
@@ -96,9 +96,11 @@ func (j *ModifyEntry) Add(attrName string, attrValue []string) error {
 	if err != nil {
 		return err
 	}
-	if sv.IsNoUserModification() {
+	if sv.IsNoUserModificationWithMigrationDisabled() {
 		return NewNoUserModificationAllowedConstraintViolation(sv.Name())
 	}
+
+	// Apply change
 	if err := j.addsv(sv); err != nil {
 		return err
 	}
@@ -152,9 +154,37 @@ func (j *ModifyEntry) Replace(attrName string, attrValue []string) error {
 	if err != nil {
 		return err
 	}
-	if sv.IsNoUserModification() {
+	if sv.IsNoUserModificationWithMigrationDisabled() {
 		return NewNoUserModificationAllowedConstraintViolation(sv.Name())
 	}
+
+	// Validate ObjectClass
+	if sv.Name() == "objectClass" {
+		// Normalized objectClasses are sorted
+		stoc, ok := j.GetAttrNorm("objectClass")
+		if !ok {
+			log.Printf("error: Unexpected entry. The entry doesn't have objectClass. Cancel the operation. id: %d, dn_norm: %s", j.dbEntryID, j.GetDNNorm())
+			return NewOperationsError()
+		}
+		for i, v := range sv.Orig() {
+			oc, ok := j.schemaMap.ObjectClass(v)
+			if !ok {
+				// e.g.
+				// ldap_modify: Invalid syntax (21)
+				// additional info: objectClass: value #0 invalid per syntax
+				return NewInvalidPerSyntax("objectClass", i)
+			}
+
+			if oc.Structural {
+				// e.g.
+				// ldap_modify: Cannot modify object class (69)
+				//     additional info: structural object class modification from 'inetOrgPerson' to 'person' not allowed
+				return NewObjectClassModsProhibited(stoc[0], oc.Name)
+			}
+		}
+	}
+
+	// Apply change
 	if err := j.replacesv(sv); err != nil {
 		return err
 	}
@@ -182,9 +212,37 @@ func (j *ModifyEntry) Delete(attrName string, attrValue []string) error {
 	if err != nil {
 		return err
 	}
-	if sv.IsNoUserModification() {
+	if sv.IsNoUserModificationWithMigrationDisabled() {
 		return NewNoUserModificationAllowedConstraintViolation(sv.Name())
 	}
+
+	// Validate ObjectClass
+	if sv.Name() == "objectClass" {
+		// Normalized objectClasses are sorted
+		stoc, ok := j.GetAttrNorm("objectClass")
+		if !ok {
+			log.Printf("error: Unexpected entry. The entry doesn't have objectClass. Cancel the operation. id: %d, dn_norm: %s", j.dbEntryID, j.GetDNNorm())
+			return NewOperationsError()
+		}
+		for i, v := range sv.Orig() {
+			oc, ok := j.schemaMap.ObjectClass(v)
+			if !ok {
+				// e.g.
+				// ldap_modify: Invalid syntax (21)
+				// additional info: objectClass: value #0 invalid per syntax
+				return NewInvalidPerSyntax("objectClass", i)
+			}
+
+			if oc.Structural && stoc[0] == oc.Name {
+				// e.g.
+				// ldap_modify: Object class violation (65)
+				//     additional info: no objectClass attribute
+				return NewObjectClassViolation()
+			}
+		}
+	}
+
+	// Apply change
 	if err := j.deletesv(sv); err != nil {
 		return err
 	}
@@ -226,7 +284,7 @@ func (j *ModifyEntry) deletesv(value *SchemaValue) error {
 	}
 }
 
-func (j *ModifyEntry) deleteAll(s *Schema) error {
+func (j *ModifyEntry) deleteAll(s *AttributeType) error {
 	if !j.HasAttr(s.Name) {
 		log.Printf("warn: Failed to modify/delete because of no attribute. dn: %s", j.DN().DNNormStr())
 		return NewNoSuchAttribute("modify/delete", s.Name)
@@ -235,8 +293,24 @@ func (j *ModifyEntry) deleteAll(s *Schema) error {
 	return nil
 }
 
+func (j *ModifyEntry) ObjectClassLeaf() ([]string, bool) {
+	v, ok := j.attributes["objectClass"]
+	if !ok {
+		return nil, false
+	}
+	return v.Orig(), true
+}
+
+func (j *ModifyEntry) ObjectClassesOrig() ([]string, bool) {
+	v, ok := j.attributes["objectClass"]
+	if !ok {
+		return nil, false
+	}
+	return v.Orig(), true
+}
+
 func (j *ModifyEntry) GetAttrNorm(attrName string) ([]string, bool) {
-	s, ok := j.schemaMap.Get(attrName)
+	s, ok := j.schemaMap.AttributeType(attrName)
 	if !ok {
 		return nil, false
 	}

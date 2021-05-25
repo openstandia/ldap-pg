@@ -133,7 +133,7 @@ type Bind struct {
 }
 
 func (c Bind) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
-	err := conn.Bind(c.rdn+","+server.GetSuffix(), c.password)
+	err := conn.Bind(c.rdn+","+testServer.GetSuffix(), c.password)
 	err = c.assert.AssertResponse(conn, err)
 	return conn, err
 }
@@ -261,7 +261,7 @@ func resolveDN(rdn, baseDN string) string {
 		dn = rdn + `,` + baseDN
 	}
 	if !strings.HasPrefix(strings.ToLower(rdn), "dc=") {
-		dn = dn + `,` + server.GetSuffix()
+		dn = dn + `,` + testServer.GetSuffix()
 	}
 	return dn
 }
@@ -342,7 +342,7 @@ func (m ModifyDN) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 	dn := resolveDN(m.rdn, m.baseDN)
 	var newSup = m.newSup
 	if newSup != "" {
-		newSup = newSup + "," + server.GetSuffix()
+		newSup = newSup + "," + testServer.GetSuffix()
 	}
 
 	modifyDN := ldap.NewModifyDNRequest(dn, m.newRDN, m.delOld, newSup)
@@ -451,11 +451,11 @@ func (e AssertEntries) AssertEntries(conn *ldap.Conn, err error, sr *ldap.Search
 		if expect.rdn == "" && expect.baseDN == "" {
 			dn = ""
 		} else if expect.rdn != "" && expect.baseDN == "" {
-			dn = fmt.Sprintf("%s,%s", expect.rdn, server.GetSuffix())
+			dn = fmt.Sprintf("%s,%s", expect.rdn, testServer.GetSuffix())
 		} else if expect.rdn == "" && expect.baseDN != "" {
 			dn = fmt.Sprintf("%s", expect.baseDN)
 		} else {
-			dn = fmt.Sprintf("%s,%s,%s", expect.rdn, expect.baseDN, server.GetSuffix())
+			dn = fmt.Sprintf("%s,%s,%s", expect.rdn, expect.baseDN, testServer.GetSuffix())
 		}
 		m[strings.ToLower(dn)] = expect
 	}
@@ -634,12 +634,12 @@ func SSHA512(p string) string {
 }
 
 func deleteEntry(c *ldap.Conn, rdn string) error {
-	del := ldap.NewDelRequest(rdn+","+server.GetSuffix(), nil)
+	del := ldap.NewDelRequest(rdn+","+testServer.GetSuffix(), nil)
 	return c.Del(del)
 }
 
 func searchEntry(c *ldap.Conn, rdn, baseDN string, scope int, filter string, attrs []string) (*ldap.SearchResult, error) {
-	bd := server.GetSuffix()
+	bd := testServer.GetSuffix()
 	if baseDN != "" {
 		bd = baseDN + "," + bd
 	}
@@ -686,7 +686,7 @@ var testPGPort int = 35432
 
 func setupLDAPServer() *Server {
 	go func() {
-		server = NewServer(&ServerConfig{
+		testServer = NewServer(&ServerConfig{
 			DBHostName:      "localhost",
 			DBPort:          testPGPort,
 			DBName:          "ldap",
@@ -704,7 +704,7 @@ func setupLDAPServer() *Server {
 			GoMaxProcs:      0,
 			QueryTranslator: "default",
 		})
-		server.Start()
+		testServer.Start()
 	}()
 
 	i := 0
@@ -720,7 +720,7 @@ func setupLDAPServer() *Server {
 		time.Sleep(1 * time.Second)
 		i++
 	}
-	return server
+	return testServer
 }
 
 func truncateTables() {

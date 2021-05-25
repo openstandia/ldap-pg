@@ -24,7 +24,7 @@ func (j *SearchEntry) GetAttrsOrig() map[string][]string {
 }
 
 func (j *SearchEntry) GetAttrOrig(attrName string) (string, []string, bool) {
-	s, ok := j.schemaMap.Get(attrName)
+	s, ok := j.schemaMap.AttributeType(attrName)
 	if !ok {
 		return "", nil, false
 	}
@@ -39,7 +39,7 @@ func (j *SearchEntry) GetAttrOrig(attrName string) (string, []string, bool) {
 func (j *SearchEntry) GetAttrsOrigWithoutOperationalAttrs() map[string][]string {
 	m := map[string][]string{}
 	for k, v := range j.attributes {
-		if s, ok := j.schemaMap.Get(k); ok {
+		if s, ok := j.schemaMap.AttributeType(k); ok {
 			if !s.IsOperationalAttribute() {
 				m[k] = v
 			}
@@ -51,7 +51,7 @@ func (j *SearchEntry) GetAttrsOrigWithoutOperationalAttrs() map[string][]string 
 func (j *SearchEntry) GetOperationalAttrsOrig() map[string][]string {
 	m := map[string][]string{}
 	for k, v := range j.attributes {
-		if s, ok := j.schemaMap.Get(k); ok {
+		if s, ok := j.schemaMap.AttributeType(k); ok {
 			if s.IsOperationalAttribute() {
 				m[k] = v
 			}

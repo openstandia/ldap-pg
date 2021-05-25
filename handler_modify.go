@@ -65,6 +65,15 @@ Retry:
 			}
 		}
 
+		// Validate ObjectClass
+		ocs, ok := newEntry.GetAttrNorm("objectClass")
+		if !ok {
+			return NewObjectClassViolation()
+		}
+		if err := s.schemaMap.ValidateObjectClass(ocs, newEntry.attributes); err != nil {
+			return err
+		}
+
 		return nil
 	})
 

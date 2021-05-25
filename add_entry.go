@@ -6,11 +6,6 @@ type AddEntry struct {
 	attributes map[string]*SchemaValue
 }
 
-type MemberEntry struct {
-	AttrNameNorm   string
-	MemberOfDNNorm string
-}
-
 func NewAddEntry(schemaMap *SchemaMap, dn *DN) *AddEntry {
 	entry := &AddEntry{
 		schemaMap:  schemaMap,
@@ -22,7 +17,7 @@ func NewAddEntry(schemaMap *SchemaMap, dn *DN) *AddEntry {
 }
 
 func (j *AddEntry) HasAttr(attrName string) bool {
-	s, ok := j.schemaMap.Get(attrName)
+	s, ok := j.schemaMap.AttributeType(attrName)
 	if !ok {
 		return false
 	}
@@ -66,10 +61,16 @@ func (j *AddEntry) IsDC() bool {
 }
 
 func (j *AddEntry) Validate() error {
+	// objectClass is required
 	if !j.HasAttr("objectClass") {
 		return NewObjectClassViolation()
 	}
-	// TODO more validation
+
+	// Validate objectClass
+	sv := j.attributes["objectClass"]
+	if err := j.schemaMap.ValidateObjectClass(sv.Orig(), j.attributes); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -83,7 +84,7 @@ func (j *AddEntry) Add(attrName string, attrValue []string) error {
 	if err != nil {
 		return err
 	}
-	if sv.IsNoUserModification() {
+	if sv.IsNoUserModificationWithMigrationDisabled() {
 		return NewNoUserModificationAllowedConstraintViolation(sv.Name())
 	}
 	return j.addsv(sv)
@@ -104,7 +105,7 @@ func (j *AddEntry) addsv(value *SchemaValue) error {
 }
 
 func (j *AddEntry) AttrNorm(attrName string) ([]string, bool) {
-	s, ok := j.schemaMap.Get(attrName)
+	s, ok := j.schemaMap.AttributeType(attrName)
 	if !ok {
 		return nil, false
 	}
