@@ -97,6 +97,9 @@ func (r *HybridRepository) Init() error {
 	CREATE INDEX IF NOT EXISTS idx_ldap_association_id ON ldap_association(name, id);
 	CREATE INDEX IF NOT EXISTS idx_ldap_association_member_id ON ldap_association(name, member_id);
 	`)
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
 
 	findCredByDN, err = db.PrepareNamed(`SELECT
 		e.id, e.attrs_orig->'userPassword' AS credential
