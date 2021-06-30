@@ -58,8 +58,6 @@ func (r *HybridRepository) Init() error {
 	db := r.db
 
 	_, err = db.Exec(`
-	CREATE EXTENSION IF NOT EXISTS pgcrypto;
-	
 	CREATE TABLE IF NOT EXISTS ldap_container (
 		id BIGINT PRIMARY KEY,
 		dn_norm VARCHAR(512) NOT NULL, -- cache
