@@ -266,6 +266,8 @@ func (r *HybridRepository) Insert(ctx context.Context, entry *AddEntry) (int64, 
 	// From a performance standpoint, lock with share mode.
 	dbEntry, association, err := r.AddEntryToDBEntry(tx, entry)
 	if err != nil {
+		log.Printf("warn: Failed to prepare insert. dn_norm: %s, newID: %d, err: %v", entry.DN().DNNormStr(), newID, err)
+		rollback(tx)
 		return 0, err
 	}
 
@@ -421,7 +423,7 @@ func (r *HybridRepository) insertAssociation(tx *sqlx.Tx, dn *DN, newID int64, a
 				newID, dn.DNNormStr(), err)
 		}
 
-		if num, err := result.RowsAffected(); err != nil {
+		if num, err := result.RowsAffected(); err == nil {
 			log.Printf("Inserted association. dn_norm: %s, num: %d", dn.DNNormStr(), num)
 		}
 	}
@@ -450,7 +452,7 @@ func (r *HybridRepository) Update(ctx context.Context, dn *DN, callback func(cur
 	newEntry, err := NewModifyEntry(r.server.schemaMap, dn, oJSONMap)
 	if err != nil {
 		rollback(tx)
-		xerrors.Errorf("Failed to map to ModifyEntry. dn_norm: %s, err: %w", dn.DNNormStr(), err)
+		return xerrors.Errorf("Failed to map to ModifyEntry. dn_norm: %s, err: %w", dn.DNNormStr(), err)
 	}
 	newEntry.dbEntryID = oID
 	newEntry.dbParentID = oParentID
@@ -465,11 +467,13 @@ func (r *HybridRepository) Update(ctx context.Context, dn *DN, callback func(cur
 
 	// Then, update database
 	if newEntry.dbEntryID == 0 {
+		rollback(tx)
 		return xerrors.Errorf("Invalid dbEntryId for update DBEntry. dn_norm: %s", dn.DNNormStr())
 	}
 
 	dbEntry, addAssociation, delAssociation, err := r.modifyEntryToDBEntry(tx, newEntry)
 	if err != nil {
+		rollback(tx)
 		return err
 	}
 
@@ -479,6 +483,7 @@ func (r *HybridRepository) Update(ctx context.Context, dn *DN, callback func(cur
 		"attrs_norm": dbEntry.AttrsNorm,
 		"attrs_orig": dbEntry.AttrsOrig,
 	}); err != nil {
+		rollback(tx)
 		return xerrors.Errorf("Failed to update entry. entry: %v, err: %w", newEntry, err)
 	}
 
@@ -504,11 +509,12 @@ func (r *HybridRepository) Update(ctx context.Context, dn *DN, callback func(cur
 
 		result, err := r.execQuery(tx, q)
 		if err != nil {
+			rollback(tx)
 			return xerrors.Errorf("Failed to insert association record. id: %d, dn_norm: %s, dn_orig: %s, err: %w",
 				dbEntry.ID, dn.DNNormStr(), dn.DNOrigStr(), err)
 		}
-		if num, err := result.RowsAffected(); err != nil {
-			log.Printf("inserted assiciation rows: %d", num)
+		if num, err := result.RowsAffected(); err == nil {
+			log.Printf("Inserted association rows: %d", num)
 		}
 	}
 
@@ -534,11 +540,12 @@ func (r *HybridRepository) Update(ctx context.Context, dn *DN, callback func(cur
 
 		result, err := r.execQuery(tx, q)
 		if err != nil {
+			rollback(tx)
 			return xerrors.Errorf("Failed to delete association record. id: %d, dn_norm: %s, dn_orig: %s, err: %w",
 				dbEntry.ID, dn.DNNormStr(), dn.DNOrigStr(), err)
 		}
-		if num, err := result.RowsAffected(); err != nil {
-			log.Printf("deleted association rows: %d", num)
+		if num, err := result.RowsAffected(); err == nil {
+			log.Printf("Deleted association rows: %d", num)
 		}
 	}
 
@@ -600,6 +607,7 @@ func (r *HybridRepository) UpdateDN(ctx context.Context, oldDN, newDN *DN, oldRD
 
 	entry, err := NewModifyEntry(r.server.schemaMap, oldDN, attrsOrig)
 	if err != nil {
+		rollback(tx)
 		return err
 	}
 	entry.dbEntryID = oID
@@ -734,7 +742,6 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 	// Determine we need to delete container for old parent
 	hasSub, err := r.hasSub(tx, oldParentID)
 	if err != nil {
-		rollback(tx)
 		return err
 	}
 
@@ -742,7 +749,6 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 	if !hasSub {
 		if err := r.deleteContainerByID(tx, oldParentID); err != nil {
 			if !isNoResult(err) {
-				rollback(tx)
 				return err
 			}
 			// Other threads inserted sub. Ignore the error.
@@ -943,7 +949,7 @@ func (r *HybridRepository) removeAssociationById(tx *sqlx.Tx, id int64) error {
 			deleteAllAssociationByIDStmt.QueryString, id, err)
 	}
 
-	if num, err := result.RowsAffected(); err != nil {
+	if num, err := result.RowsAffected(); err == nil {
 		log.Printf("Deleted all association. id: %d, num: %d", id, num)
 	}
 
