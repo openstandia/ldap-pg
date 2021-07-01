@@ -53,13 +53,13 @@ PostgreSQL 12 or later.
 
 ## Install
 
-### From bainary
+### From binary
 
 Please download it from [release page](../../releases).
 
 ### From source
 
-`ldap-pg` is written by Golang. Install Golang then build `ldap-pg`:
+`ldap-pg` is written by Go. Install Go then build `ldap-pg`:
 
 ```
 make

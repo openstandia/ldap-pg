@@ -536,3 +536,44 @@ func verifyChainedObjectClasses(s *SchemaMap, objectClasses []*ObjectClass) *LDA
 
 	return nil
 }
+
+type StringSet map[string]struct{}
+
+func NewStringSet(str ...string) StringSet {
+	set := StringSet{}
+	for _, v := range str {
+		set.Add(v)
+	}
+	return set
+}
+
+func (s StringSet) Add(str string) {
+	s[str] = struct{}{}
+}
+
+func (s StringSet) Size() int {
+	return len(s)
+}
+
+func (s StringSet) First() string {
+	// TODO Store the order of the map
+	for k, _ := range s {
+		return k
+	}
+	return ""
+}
+
+func (s StringSet) Contains(str string) bool {
+	_, ok := s[str]
+	return ok
+}
+
+func (s StringSet) Values() []string {
+	rtn := make([]string, s.Size())
+	i := 0
+	for k, _ := range s {
+		rtn[i] = k
+		i++
+	}
+	return rtn
+}

@@ -205,8 +205,20 @@ func (e *RetryError) Unwrap() error {
 	return e.err
 }
 
-func NewRetryError(err error) *RetryError {
+func NewRetryError(err error) error {
 	return &RetryError{
 		err: err,
 	}
+}
+
+type InvalidDNError struct {
+	dnNorm string
+}
+
+func NewInvalidDNError(dnNorm string) error {
+	return &InvalidDNError{dnNorm}
+}
+
+func (e *InvalidDNError) Error() string {
+	return fmt.Sprintf("InvalidDNError. dn_norm: %s", e.dnNorm)
 }

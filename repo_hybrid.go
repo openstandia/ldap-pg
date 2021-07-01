@@ -58,8 +58,6 @@ func (r *HybridRepository) Init() error {
 	db := r.db
 
 	_, err = db.Exec(`
-	CREATE EXTENSION IF NOT EXISTS pgcrypto;
-	
 	CREATE TABLE IF NOT EXISTS ldap_container (
 		id BIGINT PRIMARY KEY,
 		dn_norm VARCHAR(512) NOT NULL, -- cache
@@ -99,6 +97,9 @@ func (r *HybridRepository) Init() error {
 	CREATE INDEX IF NOT EXISTS idx_ldap_association_id ON ldap_association(name, id);
 	CREATE INDEX IF NOT EXISTS idx_ldap_association_member_id ON ldap_association(name, member_id);
 	`)
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
 
 	findCredByDN, err = db.PrepareNamed(`SELECT
 		e.id, e.attrs_orig->'userPassword' AS credential
@@ -2036,7 +2037,9 @@ func (r *HybridRepository) schemaValueToIDArray(tx *sqlx.Tx, schemaValueMap map[
 		return rtn, nil
 	}
 
-	dnMap := map[string][]string{}
+	dnMap := map[string]StringSet{}
+	indexMap := map[string]int{} // key: dn_norm, value: index
+
 	for i, v := range schemaValue.Orig() {
 		dn, err := NormalizeDN(r.server.schemaMap, v)
 		if err != nil {
@@ -2045,10 +2048,23 @@ func (r *HybridRepository) schemaValueToIDArray(tx *sqlx.Tx, schemaValueMap map[
 		}
 
 		parentDNNorm := dn.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
-		dnMap[parentDNNorm] = append(dnMap[parentDNNorm], dn.RDNNormStr())
+		if set, ok := dnMap[parentDNNorm]; ok {
+			set.Add(dn.RDNNormStr())
+		} else {
+			set = NewStringSet(dn.RDNNormStr())
+			dnMap[parentDNNorm] = set
+		}
 	}
 
-	return r.resolveDNMap(tx, dnMap)
+	ids, err := r.resolveDNMap(tx, dnMap)
+	if err != nil {
+		if dnErr, ok := err.(*InvalidDNError); ok {
+			index := indexMap[dnErr.dnNorm]
+			return nil, NewInvalidPerSyntax(attrName, index)
+		}
+	}
+
+	return ids, err
 }
 
 func (r *HybridRepository) dnArrayToIDArray(tx *sqlx.Tx, norm map[string]interface{}, attrName string) ([]int64, error) {
@@ -2059,7 +2075,9 @@ func (r *HybridRepository) dnArrayToIDArray(tx *sqlx.Tx, norm map[string]interfa
 		return rtn, nil
 	}
 
-	dnMap := map[string][]string{}
+	dnMap := map[string]StringSet{}
+	indexMap := map[string]int{} // key: dn_norm, value: index
+
 	for i, v := range dnArray {
 		dn, err := NormalizeDN(r.server.schemaMap, v)
 		if err != nil {
@@ -2067,51 +2085,67 @@ func (r *HybridRepository) dnArrayToIDArray(tx *sqlx.Tx, norm map[string]interfa
 			return nil, NewInvalidPerSyntax(attrName, i)
 		}
 
+		indexMap[dn.DNNormStrWithoutSuffix(r.server.Suffix)] = i
+
 		parentDNNorm := dn.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
-		dnMap[parentDNNorm] = append(dnMap[parentDNNorm], dn.RDNNormStr())
+		if set, ok := dnMap[parentDNNorm]; ok {
+			set.Add(dn.RDNNormStr())
+		} else {
+			set = NewStringSet(dn.RDNNormStr())
+			dnMap[parentDNNorm] = set
+		}
 	}
 
-	return r.resolveDNMap(tx, dnMap)
+	ids, err := r.resolveDNMap(tx, dnMap)
+	if err != nil {
+		if dnErr, ok := err.(*InvalidDNError); ok {
+			index := indexMap[dnErr.dnNorm]
+			return nil, NewInvalidPerSyntax(attrName, index)
+		}
+	}
+
+	return ids, err
 }
 
 // resolveDNMap resolves Map(key: rdn_norm, value: parent_dn_norm) to the entry's ids.
-func (r *HybridRepository) resolveDNMap(tx *sqlx.Tx, dnMap map[string][]string) ([]int64, error) {
+func (r *HybridRepository) resolveDNMap(tx *sqlx.Tx, dnMap map[string]StringSet) ([]int64, error) {
 	rtn := []int64{}
 
 	bq := `SELECT
-			e.id
+			e.id, e.rdn_norm
 		FROM
 			ldap_entry e
 			LEFT JOIN ldap_container c ON e.parent_id = c.id
 		WHERE
-			e.rdn_norm IN (:rdn_norm)
+			e.rdn_norm IN (:rdn_norms)
 			AND c.dn_norm = :parent_dn_norm
 		FOR SHARE
 		`
 
 	for k, v := range dnMap {
+		rdnNorms := v.Values()
 		q, params, err := sqlx.Named(bq, map[string]interface{}{
-			"rdn_norm":       v,
+			"rdn_norms":      rdnNorms,
 			"parent_dn_norm": k,
 		})
 		if err != nil {
-			log.Printf("error: Unexpected named query error. rdn_norm: %s, parent_dn_norm: %v, err: %v", k, v, err)
+			log.Printf("error: Unexpected named query error. rdn_norms: %v, parent_dn_norm: %s, err: %v", k, rdnNorms, err)
 			// System error
 			return nil, NewUnavailable()
 		}
 
 		q, params, err = sqlx.In(q, params...)
 		if err != nil {
-			log.Printf("error: Unexpected expand IN error. rdn_norm: %s, parent_dn_norm: %v, err: %v", k, v, err)
+			log.Printf("error: Unexpected expand IN error. rdn_norms: %v, parent_dn_norm: %s, err: %v", k, rdnNorms, err)
 			// System error
 			return nil, NewUnavailable()
 		}
 
 		q = tx.Rebind(q)
 
-		rows, err := tx.Query(q, params...)
+		rows, err := tx.Queryx(q, params...)
 		if err != nil {
-			log.Printf("error: Unexpected execute query error. rdn_norm: %s, parent_dn_norm: %v, err: %v", k, v, err)
+			log.Printf("error: Unexpected execute query error. rdn_norms: %v, parent_dn_norm: %s, err: %v", k, rdnNorms, err)
 			// System error
 			return nil, NewUnavailable()
 		}
@@ -2120,14 +2154,24 @@ func (r *HybridRepository) resolveDNMap(tx *sqlx.Tx, dnMap map[string][]string) 
 
 		var ids []int64
 		for rows.Next() {
-			var id int64
-			err = rows.Scan(&id)
+			var entry struct {
+				Id      int64  `db:"id"`
+				RDNNorm string `db:"rdn_norm"`
+			}
+			err = rows.StructScan(&entry)
 			if err != nil {
-				log.Printf("error: Unexpected query result scan error. rdn_norm: %s, parent_dn_norm: %v, err: %v", k, v, err)
+				log.Printf("error: Unexpected query result scan error. rdn_norms: %v, parent_dn_norm: %s, err: %v", k, rdnNorms, err)
 				// System error
 				return nil, NewUnavailable()
 			}
-			ids = append(ids, id)
+
+			delete(v, entry.RDNNorm)
+			ids = append(ids, entry.Id)
+		}
+
+		if v.Size() > 0 {
+			log.Printf("warn: Detected non-existent DN for association. rdn_norms: %v, parent_dn_norm: %s", v.Values(), rdnNorms)
+			return nil, NewInvalidDNError(v.First() + "," + k)
 		}
 
 		rtn = append(rtn, ids...)
