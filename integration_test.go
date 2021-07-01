@@ -1041,6 +1041,56 @@ func TestMemberOf(t *testing.T) {
 				},
 			},
 		},
+		Add{
+			"uid=user2", "ou=Users",
+			M{
+				"objectClass":  A{"inetOrgPerson"},
+				"cn":           A{"user2"},
+				"sn":           A{"user2"},
+				"userPassword": A{SSHA("password1")},
+			},
+			&AssertEntry{},
+		},
+		// Test case for duplicate members
+		Add{
+			"cn=A1", "ou=Groups",
+			M{
+				"objectClass": A{"groupOfNames"},
+				"member": A{
+					"uid=user2,ou=Users," + testServer.GetSuffix(),
+					"uid=user2,ou=Users," + testServer.GetSuffix(),
+				},
+			},
+			&AssertLDAPError{
+				expectErrorCode: ldap.LDAPResultAttributeOrValueExists,
+			},
+		},
+		// Test case for adding a non-existent member
+		Add{
+			"cn=A1", "ou=Groups",
+			M{
+				"objectClass": A{"groupOfNames"},
+				"member": A{
+					"uid=notfound,ou=Users," + testServer.GetSuffix(),
+				},
+			},
+			&AssertLDAPError{
+				expectErrorCode: ldap.LDAPResultInvalidAttributeSyntax,
+			},
+		},
+		Add{
+			"cn=A1", "ou=Groups",
+			M{
+				"objectClass": A{"groupOfNames"},
+				"member": A{
+					"uid=user2,ou=Users," + testServer.GetSuffix(),
+					"uid=notfound,ou=Users," + testServer.GetSuffix(),
+				},
+			},
+			&AssertLDAPError{
+				expectErrorCode: ldap.LDAPResultInvalidAttributeSyntax,
+			},
+		},
 	}
 
 	runTestCases(t, tcs)
