@@ -42,7 +42,7 @@ func handleBind(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 			}
 			log.Printf("info: Bind ok. DN: %s", name)
 
-			saveAuthencatedDN(m, dn)
+			saveAuthencatedDNAsRoot(m, dn)
 
 			w.Write(res)
 			return
@@ -58,7 +58,7 @@ func handleBind(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 		log.Printf("info: Find bind user. DN: %s", dn.DNNormStr())
 
-		bindUserCred, err := s.Repo().FindCredByDN(ctx, dn)
+		bindCredential, err := s.Repo().FindCredentialByDN(ctx, dn)
 		if err != nil {
 			var lerr *LDAPError
 			if ok := xerrors.As(err, &lerr); ok {
@@ -81,7 +81,7 @@ func handleBind(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		}
 
 		// If the user doesn't have credentials, always return 'invalid credential'.
-		if len(bindUserCred) == 0 {
+		if len(bindCredential.Credential) == 0 {
 			log.Printf("info: Bind failed - Not found credentials. DN: %s, err: %s", name, err)
 
 			res.SetResultCode(ldap.LDAPResultInvalidCredentials)
@@ -90,7 +90,7 @@ func handleBind(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 			return
 		}
 
-		if ok := validateCreds(s, pass, bindUserCred); !ok {
+		if ok := validateCreds(s, pass, bindCredential.Credential); !ok {
 			log.Printf("info: Bind failed - Invalid credentials. DN: %s", name)
 
 			res.SetResultCode(ldap.LDAPResultInvalidCredentials)
@@ -99,7 +99,7 @@ func handleBind(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 			return
 		}
 
-		saveAuthencatedDN(m, dn)
+		saveAuthencatedDN(m, dn, bindCredential.MemberOf)
 
 		// Success
 		log.Printf("info: Bind ok. DN: %s", name)
@@ -186,11 +186,23 @@ func doPassThrough(s *Server, input, passThroughKey string) (bool, error) {
 	return false, xerrors.Errorf("Invalid domain. domain: %s, uid: %s", domain, uid)
 }
 
-func saveAuthencatedDN(m *ldap.Message, dn *DN) {
+func saveAuthencatedDNAsRoot(m *ldap.Message, dn *DN) {
 	session := getAuthSession(m)
-	if v, ok := session["dn"]; ok {
-		log.Printf("info: Switching authenticated user: %s -> %s", v.DNNormStr(), dn.DNNormStr())
+	if session.DN != nil {
+		log.Printf("info: Switching authenticated user: %s -> %s", session.DN.DNNormStr(), dn.DNNormStr())
 	}
-	session["dn"] = dn
+	session.DN = dn
+	session.IsRoot = true
+	log.Printf("Saved authenticated DN: %s", dn.DNNormStr())
+}
+
+func saveAuthencatedDN(m *ldap.Message, dn *DN, groups []*DN) {
+	session := getAuthSession(m)
+	if session.DN != nil {
+		log.Printf("info: Switching authenticated user: %s -> %s", session.DN.DNNormStr(), dn.DNNormStr())
+	}
+	session.DN = dn
+	session.Groups = groups
+	session.IsRoot = false
 	log.Printf("Saved authenticated DN: %s", dn.DNNormStr())
 }

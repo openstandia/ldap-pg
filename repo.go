@@ -72,6 +72,10 @@ type Repository interface {
 	// This is used for BIND operation.
 	FindCredByDN(ctx context.Context, dn *DN) ([]string, error)
 
+	// FindCredentialByDN returns the credential by specified DN.
+	// This is used for BIND operation.
+	FindCredentialByDN(ctx context.Context, dn *DN) (*FetchedCredential, error)
+
 	// Search handles search request by filter.
 	// This is used for SEARCH operation.
 	Search(ctx context.Context, baseDN *DN, option *SearchOption, handler func(entry *SearchEntry) error) (int32, int32, error)
@@ -104,4 +108,11 @@ type SearchOption struct {
 type FetchedDNOrig struct {
 	ID     int64  `db:"id"`
 	DNOrig string `db:"dn_orig"`
+}
+
+type FetchedCredential struct {
+	// Credential
+	Credential []string
+	// DN of the MemberOf
+	MemberOf []*DN
 }

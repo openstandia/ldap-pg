@@ -46,6 +46,7 @@ type ServerConfig struct {
 	GoMaxProcs        int
 	MigrationEnabled  bool
 	QueryTranslator   string
+	SimpleACL         []string
 }
 
 type Server struct {
@@ -57,6 +58,7 @@ type Server struct {
 	Suffix     *DN
 	repo       Repository
 	schemaMap  *SchemaMap
+	simpleACL  *SimpleACL
 }
 
 func NewServer(c *ServerConfig) *Server {
@@ -168,6 +170,12 @@ func (s *Server) Start() {
 	s.rootDN, err = s.NormalizeDN(s.config.RootDN)
 	if err != nil {
 		log.Fatalf("alert: Invalid root-dn format: %s, err: %s", s.config.RootDN, err)
+	}
+
+	// Init ACL
+	s.simpleACL, err = NewSimpleACL(s)
+	if err != nil {
+		log.Fatalf("alert: Invalid acl format: %v, err: %s", s.config.SimpleACL, err)
 	}
 
 	//Create a new LDAP Server

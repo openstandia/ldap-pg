@@ -70,7 +70,7 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	}
 
 	// Phase 2: authorization
-	if !requiredAuthz(m, "search", baseDN) {
+	if !s.RequiredAuthz(m, SearchOps, baseDN) {
 		responseSearchError(w, NewInsufficientAccess())
 		return
 	}
@@ -103,7 +103,7 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	}
 
 	maxCount, limittedCount, err := s.Repo().Search(ctx, baseDN, option, func(searchEntry *SearchEntry) error {
-		responseEntry(s, w, r, searchEntry)
+		responseEntry(s, w, m, r, searchEntry)
 		return nil
 	})
 	if err != nil {
@@ -143,8 +143,10 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	}
 }
 
-func responseEntry(s *Server, w ldap.ResponseWriter, r message.SearchRequest, searchEntry *SearchEntry) {
+func responseEntry(s *Server, w ldap.ResponseWriter, m *ldap.Message, r message.SearchRequest, searchEntry *SearchEntry) {
 	log.Printf("Response Entry: %+v", searchEntry)
+
+	session := getAuthSession(m)
 
 	e := ldap.NewSearchResultEntry(resolveSuffix(s, searchEntry.DNOrigStr()))
 
@@ -152,6 +154,11 @@ func responseEntry(s *Server, w ldap.ResponseWriter, r message.SearchRequest, se
 
 	if isAllAttributesRequested(r) {
 		for k, v := range searchEntry.GetAttrsOrigWithoutOperationalAttrs() {
+			if !s.simpleACL.CanVisible(session, k) {
+				log.Printf("- Ignore Attribute %s", k)
+				continue
+			}
+
 			log.Printf("- Attribute %s: %#v", k, v)
 
 			av := make([]message.AttributeValue, len(v))
@@ -166,6 +173,11 @@ func responseEntry(s *Server, w ldap.ResponseWriter, r message.SearchRequest, se
 
 	for _, attr := range r.Attributes() {
 		a := string(attr)
+
+		if !s.simpleACL.CanVisible(session, a) {
+			log.Printf("- Ignore Attribute %s", a)
+			continue
+		}
 
 		log.Printf("Requested attr: %s", a)
 
@@ -195,6 +207,11 @@ func responseEntry(s *Server, w ldap.ResponseWriter, r message.SearchRequest, se
 
 	if isOperationalAttributesRequested(r) {
 		for k, v := range searchEntry.GetOperationalAttrsOrig() {
+			if !s.simpleACL.CanVisible(session, k) {
+				log.Printf("- Ignore Attribute %s", k)
+				continue
+			}
+
 			if _, ok := sentAttrs[k]; !ok {
 				for _, vv := range v {
 					e.AddAttribute(message.AttributeDescription(k), message.AttributeValue(vv))

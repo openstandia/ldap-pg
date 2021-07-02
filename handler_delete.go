@@ -22,7 +22,7 @@ func handleDelete(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	if !requiredAuthz(m, "delete", dn) {
+	if !s.RequiredAuthz(m, DeleteOps, dn) {
 		responseDeleteError(w, NewInsufficientAccess())
 		return
 	}

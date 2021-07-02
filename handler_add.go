@@ -20,7 +20,7 @@ func handleAdd(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	if !requiredAuthz(m, "add", dn) {
+	if !s.RequiredAuthz(m, AddOps, dn) {
 		responseAddError(w, NewInsufficientAccess())
 		return
 	}

@@ -102,10 +102,17 @@ func (r *HybridRepository) Init() error {
 	}
 
 	findCredByDN, err = db.PrepareNamed(`SELECT
-		e.id, e.attrs_orig->'userPassword' AS credential
+		e.id,
+		e.attrs_orig->'userPassword' AS credential,
+		memberOf.memberOf AS memberOf 
 	FROM
 		ldap_entry e
 		LEFT JOIN ldap_container c ON e.parent_id = c.id
+		LEFT JOIN LATERAL (
+			SELECT jsonb_agg(ae.rdn_orig || ',' || ac.dn_orig) AS memberOf
+			FROM ldap_association a, ldap_entry ae, ldap_container ac
+			WHERE e.id = a.member_id AND ae.id = a.id AND ac.id = ae.parent_id
+		) AS memberOf ON true 
 	WHERE
 		e.rdn_norm = :rdn_norm
 		AND c.dn_norm = :parent_dn_norm
@@ -1614,7 +1621,7 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *AttributeType, q *HybridDBFi
 			) t1 ON t1.id = e.id
 
 			[CASE NOT EXISTS]
-			-- association filter by memberOf
+			-- association filter by uniqueMember
 			LEFT JOIN (
 				SELECT DISTINCT
 					a1.id
@@ -2291,6 +2298,65 @@ func (r *HybridRepository) FindCredByDN(ctx context.Context, dn *DN) ([]string, 
 	}
 
 	return cred, nil
+}
+
+func (r *HybridRepository) FindCredentialByDN(ctx context.Context, dn *DN) (*FetchedCredential, error) {
+	tx, err := r.beginReadonly(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer rollback(tx)
+
+	dest := struct {
+		ID            int64          `db:"id"`
+		RawCredential types.JSONText `db:"credential"` // No real column in the table
+		RawMemberOf   types.JSONText `db:"memberof"`   // No real column in the table
+	}{}
+
+	if err := r.get(tx, findCredByDN, &dest, map[string]interface{}{
+		"rdn_norm":       dn.RDNNormStr(),
+		"parent_dn_norm": dn.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix),
+	}); err != nil {
+		if isNoResult(err) {
+			return nil, NewInvalidCredentials()
+		}
+		// TODO error
+		return nil, xerrors.Errorf("Failed to find cred by DN. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
+	}
+
+	var cred []string
+	err = dest.RawCredential.Unmarshal(&cred)
+	if err != nil {
+		// TODO error
+		return nil, xerrors.Errorf("Failed to unmarshal credential array. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
+	}
+
+	var memberOfDN []*DN
+
+	if len(dest.RawMemberOf) > 0 {
+		var memberOf []string
+		err = dest.RawMemberOf.Unmarshal(&memberOf)
+		if err != nil {
+			// TODO error
+			return nil, xerrors.Errorf("Failed to unmarshal memberOf array. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
+		}
+
+		memberOfDN = make([]*DN, len(memberOf))
+		for i, v := range memberOf {
+			memberOfDN[i], err = r.server.NormalizeDN(resolveSuffix(r.server, v))
+			if err != nil {
+				// TODO error
+				return nil, xerrors.Errorf("Failed to normalize memberOf. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
+			}
+		}
+	}
+
+	fc := &FetchedCredential{
+		Credential: cred,
+		MemberOf:   memberOfDN,
+	}
+
+	return fc, nil
 }
 
 //////////////////////////////////////////

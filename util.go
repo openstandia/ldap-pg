@@ -24,6 +24,12 @@ import (
 
 const TIMESTAMP_FORMAT string = "20060102150405Z"
 
+type AuthSession struct {
+	DN     *DN
+	Groups []*DN
+	IsRoot bool
+}
+
 func getSession(m *ldap.Message) map[string]interface{} {
 	store := m.Client.GetCustomData()
 	if sessionMap, ok := store.(map[string]interface{}); ok {
@@ -35,30 +41,15 @@ func getSession(m *ldap.Message) map[string]interface{} {
 	}
 }
 
-func getAuthSession(m *ldap.Message) map[string]*DN {
+func getAuthSession(m *ldap.Message) *AuthSession {
 	session := getSession(m)
 	if authSession, ok := session["auth"]; ok {
-		return authSession.(map[string]*DN)
+		return authSession.(*AuthSession)
 	} else {
-		authSession := map[string]*DN{}
+		authSession := &AuthSession{}
 		session["auth"] = authSession
 		return authSession
 	}
-}
-
-func requiredAuthz(m *ldap.Message, operation string, targetDN *DN) bool {
-	session := getAuthSession(m)
-	if dn, ok := session["dn"]; ok {
-		log.Printf("info: Authorized. authorizedDN: %s, targetDN: %s", dn.DNNormStr(), targetDN.DNNormStr())
-
-		// TODO authz
-
-		return true
-	}
-
-	log.Printf("warn: Not Authorized for anonymous. targetDN: %s", targetDN.DNNormStr())
-
-	return false
 }
 
 func getPageSession(m *ldap.Message) map[string]int32 {

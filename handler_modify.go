@@ -24,7 +24,7 @@ func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	if !requiredAuthz(m, "modify", dn) {
+	if !s.RequiredAuthz(m, ModifyOps, dn) {
 		responseModifyError(w, NewInsufficientAccess())
 		return
 	}
