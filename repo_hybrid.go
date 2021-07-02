@@ -1993,19 +1993,27 @@ func (r *HybridRepository) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*Hyb
 	// Timestamp
 	created := time.Now()
 	updated := created
+	// If migration mode is enabled, we use the specified values
 	if _, ok := norm["createTimestamp"]; ok {
-		// Already validated, ignore error
-		created, _ = time.Parse(TIMESTAMP_FORMAT, norm["createTimestamp"].([]string)[0])
+		// Migration mode
+		// It's normlized already, but it's string. Need to convert to int64
+		v, _ := strconv.ParseInt(norm["createTimestamp"].([]string)[0], 10, 64)
+		norm["createTimestamp"] = []int64{v}
+	} else {
+		norm["createTimestamp"] = []int64{created.Unix()}
+		orig["createTimestamp"] = []string{created.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 	}
-	norm["createTimestamp"] = []int64{created.Unix()}
-	orig["createTimestamp"] = []string{created.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 
+	// If migration mode is enabled, we use the specified values
 	if _, ok := norm["modifyTimestamp"]; ok {
-		// Already validated, ignore error
-		updated, _ = time.Parse(TIMESTAMP_FORMAT, norm["modifyTimestamp"].([]string)[0])
+		// Migration mode
+		// It's normlized already, but it's string. Need to convert to int64
+		v, _ := strconv.ParseInt(norm["modifyTimestamp"].([]string)[0], 10, 64)
+		norm["modifyTimestamp"] = []int64{v}
+	} else {
+		norm["modifyTimestamp"] = []int64{updated.Unix()}
+		orig["modifyTimestamp"] = []string{updated.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 	}
-	norm["modifyTimestamp"] = []int64{updated.Unix()}
-	orig["modifyTimestamp"] = []string{updated.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 
 	bNorm, _ := json.Marshal(norm)
 	bOrig, _ := json.Marshal(orig)
