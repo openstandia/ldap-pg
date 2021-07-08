@@ -223,6 +223,12 @@ func normalize(s *AttributeType, value string, index int) (string, error) {
 	case "numericStringMatch":
 		return removeAllSpace(value), nil
 	case "integerMatch":
+		_, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			// Invalid syntax (21)
+			// additional info: pwdLockoutDuration: value #0 invalid per syntax
+			return "", NewInvalidPerSyntax(s.Name, index)
+		}
 		return value, nil
 	case "booleanMatch":
 		return normalizeBoolean(s, value, index)
