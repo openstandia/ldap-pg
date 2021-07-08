@@ -2426,7 +2426,7 @@ func (r *HybridRepository) Bind(ctx context.Context, dn *DN, callback func(curre
 
 	if len(attrsOrig.PwdFailureTime) > 0 {
 		for _, v := range attrsOrig.PwdFailureTime {
-			t, err := time.Parse(TIMESTAMP_FORMAT, v)
+			t, err := time.Parse(TIMESTAMP_NANO_FORMAT, v)
 			if err != nil {
 				rollback(tx)
 				return xerrors.Errorf("Failed to parse pwdFailureTime. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
@@ -2477,7 +2477,7 @@ func (r *HybridRepository) Bind(ctx context.Context, dn *DN, callback func(curre
 
 			if lerr.IsAccountLocking() {
 				// Record pwdAccountLockedTime to lock it
-				ltn, lto = timeToJSONAttrs(&ft)
+				ltn, lto = timeToJSONAttrs(TIMESTAMP_FORMAT, &ft)
 			} else {
 				// Clear pwdAccountLockedTime
 				ltn, lto = emptyJSONArray()
@@ -2488,7 +2488,7 @@ func (r *HybridRepository) Bind(ctx context.Context, dn *DN, callback func(curre
 			if over > 0 {
 				currentPwdFailureTime = currentPwdFailureTime[over:]
 			}
-			ftn, fto := timesToJSONAttrs(currentPwdFailureTime)
+			ftn, fto := timesToJSONAttrs(TIMESTAMP_NANO_FORMAT, currentPwdFailureTime)
 
 			// Don't rollback, commit the transaction.
 			if _, err := r.exec(tx, updateAfterBindFailureByDN, map[string]interface{}{
@@ -2506,7 +2506,7 @@ func (r *HybridRepository) Bind(ctx context.Context, dn *DN, callback func(curre
 		}
 	} else {
 		// Record authTimestamp, also remove pwdAccountLockedTime and pwdFailureTime
-		n, o := nowTimeToJSONAttrs()
+		n, o := nowTimeToJSONAttrs(TIMESTAMP_FORMAT)
 
 		if _, err := r.exec(tx, updateAfterBindSuccessByDN, map[string]interface{}{
 			"id":                  dest.ID,

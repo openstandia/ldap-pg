@@ -21,6 +21,9 @@ func handleAdd(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	}
 
 	if !s.RequiredAuthz(m, AddOps, dn) {
+		// TODO return errror message
+		// ldap_add: Insufficient access (50)
+		// additional info: no write access to parent
 		responseAddError(w, NewInsufficientAccess())
 		return
 	}

@@ -25,6 +25,7 @@ import (
 )
 
 const TIMESTAMP_FORMAT string = "20060102150405Z"
+const TIMESTAMP_NANO_FORMAT string = "20060102150405.000000Z"
 
 type AuthSession struct {
 	DN     *DN
@@ -588,9 +589,9 @@ func (s StringSet) Values() []string {
 	return rtn
 }
 
-func timeToJSONAttrs(t *time.Time) (types.JSONText, types.JSONText) {
+func timeToJSONAttrs(format string, t *time.Time) (types.JSONText, types.JSONText) {
 	norm := []int64{t.Unix()}
-	orig := []string{t.In(time.UTC).Format(TIMESTAMP_FORMAT)}
+	orig := []string{t.In(time.UTC).Format(format)}
 
 	bNorm, _ := json.Marshal(norm)
 	bOrig, _ := json.Marshal(orig)
@@ -598,11 +599,11 @@ func timeToJSONAttrs(t *time.Time) (types.JSONText, types.JSONText) {
 	return types.JSONText(bNorm), types.JSONText(bOrig)
 }
 
-func nowTimeToJSONAttrs() (types.JSONText, types.JSONText) {
+func nowTimeToJSONAttrs(format string) (types.JSONText, types.JSONText) {
 	now := time.Now()
 
 	norm := []int64{now.Unix()}
-	orig := []string{now.In(time.UTC).Format(TIMESTAMP_FORMAT)}
+	orig := []string{now.In(time.UTC).Format(format)}
 
 	bNorm, _ := json.Marshal(norm)
 	bOrig, _ := json.Marshal(orig)
@@ -620,13 +621,13 @@ func emptyJSONArray() (types.JSONText, types.JSONText) {
 	return types.JSONText(bNorm), types.JSONText(bOrig)
 }
 
-func timesToJSONAttrs(t []*time.Time) (types.JSONText, types.JSONText) {
+func timesToJSONAttrs(format string, t []*time.Time) (types.JSONText, types.JSONText) {
 	norm := make([]int64, len(t))
 	orig := make([]string, len(t))
 
 	for i, v := range t {
 		norm[i] = v.Unix()
-		orig[i] = v.In(time.UTC).Format(TIMESTAMP_FORMAT)
+		orig[i] = v.In(time.UTC).Format(format)
 	}
 
 	bNorm, _ := json.Marshal(norm)
