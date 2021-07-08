@@ -2332,7 +2332,7 @@ func (r *HybridRepository) Bind(ctx context.Context, dn *DN, callback func(curre
 	var dppRDNNorm string
 	var dppParentDNNorm string
 
-	if r.server.defaultPPolicyDN != nil {
+	if !r.server.defaultPPolicyDN.IsAnonymous() {
 		dppRDNNorm = r.server.defaultPPolicyDN.RDNNormStr()
 		dppParentDNNorm = r.server.defaultPPolicyDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
 	}
