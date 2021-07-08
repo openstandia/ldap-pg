@@ -51,6 +51,12 @@ var (
 
 	// repo_read for bind
 	findCredByDN *sqlx.NamedStmt
+	// repo_update for bind
+	updateAfterBindSuccessByDN *sqlx.NamedStmt
+	updateAfterBindFailureByDN *sqlx.NamedStmt
+
+	// repo_read for ppolicy
+	findPPolicyByDN *sqlx.NamedStmt
 )
 
 func (r *HybridRepository) Init() error {
@@ -104,7 +110,10 @@ func (r *HybridRepository) Init() error {
 	findCredByDN, err = db.PrepareNamed(`SELECT
 		e.id,
 		e.attrs_orig->'userPassword' AS credential,
-		memberOf.memberOf AS memberOf 
+		e.attrs_orig->'pwdAccountLockedTime' AS locked_time,
+		e.attrs_orig->'pwdFailureTime' AS failure_time,
+		memberOf.memberOf AS memberof,
+		dpp.attrs_orig AS default_ppolicy
 	FROM
 		ldap_entry e
 		LEFT JOIN ldap_container c ON e.parent_id = c.id
@@ -113,6 +122,42 @@ func (r *HybridRepository) Init() error {
 			FROM ldap_association a, ldap_entry ae, ldap_container ac
 			WHERE e.id = a.member_id AND ae.id = a.id AND ac.id = ae.parent_id
 		) AS memberOf ON true 
+		LEFT JOIN LATERAL (
+			SELECT dppe.attrs_orig
+			FROM ldap_entry dppe, ldap_container dppc
+			WHERE dppe.rdn_norm = :dpp_rdn_norm AND dppc.id = dppe.parent_id AND dppc.dn_norm = :dpp_parent_dn_norm
+		) AS dpp ON true 
+	WHERE
+		e.rdn_norm = :rdn_norm
+		AND c.dn_norm = :parent_dn_norm
+	FOR UPDATE OF e
+	`)
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
+
+	updateAfterBindSuccessByDN, err = db.PrepareNamed(`UPDATE ldap_entry SET
+	attrs_norm = attrs_norm - 'pwdAccountLockedTime' - 'pwdFailureTime' || jsonb_build_object('authTimestamp', :auth_timestamp_norm ::::jsonb),
+	attrs_orig = attrs_orig - 'pwdAccountLockedTime' - 'pwdFailureTime' || jsonb_build_object('authTimestamp', :auth_timestamp_orig ::::jsonb)
+	WHERE id = :id`)
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
+
+	updateAfterBindFailureByDN, err = db.PrepareNamed(`UPDATE ldap_entry SET
+	attrs_norm = attrs_norm || jsonb_build_object('pwdAccountLockedTime', :lock_time_norm ::::jsonb) || jsonb_build_object('pwdFailureTime', :failure_time_norm ::::jsonb),
+	attrs_orig = attrs_orig || jsonb_build_object('pwdAccountLockedTime', :lock_time_orig ::::jsonb) || jsonb_build_object('pwdFailureTime', :failure_time_orig ::::jsonb)
+	WHERE id = :id`)
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
+
+	findPPolicyByDN, err = db.PrepareNamed(`SELECT
+		e.id,
+		e.attrs_orig AS ppolicy
+	FROM
+		ldap_entry e
+		LEFT JOIN ldap_container c ON e.parent_id = c.id
 	WHERE
 		e.rdn_norm = :rdn_norm
 		AND c.dn_norm = :parent_dn_norm
@@ -2269,66 +2314,69 @@ func (r *HybridRepository) modifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry)
 // Bind
 //////////////////////////////////////////
 
-func (r *HybridRepository) FindCredByDN(ctx context.Context, dn *DN) ([]string, error) {
-	tx, err := r.beginReadonly(ctx)
+func (r *HybridRepository) Bind(ctx context.Context, dn *DN, callback func(current *FetchedCredential) error) error {
+	tx, err := r.begin(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	defer rollback(tx)
 
 	dest := struct {
-		ID   int64          `db:"id"`
-		Cred types.JSONText `db:"credential"`
+		ID                 int64          `db:"id"`
+		RawCredentialOrig  types.JSONText `db:"credential"`      // No real column in the table
+		RawLockedTimeOrig  types.JSONText `db:"locked_time"`     // No real column in the table
+		RawFailureTimeOrig types.JSONText `db:"failure_time"`    // No real column in the table
+		RawMemberOf        types.JSONText `db:"memberof"`        // No real column in the table
+		RawDefaultPPolicy  types.JSONText `db:"default_ppolicy"` // No real column in the table
 	}{}
 
+	var dppRDNNorm string
+	var dppParentDNNorm string
+
+	if r.server.defaultPPolicyDN != nil {
+		dppRDNNorm = r.server.defaultPPolicyDN.RDNNormStr()
+		dppParentDNNorm = r.server.defaultPPolicyDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
+	}
+
 	if err := r.get(tx, findCredByDN, &dest, map[string]interface{}{
-		"rdn_norm":       dn.RDNNormStr(),
-		"parent_dn_norm": dn.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix),
+		"rdn_norm":           dn.RDNNormStr(),
+		"parent_dn_norm":     dn.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix),
+		"dpp_rdn_norm":       dppRDNNorm,
+		"dpp_parent_dn_norm": dppParentDNNorm,
 	}); err != nil {
+		rollback(tx)
 		if isNoResult(err) {
-			return nil, NewInvalidCredentials()
+			// Return Invalid credentials (49) if no user
+			return NewInvalidCredentials()
 		}
-		return nil, xerrors.Errorf("Failed to find cred by DN. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
+		return xerrors.Errorf("Failed to find cred by DN. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
 	}
 
-	var cred []string
-	err = dest.Cred.Unmarshal(&cred)
-	if err != nil {
-		return nil, xerrors.Errorf("Failed to unmarshal cred array. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
-	}
-
-	return cred, nil
-}
-
-func (r *HybridRepository) FindCredentialByDN(ctx context.Context, dn *DN) (*FetchedCredential, error) {
-	tx, err := r.beginReadonly(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer rollback(tx)
-
-	dest := struct {
-		ID            int64          `db:"id"`
-		RawCredential types.JSONText `db:"credential"` // No real column in the table
-		RawMemberOf   types.JSONText `db:"memberof"`   // No real column in the table
+	attrsOrig := struct {
+		Credentials          []string `json:"credentials"`          // No real column in the table
+		PwdAccountLockedTime []string `json:"pwdAccountLockedTime"` // No real column in the table
+		PwdFailureTime       []string `json:"pwdFailureTime"`       // No real column in the table
 	}{}
 
-	if err := r.get(tx, findCredByDN, &dest, map[string]interface{}{
-		"rdn_norm":       dn.RDNNormStr(),
-		"parent_dn_norm": dn.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix),
-	}); err != nil {
-		if isNoResult(err) {
-			return nil, NewInvalidCredentials()
+	if len(dest.RawCredentialOrig) > 0 {
+		err = dest.RawCredentialOrig.Unmarshal(&attrsOrig.Credentials)
+		if err != nil {
+			rollback(tx)
+			return xerrors.Errorf("Failed to unmarshal credential. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
 		}
-		// TODO error
-		return nil, xerrors.Errorf("Failed to find cred by DN. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
 	}
-
-	var cred []string
-	err = dest.RawCredential.Unmarshal(&cred)
-	if err != nil {
-		// TODO error
-		return nil, xerrors.Errorf("Failed to unmarshal credential array. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
+	if len(dest.RawLockedTimeOrig) > 0 {
+		err = dest.RawLockedTimeOrig.Unmarshal(&attrsOrig.PwdAccountLockedTime)
+		if err != nil {
+			rollback(tx)
+			return xerrors.Errorf("Failed to unmarshal lockedTime. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
+		}
+	}
+	if len(dest.RawFailureTimeOrig) > 0 {
+		err = dest.RawFailureTimeOrig.Unmarshal(&attrsOrig.PwdFailureTime)
+		if err != nil {
+			rollback(tx)
+			return xerrors.Errorf("Failed to unmarshal failureTime. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
+		}
 	}
 
 	var memberOfDN []*DN
@@ -2337,26 +2385,189 @@ func (r *HybridRepository) FindCredentialByDN(ctx context.Context, dn *DN) (*Fet
 		var memberOf []string
 		err = dest.RawMemberOf.Unmarshal(&memberOf)
 		if err != nil {
-			// TODO error
-			return nil, xerrors.Errorf("Failed to unmarshal memberOf array. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
+			rollback(tx)
+			return xerrors.Errorf("Failed to unmarshal memberOf array. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
 		}
 
 		memberOfDN = make([]*DN, len(memberOf))
 		for i, v := range memberOf {
 			memberOfDN[i], err = r.server.NormalizeDN(resolveSuffix(r.server, v))
 			if err != nil {
-				// TODO error
-				return nil, xerrors.Errorf("Failed to normalize memberOf. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
+				rollback(tx)
+				return xerrors.Errorf("Failed to normalize memberOf. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
 			}
 		}
 	}
 
-	fc := &FetchedCredential{
-		Credential: cred,
-		MemberOf:   memberOfDN,
+	var ppolicy PPolicy
+
+	// Currently, resolve default ppolicy only
+	// TODO implement use-specific ppolicy using pwdPolicySubentry
+	if len(dest.RawDefaultPPolicy) > 0 {
+		err = dest.RawDefaultPPolicy.Unmarshal(&ppolicy)
+		if err != nil {
+			rollback(tx)
+			return xerrors.Errorf("Failed to unmarshal default ppolicy. dn_orig: %s, err: %w", r.server.defaultPPolicyDN.DNOrigStr(), err)
+		}
 	}
 
-	return fc, nil
+	var pwdAccountLockedTime time.Time
+
+	if len(attrsOrig.PwdAccountLockedTime) > 0 {
+		pwdAccountLockedTime, err = time.Parse(TIMESTAMP_FORMAT, attrsOrig.PwdAccountLockedTime[0])
+		if err != nil {
+			rollback(tx)
+			return xerrors.Errorf("Failed to parse pwdAccountLockedTime. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
+		}
+	}
+
+	var lastPwdFailureTime *time.Time
+	var currentPwdFailureTime []*time.Time
+
+	if len(attrsOrig.PwdFailureTime) > 0 {
+		for _, v := range attrsOrig.PwdFailureTime {
+			t, err := time.Parse(TIMESTAMP_FORMAT, v)
+			if err != nil {
+				rollback(tx)
+				return xerrors.Errorf("Failed to parse pwdFailureTime. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
+			}
+			if lastPwdFailureTime == nil {
+				lastPwdFailureTime = &t
+			} else {
+				if t.After(*lastPwdFailureTime) {
+					lastPwdFailureTime = &t
+				}
+			}
+			currentPwdFailureTime = append(currentPwdFailureTime, &t)
+		}
+	}
+
+	fc := &FetchedCredential{
+		ID:                   dest.ID,
+		Credential:           attrsOrig.Credentials,
+		MemberOf:             memberOfDN,
+		PPolicy:              &ppolicy,
+		PwdAccountLockedTime: &pwdAccountLockedTime,
+		LastPwdFailureTime:   lastPwdFailureTime,
+		PwdFailureCount:      len(attrsOrig.PwdFailureTime),
+	}
+
+	// Call the callback implemented bind logic
+	callbackErr := callback(fc)
+
+	// After bind, record the results into DB
+	if callbackErr != nil {
+		var lerr *LDAPError
+		isLDAPError := xerrors.As(callbackErr, &lerr)
+		if !isLDAPError || !lerr.IsInvalidCredentials() {
+			rollback(tx)
+			return err
+		}
+
+		if lerr.IsAccountLocked() {
+			rollback(tx)
+			log.Printf("Account is locked, dn_norm: %s", dn.DNNormStr())
+			return callbackErr
+		}
+
+		if ppolicy.IsLockoutEnabled() {
+			ft := time.Now()
+
+			var ltn, lto types.JSONText
+
+			if lerr.IsAccountLocking() {
+				// Record pwdAccountLockedTime to lock it
+				ltn, lto = timeToJSONAttrs(&ft)
+			} else {
+				// Clear pwdAccountLockedTime
+				ltn, lto = emptyJSONArray()
+			}
+
+			currentPwdFailureTime = append(currentPwdFailureTime, &ft)
+			over := len(currentPwdFailureTime) - fc.PPolicy.MaxFailure()
+			if over > 0 {
+				currentPwdFailureTime = currentPwdFailureTime[over:]
+			}
+			ftn, fto := timesToJSONAttrs(currentPwdFailureTime)
+
+			// Don't rollback, commit the transaction.
+			if _, err := r.exec(tx, updateAfterBindFailureByDN, map[string]interface{}{
+				"id":                dest.ID,
+				"lock_time_norm":    ltn,
+				"lock_time_orig":    lto,
+				"failure_time_norm": ftn,
+				"failure_time_orig": fto,
+			}); err != nil {
+				rollback(tx)
+				return xerrors.Errorf("Failed to update entry after bind failure. id: %d, err: %w", dest.ID, err)
+			}
+		} else {
+			log.Printf("Lockout is disabled, so don't record failure count")
+		}
+	} else {
+		// Record authTimestamp, also remove pwdAccountLockedTime and pwdFailureTime
+		n, o := nowTimeToJSONAttrs()
+
+		if _, err := r.exec(tx, updateAfterBindSuccessByDN, map[string]interface{}{
+			"id":                  dest.ID,
+			"auth_timestamp_norm": n,
+			"auth_timestamp_orig": o,
+		}); err != nil {
+			rollback(tx)
+			return xerrors.Errorf("Failed to update entry after bind success. id: %d, err: %w", dest.ID, err)
+		}
+	}
+
+	if err := commit(tx); err != nil {
+		log.Printf("error: Failed to commit bind. id: %d, dn_norm: %s, err: %v", dest.ID, dn.DNNormStr(), err)
+		return err
+	}
+
+	return callbackErr
+}
+
+//////////////////////////////////////////
+// PPolicy
+//////////////////////////////////////////
+
+func (r *HybridRepository) FindPPolicyByDN(ctx context.Context, dn *DN) (*PPolicy, error) {
+	tx, err := r.beginReadonly(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	dest := struct {
+		ID         int64          `db:"id"`
+		RawPPolicy types.JSONText `db:"ppolicy"` // No real column in the table
+	}{}
+
+	if err := r.get(tx, findPPolicyByDN, &dest, map[string]interface{}{
+		"rdn_norm":       dn.RDNNormStr(),
+		"parent_dn_norm": dn.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix),
+	}); err != nil {
+		if isNoResult(err) {
+			// Don't return error
+			return nil, nil
+		}
+		// TODO error
+		return nil, xerrors.Errorf("Failed to find ppolicy by DN. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
+	}
+
+	defer rollback(tx)
+
+	var ppolicy PPolicy
+
+	if len(dest.RawPPolicy) > 0 {
+		err = dest.RawPPolicy.Unmarshal(&ppolicy)
+		if err != nil {
+			// TODO error
+			return nil, xerrors.Errorf("Failed to unmarshal ppolicy. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
+		}
+		return &ppolicy, nil
+	} else {
+		// TODO error
+		return nil, xerrors.Errorf("Invalid ppolicy entry. dn_orig: %s", dn.DNOrigStr())
+	}
 }
 
 //////////////////////////////////////////

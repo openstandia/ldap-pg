@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	enchex "encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/jmoiron/sqlx/types"
 	"github.com/lib/pq"
 	"github.com/openstandia/goldap/message"
 	ldap "github.com/openstandia/ldapserver"
@@ -202,7 +204,7 @@ func arrayDiff(a, b []string) []string {
 	return diff
 }
 
-func normalize(s *AttributeType, value string) (string, error) {
+func normalize(s *AttributeType, value string, index int) (string, error) {
 	switch s.Equality {
 	case "caseExactMatch":
 		return normalizeSpace(value), nil
@@ -222,6 +224,8 @@ func normalize(s *AttributeType, value string) (string, error) {
 		return removeAllSpace(value), nil
 	case "integerMatch":
 		return value, nil
+	case "booleanMatch":
+		return normalizeBoolean(s, value, index)
 	case "UUIDMatch":
 		return normalizeUUID(value)
 	case "uniqueMemberMatch":
@@ -417,6 +421,15 @@ func normalizeGeneralizedTime(value string) (string, error) {
 	return strconv.FormatInt(t.Unix(), 10), nil
 }
 
+func normalizeBoolean(s *AttributeType, value string, index int) (string, error) {
+	// The spec says Boolean = "TRUE" / "FALSE"
+	// https://datatracker.ietf.org/doc/html/rfc4517#section-3.3.3
+	if value != "TRUE" && value != "FALSE" {
+		return "", NewInvalidPerSyntax(s.Name, index)
+	}
+	return value, nil
+}
+
 func normalizeUUID(value string) (string, error) {
 	u, err := uuid.Parse(value)
 	if err != nil {
@@ -567,4 +580,51 @@ func (s StringSet) Values() []string {
 		i++
 	}
 	return rtn
+}
+
+func timeToJSONAttrs(t *time.Time) (types.JSONText, types.JSONText) {
+	norm := []int64{t.Unix()}
+	orig := []string{t.In(time.UTC).Format(TIMESTAMP_FORMAT)}
+
+	bNorm, _ := json.Marshal(norm)
+	bOrig, _ := json.Marshal(orig)
+
+	return types.JSONText(bNorm), types.JSONText(bOrig)
+}
+
+func nowTimeToJSONAttrs() (types.JSONText, types.JSONText) {
+	now := time.Now()
+
+	norm := []int64{now.Unix()}
+	orig := []string{now.In(time.UTC).Format(TIMESTAMP_FORMAT)}
+
+	bNorm, _ := json.Marshal(norm)
+	bOrig, _ := json.Marshal(orig)
+
+	return types.JSONText(bNorm), types.JSONText(bOrig)
+}
+
+func emptyJSONArray() (types.JSONText, types.JSONText) {
+	norm := make([]string, 0)
+	orig := make([]string, 0)
+
+	bNorm, _ := json.Marshal(norm)
+	bOrig, _ := json.Marshal(orig)
+
+	return types.JSONText(bNorm), types.JSONText(bOrig)
+}
+
+func timesToJSONAttrs(t []*time.Time) (types.JSONText, types.JSONText) {
+	norm := make([]int64, len(t))
+	orig := make([]string, len(t))
+
+	for i, v := range t {
+		norm[i] = v.Unix()
+		orig[i] = v.In(time.UTC).Format(TIMESTAMP_FORMAT)
+	}
+
+	bNorm, _ := json.Marshal(norm)
+	bOrig, _ := json.Marshal(orig)
+
+	return types.JSONText(bNorm), types.JSONText(bOrig)
 }

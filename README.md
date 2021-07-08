@@ -41,6 +41,11 @@
   - [ ] More schema processing
   - [x] User defined schema
   - [ ] Multiple RDNs
+- Password Policy
+  - [x] Account lock
+  - [ ] More policy controls
+- Last bind
+  - [x] Record the timestamp of the last successful bind
 - Network
   - [ ] SSL/StartTLS
 - [ ] Prometheus metrics

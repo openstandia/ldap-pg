@@ -47,18 +47,20 @@ type ServerConfig struct {
 	MigrationEnabled  bool
 	QueryTranslator   string
 	SimpleACL         []string
+	DefaultPPolicyDN  string
 }
 
 type Server struct {
-	config     *ServerConfig
-	rootDN     *DN
-	internal   *ldap.Server
-	suffixOrig []string
-	suffixNorm []string
-	Suffix     *DN
-	repo       Repository
-	schemaMap  *SchemaMap
-	simpleACL  *SimpleACL
+	config           *ServerConfig
+	rootDN           *DN
+	internal         *ldap.Server
+	suffixOrig       []string
+	suffixNorm       []string
+	Suffix           *DN
+	repo             Repository
+	schemaMap        *SchemaMap
+	simpleACL        *SimpleACL
+	defaultPPolicyDN *DN
 }
 
 func NewServer(c *ServerConfig) *Server {
@@ -176,6 +178,12 @@ func (s *Server) Start() {
 	s.simpleACL, err = NewSimpleACL(s)
 	if err != nil {
 		log.Fatalf("alert: Invalid acl format: %v, err: %s", s.config.SimpleACL, err)
+	}
+
+	// Init Default ppolicy
+	s.defaultPPolicyDN, err = s.NormalizeDN(s.config.DefaultPPolicyDN)
+	if err != nil {
+		log.Fatalf("alert: Invalid default ppolicy: %v, err: %s", s.config.DefaultPPolicyDN, err)
 	}
 
 	//Create a new LDAP Server

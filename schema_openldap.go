@@ -1,7 +1,7 @@
 package main
 
 // ldapsearch -o ldif-wrap=no -H ldap://... -x -D "cn=..." -b "cn=Subschema" -v -s base attributeTypes comparators ditContentRules ditStructureRules ldapSyntaxes matchingRules matchingRuleUse nameForms normalizers objectClasses syntaxCheckers
-var SCHEMA_OPENLDAP24 string = `
+var BASE_SCHEMA_OPENLDAP24 string = `
 ldapSyntaxes: ( 1.3.6.1.4.1.1466.115.121.1.4 DESC 'Audio' X-NOT-HUMAN-READABLE 'TRUE' )
 ldapSyntaxes: ( 1.3.6.1.4.1.1466.115.121.1.5 DESC 'Binary' X-NOT-HUMAN-READABLE 'TRUE' )
 ldapSyntaxes: ( 1.3.6.1.4.1.1466.115.121.1.6 DESC 'Bit String' )
@@ -762,3 +762,15 @@ objectClasses: ( 1.3.6.1.4.1.26278.1.4.0.0 NAME 'zarafa-server' DESC 'ZARAFA: a 
 objectClasses: ( 1.3.6.1.4.1.26278.1.5.0.0 NAME 'zarafa-addresslist' DESC 'ZARAFA: a Zarafa Addresslist' SUP top STRUCTURAL MUST cn MAY ( zarafaAccount $ zarafaHidden $ zarafaFilter $ zarafaBase ) )
 objectClasses: ( 1.3.6.1.4.1.26278.1.7.0.0 NAME 'zarafa-dynamicgroup' DESC 'ZARAFA: a Zarafa dynamic group' SUP top STRUCTURAL MUST cn MAY ( zarafaAccount $ zarafaHidden $ mail $ zarafaAliases $ zarafaFilter $ zarafaBase ) )
 `
+
+// https://github.com/openldap/openldap/blob/98a0029daeb8aaa7bc58428ad3f94eface7f997b/doc/man/man5/slapo-ppolicy.5
+var PPOLICY_OPERATION_SCHEMA_OPENLDAP24 = `
+attributeTypes: ( 1.3.6.1.4.1.42.2.27.8.1.17 NAME 'pwdAccountLockedTime' DESC 'The time an user account was locked' SYNTAX 1.3.6.1.4.1.1466.115.121.1.24 EQUALITY generalizedTimeMatch ORDERING generalizedTimeOrderingMatch SINGLE-VALUE NO-USER-MODIFICATION USAGE directoryOperation )
+attributeTypes: ( 1.3.6.1.4.1.42.2.27.8.1.19 NAME 'pwdFailureTime' DESC 'The timestamps of the last consecutive authentication failures' SYNTAX 1.3.6.1.4.1.1466.115.121.1.24 EQUALITY generalizedTimeMatch ORDERING generalizedTimeOrderingMatch NO-USER-MODIFICATION USAGE directoryOperation )
+`
+
+// https://github.com/winlibs/openldap/blob/2615a35b32b3596a1e8f872f0c244bc4a41a047e/contrib/slapd-modules/lastbind/lastbind.c#L57-L63
+var LASTBIND_OPERATION_SCHEMA_OPENLDAP24 = `
+attributeTypes: ( 1.3.6.1.4.1.453.16.2.188 NAME 'authTimestamp' DESC 'last successful authentication using any method/mech' EQUALITY generalizedTimeMatch ORDERING generalizedTimeOrderingMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.24 SINGLE-VALUE NO-USER-MODIFICATION USAGE dSAOperation )`
+
+var SCHEMA_OPENLDAP24 = BASE_SCHEMA_OPENLDAP24 + PPOLICY_OPERATION_SCHEMA_OPENLDAP24 + LASTBIND_OPERATION_SCHEMA_OPENLDAP24

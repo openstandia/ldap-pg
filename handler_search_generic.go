@@ -71,7 +71,8 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	// Phase 2: authorization
 	if !s.RequiredAuthz(m, SearchOps, baseDN) {
-		responseSearchError(w, NewInsufficientAccess())
+		// Return 32 No such object
+		responseSearchError(w, NewNoSuchObject())
 		return
 	}
 

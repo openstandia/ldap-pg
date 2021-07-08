@@ -810,7 +810,7 @@ func (s *SchemaValue) Normalize() ([]string, error) {
 		m := make(map[string]struct{}, len(s.value))
 		for i, v := range s.value {
 			var err error
-			rtn[i], err = normalize(s.schema, v)
+			rtn[i], err = normalize(s.schema, v, i)
 			if err != nil {
 				return nil, err
 			}
@@ -845,7 +845,8 @@ func (s *AttributeType) IsCaseIgnoreSubstr() bool {
 
 func (s *AttributeType) IsOperationalAttribute() bool {
 	if s.Usage == "directoryOperation" ||
-		s.Usage == "dSAOperation" {
+		s.Usage == "dSAOperation" ||
+		s.Usage == "distributedOperation" {
 		return true
 	}
 	// TODO check other case

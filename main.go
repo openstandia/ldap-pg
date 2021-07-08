@@ -134,6 +134,11 @@ var (
 		false,
 		"Enable migration mode which means LDAP server accepts add/modify operational attributes (Default: false)",
 	)
+	defaultPPolicyDN = fs.String(
+		"default-ppolicy-dn",
+		"",
+		"DN of the default password policy entry (e.g. cn=standard-policy,ou=Policies,dc=example,dc=com)",
+	)
 )
 
 type arrayFlags []string
@@ -211,5 +216,6 @@ func main() {
 		MigrationEnabled:  *migrationEnabled,
 		QueryTranslator:   "default",
 		SimpleACL:         acl,
+		DefaultPPolicyDN:  *defaultPPolicyDN,
 	}).Start()
 }
