@@ -322,14 +322,6 @@ func (j *ModifyEntry) GetAttrNorm(attrName string) ([]string, bool) {
 	return v.Norm(), true
 }
 
-func (j *ModifyEntry) GetAttrsOrig() map[string][]string {
-	orig := make(map[string][]string, len(j.attributes))
-	for k, v := range j.attributes {
-		orig[k] = v.Orig()
-	}
-	return orig
-}
-
 func (j *ModifyEntry) GetAttrs() (map[string]interface{}, map[string][]string) {
 	norm := make(map[string]interface{}, len(j.attributes))
 	orig := make(map[string][]string, len(j.attributes))

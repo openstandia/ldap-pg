@@ -104,19 +104,6 @@ func (j *AddEntry) addsv(value *SchemaValue) error {
 	return nil
 }
 
-func (j *AddEntry) AttrNorm(attrName string) ([]string, bool) {
-	s, ok := j.schemaMap.AttributeType(attrName)
-	if !ok {
-		return nil, false
-	}
-
-	v, ok := j.attributes[s.Name]
-	if !ok {
-		return nil, false
-	}
-	return v.Norm(), true
-}
-
 func (j *AddEntry) Attrs() (map[string]interface{}, map[string][]string) {
 	norm := make(map[string]interface{}, len(j.attributes))
 	orig := make(map[string][]string, len(j.attributes))
