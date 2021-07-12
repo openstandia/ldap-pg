@@ -1161,7 +1161,11 @@ FROM
 			log.Printf("info: Executed DB search: %d [ms], count: %d", end.Sub(start).Milliseconds(), maxCount)
 		}
 
-		readEntry := r.toSearchEntry(&dbEntry)
+		readEntry, err := r.toSearchEntry(&dbEntry)
+		if err != nil {
+			log.Printf("error: Unexpected fetched DN error: %v", err)
+			return 0, 0, err
+		}
 
 		err = handler(readEntry)
 		if err != nil {
@@ -1176,7 +1180,7 @@ FROM
 	return maxCount, count, nil
 }
 
-func (r *HybridRepository) toSearchEntry(dbEntry *HybridFetchedDBEntry) *SearchEntry {
+func (r *HybridRepository) toSearchEntry(dbEntry *HybridFetchedDBEntry) (*SearchEntry, error) {
 	orig := dbEntry.AttrsOrig()
 
 	// hasSubordinates
@@ -1189,9 +1193,14 @@ func (r *HybridRepository) toSearchEntry(dbEntry *HybridFetchedDBEntry) *SearchE
 	r.resolveAssociationSuffix(orig, "uniqueMember")
 	r.resolveAssociationSuffix(orig, "memberOf")
 
-	readEntry := NewSearchEntry(r.server.schemaMap, dbEntry.DNOrig, orig)
+	dn, err := r.server.NormalizeDN(dbEntry.DNOrig)
+	if err != nil {
+		return nil, err
+	}
 
-	return readEntry
+	readEntry := NewSearchEntry(r.server.schemaMap, dn, orig)
+
+	return readEntry, nil
 }
 
 func (r *HybridRepository) resolveAssociationSuffix(attrsOrig map[string][]string, attrName string) {

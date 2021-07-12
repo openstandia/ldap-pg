@@ -63,8 +63,12 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	if err != nil {
 		log.Printf("info: Invalid baseDN error: %#v", err)
 
-		// TODO return correct error code
-		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultOperationsError)
+		// # search result
+		// search: 2
+		// result: 34 Invalid DN syntax
+		// text: invalid DN
+		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultInvalidDNSyntax)
+		res.SetDiagnosticMessage("invalid DN")
 		w.Write(res)
 		return
 	}
@@ -149,7 +153,8 @@ func responseEntry(s *Server, w ldap.ResponseWriter, m *ldap.Message, r message.
 
 	session := getAuthSession(m)
 
-	e := ldap.NewSearchResultEntry(resolveSuffix(s, searchEntry.DNOrigStr()))
+	encodedDNOrig := searchEntry.DNOrigEncodedStr()
+	e := ldap.NewSearchResultEntry(resolveSuffix(s, encodedDNOrig))
 
 	sentAttrs := map[string]struct{}{}
 
@@ -223,7 +228,7 @@ func responseEntry(s *Server, w ldap.ResponseWriter, m *ldap.Message, r message.
 
 	w.Write(e)
 
-	log.Printf("Response an entry. dn: %s", searchEntry.DNOrigStr())
+	log.Printf("Response an entry. dn: %s", encodedDNOrig)
 }
 
 func responseSearchError(w ldap.ResponseWriter, err error) {

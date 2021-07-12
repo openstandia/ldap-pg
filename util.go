@@ -412,12 +412,14 @@ func ParseDN(schemaMap *SchemaMap, str string) (*DN, error) {
 }
 
 func normalizeDistinguishedName(schemaMap *SchemaMap, value string) (string, error) {
-	dn, err := NormalizeDN(schemaMap, value)
+	// Validate DN only here
+	_, err := NormalizeDN(schemaMap, value)
 	if err != nil {
 		return "", err
 	}
 
-	return dn.DNNormStr(), nil
+	// Return original DN
+	return value, nil
 }
 
 func normalizeGeneralizedTime(value string) (string, error) {

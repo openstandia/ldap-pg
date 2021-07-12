@@ -102,6 +102,60 @@ func (r *RelativeDN) OrigStr() string {
 	return b.String()
 }
 
+func (r *RelativeDN) OrigEncodedStr() string {
+	var b strings.Builder
+	b.Grow(128)
+	for i, attr := range r.Attributes {
+		if i > 0 {
+			b.WriteString("+")
+		}
+		b.WriteString(attr.TypeOrig)
+		b.WriteString("=")
+		b.WriteString(encodeDN(attr.ValueOrig))
+	}
+	return b.String()
+}
+
+// encodeDN encodes special characters for response DN in search.
+// Special characters: "+,;<>\#<space>
+// See: https://www.ipa.go.jp/security/rfc/RFC4514EN.html
+func encodeDN(str string) string {
+	var b strings.Builder
+	b.Grow(128)
+
+	last := len(str) - 1
+
+	for i := 0; i < len(str); i++ {
+		char := str[i]
+
+		switch {
+		case i == 0 && char == ' ':
+			b.WriteString("\\20")
+		case i == last && char == ' ':
+			b.WriteString("\\20")
+		case i == 0 && char == '#':
+			b.WriteString("\\23")
+		case char == '"':
+			b.WriteString("\\22")
+		case char == '+':
+			b.WriteString("\\2B")
+		case char == ',':
+			b.WriteString("\\2C")
+		case char == ';':
+			b.WriteString("\\3B")
+		case char == '<':
+			b.WriteString("\\3C")
+		case char == '>':
+			b.WriteString("\\3E")
+		case char == '\\':
+			b.WriteString("\\5C")
+		default:
+			b.WriteByte(char)
+		}
+	}
+	return b.String()
+}
+
 func (r *RelativeDN) NormStr() string {
 	var b strings.Builder
 	b.Grow(128)
@@ -178,6 +232,18 @@ func (d *DN) DNOrigStr() string {
 			b.WriteString(",")
 		}
 		b.WriteString(rdn.OrigStr())
+	}
+	return b.String()
+}
+
+func (d *DN) DNOrigEncodedStr() string {
+	var b strings.Builder
+	b.Grow(256)
+	for i, rdn := range d.RDNs {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString(rdn.OrigEncodedStr())
 	}
 	return b.String()
 }
