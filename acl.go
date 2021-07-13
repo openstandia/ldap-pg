@@ -38,22 +38,24 @@ func (c LDAPAction) String() string {
 func (s *Server) RequiredAuthz(m *ldap.Message, ops LDAPAction, targetDN *DN) bool {
 	session := getAuthSession(m)
 	if session.DN != nil {
-		log.Printf("info: Authorized. action: %s, authorizedDN: %s, targetDN: %s", ops.String(), session.DN.DNNormStr(), targetDN.DNNormStr())
+		authorized := false
 
 		switch ops {
 		case AddOps:
-			return s.simpleACL.CanWrite(session)
+			authorized = s.simpleACL.CanWrite(session)
 		case ModifyOps:
-			return s.simpleACL.CanWrite(session)
+			authorized = s.simpleACL.CanWrite(session)
 		case ModRDNOps:
-			return s.simpleACL.CanWrite(session)
+			authorized = s.simpleACL.CanWrite(session)
 		case DeleteOps:
-			return s.simpleACL.CanWrite(session)
+			authorized = s.simpleACL.CanWrite(session)
 		case SearchOps:
-			return s.simpleACL.CanRead(session)
-		default:
-			return false
+			authorized = s.simpleACL.CanRead(session)
 		}
+
+		log.Printf("info: Authorized: %v, action: %s, authorizedDN: %s, targetDN: %s", authorized, ops.String(), session.DN.DNNormStr(), targetDN.DNNormStr())
+
+		return authorized
 	}
 	log.Printf("warn: Not Authorized for anonymous. targetDN: %s", targetDN.DNNormStr())
 
@@ -163,6 +165,9 @@ func (s *SimpleACL) CanRead(session *AuthSession) bool {
 			return v.Scope.Contains(ReadScope)
 		}
 	}
+	if v, ok := s.list["_DEFAULT_"]; ok {
+		return v.Scope.Contains(ReadScope)
+	}
 	return false
 }
 
@@ -178,6 +183,9 @@ func (s *SimpleACL) CanWrite(session *AuthSession) bool {
 		if v, ok := s.list[m.DNNormStr()]; ok {
 			return v.Scope.Contains(WriteScope)
 		}
+	}
+	if v, ok := s.list["_DEFAULT_"]; ok {
+		return v.Scope.Contains(WriteScope)
 	}
 	return false
 }
@@ -196,6 +204,9 @@ func (s *SimpleACL) CanVisible(session *AuthSession, attrName string) bool {
 		if v, ok := s.list[m.DNNormStr()]; ok {
 			return !v.InvisibleAttributes.Contains(a)
 		}
+	}
+	if v, ok := s.list["_DEFAULT_"]; ok {
+		return !v.InvisibleAttributes.Contains(a)
 	}
 	return true
 }

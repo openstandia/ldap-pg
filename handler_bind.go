@@ -25,7 +25,7 @@ func handleBind(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 		dn, err := s.NormalizeDN(name)
 		if err != nil {
-			log.Printf("info: Bind failed - Invalid DN syntax. dn_norm: %s err: %s", dn.DNNormStr(), err)
+			log.Printf("info: Bind failed - Invalid DN syntax. request_dn: %s err: %s", name, err)
 			res.SetResultCode(ldap.LDAPResultInvalidDNSyntax)
 			res.SetDiagnosticMessage("invalid DN")
 			w.Write(res)
