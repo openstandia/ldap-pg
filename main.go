@@ -158,7 +158,7 @@ func main() {
 	fs.Var(&customSchema, "schema", "Additional/overwriting custom schema")
 
 	var aclFlags arrayFlags
-	fs.Var(&aclFlags, "acl", `Simple ACL: the format is <DN(User or empty(everyone))>:<DN(Group or empty(everyone))>:<Scope(R, W or RW)>:<Invisible Attributes> (e.g. cn=reader,dc=example,dc=com::ro:userPassword,telephoneNumber)`)
+	fs.Var(&aclFlags, "acl", `Simple ACL: the format is <DN(User, Group or empty(everyone))>:<Scope(R, W or RW)>:<Invisible Attributes> (e.g. cn=reader,dc=example,dc=com:R:userPassword,telephoneNumber)`)
 
 	fmt.Fprintf(os.Stdout, "ldap-pg %s (rev: %s)\n", version, revision)
 	fs.Usage = func() {

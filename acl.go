@@ -104,7 +104,7 @@ func NewSimpleACL(server *Server) (*SimpleACL, error) {
 	for _, d := range server.config.SimpleACL {
 		s := strings.Split(d, ":")
 		if len(s) != 3 {
-			return nil, xerrors.Errorf("Invalid format. Need <DN(User or Group)>:<Scope(R, W or RW)>:<Invisible Attributes>: %s", d)
+			return nil, xerrors.Errorf("Invalid format. Need <DN(User, Group or empty(everyone))>:<Scope(R, W or RW)>:<Invisible Attributes>: %s", d)
 		}
 
 		scopeSet := SimpleACLScopeSet{}
