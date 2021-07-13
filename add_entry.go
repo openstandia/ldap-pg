@@ -32,20 +32,12 @@ func (j *AddEntry) SetDN(dn *DN) {
 	rdn := dn.RDN()
 	for k, v := range rdn {
 		// rdn is validated already
-		j.attributes[k], _ = NewSchemaValue(j.schemaMap, k, []string{v})
+		j.attributes[k], _ = NewSchemaValue(j.schemaMap, k, []string{v.Orig})
 	}
 }
 
 func (j *AddEntry) IsRoot() bool {
 	return j.dn.IsRoot()
-}
-
-func (j *AddEntry) RDNNorm() string {
-	return j.dn.RDNNormStr()
-}
-
-func (j *AddEntry) RDNOrig() string {
-	return j.dn.RDNOrigStr()
 }
 
 func (j *AddEntry) DN() *DN {

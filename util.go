@@ -366,7 +366,8 @@ func ParseDN(schemaMap *SchemaMap, str string) (*DN, error) {
 			if err != nil {
 				return nil, xerrors.Errorf("failed to normalize dn: %w", err)
 			}
-			attribute.ValueOrig = encodeDN(orig)
+			attribute.ValueOrig = orig
+			attribute.ValueOrigEncoded = encodeDN(orig)
 			attribute.ValueNorm = norm
 			rdn.Attributes = append(rdn.Attributes, attribute)
 			attribute = new(AttributeTypeAndValue)
@@ -397,7 +398,8 @@ func ParseDN(schemaMap *SchemaMap, str string) (*DN, error) {
 		if err != nil {
 			return nil, xerrors.Errorf("failed to normalize dn: %w", err)
 		}
-		attribute.ValueOrig = encodeDN(orig)
+		attribute.ValueOrig = orig
+		attribute.ValueOrigEncoded = encodeDN(orig)
 		attribute.ValueNorm = norm
 		rdn.Attributes = append(rdn.Attributes, attribute)
 		dn.RDNs = append(dn.RDNs, rdn)

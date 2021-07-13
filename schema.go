@@ -790,12 +790,25 @@ func (s *SchemaValue) normalize() error {
 		m := make(map[string]struct{}, len(norm))
 
 		for i := range stocs {
-			normStr[i] = strings.ToLower(stocs[i].Name)
+			var err error
+			// TODO fix index (use index before the sort)
+			norm[i], err = normalize(s.schema, stocs[i].Name, i)
+			if err != nil {
+				return err
+			}
+			normStr[i] = toNormStr(norm[i])
 			m[normStr[i]] = struct{}{}
 		}
 		for i := range nstocs {
 			j := i + len(stocs)
-			normStr[j] = strings.ToLower(nstocs[i].Name)
+
+			var err error
+			// TODO fix index (use index before the sort)
+			norm[j], err = normalize(s.schema, nstocs[i].Name, i)
+			if err != nil {
+				return err
+			}
+			normStr[i] = toNormStr(norm[j])
 			m[normStr[j]] = struct{}{}
 		}
 		s.norm = norm

@@ -5,14 +5,20 @@ import (
 )
 
 type DN struct {
-	RDNs      []*RelativeDN
-	cachedRDN map[string]string
+	RDNs     []*RelativeDN
+	RDNIndex map[string]NormString
 }
+
+type NormString struct {
+	Orig string
+	Norm string
+}
+
 type RelativeDN struct {
 	Attributes []*AttributeTypeAndValue
 }
 
-func (r *RelativeDN) OrigStr() string {
+func (r *RelativeDN) OrigEncodedStr() string {
 	var b strings.Builder
 	b.Grow(128)
 	for i, attr := range r.Attributes {
@@ -21,7 +27,7 @@ func (r *RelativeDN) OrigStr() string {
 		}
 		b.WriteString(attr.TypeOrig)
 		b.WriteString("=")
-		b.WriteString(attr.ValueOrig)
+		b.WriteString(attr.ValueOrigEncoded)
 	}
 	return b.String()
 }
@@ -43,10 +49,10 @@ func encodeDN(str string) string {
 			b.WriteString("\\20")
 		case i == last && char == ' ':
 			b.WriteString("\\20")
-		case i == 0 && char == '#':
-			b.WriteString("\\23")
 		case char == '"':
 			b.WriteString("\\22")
+		case i == 0 && char == '#':
+			b.WriteString("\\23")
 		case char == '+':
 			b.WriteString("\\2B")
 		case char == ',':
@@ -55,6 +61,8 @@ func encodeDN(str string) string {
 			b.WriteString("\\3B")
 		case char == '<':
 			b.WriteString("\\3C")
+		case char == '=':
+			b.WriteString("\\3D")
 		case char == '>':
 			b.WriteString("\\3E")
 		case char == '\\':
@@ -87,6 +95,8 @@ type AttributeTypeAndValue struct {
 	TypeNorm string
 	// Value is the original attribute value
 	ValueOrig string
+	// Value is the encoded original attribute value
+	ValueOrigEncoded string
 	// Value is the normalized attribute value
 	ValueNorm string
 }
@@ -141,24 +151,12 @@ func (d *DN) DNOrigStr() string {
 		if i > 0 {
 			b.WriteString(",")
 		}
-		b.WriteString(rdn.OrigStr())
+		b.WriteString(rdn.OrigEncodedStr())
 	}
 	return b.String()
 }
 
-func (d *DN) DNOrigEncodedStr() string {
-	var b strings.Builder
-	b.Grow(256)
-	for i, rdn := range d.RDNs {
-		if i > 0 {
-			b.WriteString(",")
-		}
-		b.WriteString(rdn.OrigStr())
-	}
-	return b.String()
-}
-
-func (d *DN) DNOrigStrWithoutSuffix(suffix *DN) string {
+func (d *DN) DNOrigEncodedStrWithoutSuffix(suffix *DN) string {
 	sRDNs := suffix.RDNs
 	diff := len(d.RDNs) - len(sRDNs)
 
@@ -171,7 +169,7 @@ func (d *DN) DNOrigStrWithoutSuffix(suffix *DN) string {
 		if i > 0 {
 			b.WriteString(",")
 		}
-		b.WriteString(rdn.OrigStr())
+		b.WriteString(rdn.OrigEncodedStr())
 	}
 	return b.String()
 }
@@ -190,7 +188,7 @@ func (d *DN) RDNNormStr() string {
 	return b.String()
 }
 
-func (d *DN) RDNOrigStr() string {
+func (d *DN) RDNOrigEncodedStr() string {
 	var b strings.Builder
 	b.Grow(128)
 	for i, attr := range d.RDNs[0].Attributes {
@@ -199,7 +197,7 @@ func (d *DN) RDNOrigStr() string {
 		}
 		b.WriteString(attr.TypeOrig)
 		b.WriteString("=")
-		b.WriteString(attr.ValueOrig)
+		b.WriteString(attr.ValueOrigEncoded)
 	}
 	return b.String()
 }
@@ -223,23 +221,26 @@ func (d *DN) IsSubOf(o *DN) bool {
 	return len(d.RDNs) > len(o.RDNs) && strings.HasSuffix(d.DNNormStr(), o.DNNormStr())
 }
 
-func (d *DN) RDN() map[string]string {
-	if len(d.cachedRDN) > 0 {
-		return d.cachedRDN
+func (d *DN) RDN() map[string]NormString {
+	if len(d.RDNIndex) > 0 {
+		return d.RDNIndex
 	}
 
 	// Check DC case
 	if len(d.RDNs) == 0 {
-		return map[string]string{}
+		return map[string]NormString{}
 	}
 
-	m := make(map[string]string, len(d.RDNs[0].Attributes))
+	m := make(map[string]NormString, len(d.RDNs[0].Attributes))
 
 	for _, a := range d.RDNs[0].Attributes {
-		m[a.TypeNorm] = a.ValueNorm
+		m[a.TypeNorm] = NormString{
+			Orig: a.ValueOrig,
+			Norm: a.ValueNorm,
+		}
 	}
 
-	d.cachedRDN = m
+	d.RDNIndex = m
 
 	return m
 }

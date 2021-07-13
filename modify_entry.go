@@ -64,7 +64,7 @@ func (j *ModifyEntry) SetDN(dn *DN) {
 	rdn := dn.RDN()
 	for k, v := range rdn {
 		// rdn is validated already, ignore error
-		sv, _ := NewSchemaValue(j.schemaMap, k, []string{v})
+		sv, _ := NewSchemaValue(j.schemaMap, k, []string{v.Orig})
 		j.attributes[sv.Name()] = sv
 	}
 }

@@ -26,7 +26,7 @@ func handleSearchRootDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	searchEntry := NewSearchEntry(s.schemaMap, "", map[string][]string{
 		"objectClass":           {"simpleSecurityObject", "organizationalRole"},
 		"structuralObjectClass": {"organizationalRole"},
-		"cn":                    {s.GetRootDN().RDN()["cn"]},
+		"cn":                    {s.GetRootDN().RDN()["cn"].Orig},
 		"description":           {"LDAP administrator"},
 		// OperationalAttributes
 		"entryUUID":         {uuid.String()},

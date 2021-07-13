@@ -292,14 +292,12 @@ func (r *HybridRepository) Init() error {
 
 // HybridDBEntry is used as insert or update entry.
 type HybridDBEntry struct {
-	ID                  int64          `db:"id"`
-	DNNormWithoutSuffix string         `db:"dn_norm"`
-	DNOrigWithoutSuffix string         `db:"dn_orig"`
-	RDNNorm             string         `db:"rdn_norm"`
-	RDNOrig             string         `db:"rdn_orig"`
-	AttrsNorm           types.JSONText `db:"attrs_norm"`
-	AttrsOrig           types.JSONText `db:"attrs_orig"`
-	ParentDN            *DN
+	ID        int64          `db:"id"`
+	RDNNorm   string         `db:"rdn_norm"`
+	RDNOrig   string         `db:"rdn_orig"`
+	AttrsNorm types.JSONText `db:"attrs_norm"`
+	AttrsOrig types.JSONText `db:"attrs_orig"`
+	ParentDN  *DN
 }
 
 //////////////////////////////////////////
@@ -423,7 +421,7 @@ func (r *HybridRepository) insertInternal(tx *sqlx.Tx, dbEntry *HybridDBEntry) (
 		if _, err := r.exec(tx, insertContainerStmtWithUpdateLock, map[string]interface{}{
 			"id":      parentId,
 			"dn_norm": parentDN.DNNormStrWithoutSuffix(r.server.Suffix),
-			"dn_orig": parentDN.DNOrigStrWithoutSuffix(r.server.Suffix),
+			"dn_orig": parentDN.DNOrigEncodedStrWithoutSuffix(r.server.Suffix),
 		}); err != nil {
 			return 0, xerrors.Errorf("Failed to insert container record.dn_norm: %s,%s, err: %w",
 				dbEntry.RDNNorm, dbEntry.ParentDN.DNNormStr(), err)
@@ -732,7 +730,7 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 			if _, err := r.exec(tx, insertContainerStmtWithUpdateLock, map[string]interface{}{
 				"id":      newParentID,
 				"dn_norm": newParentDN.DNNormStrWithoutSuffix(r.server.Suffix),
-				"dn_orig": newParentDN.DNOrigStrWithoutSuffix(r.server.Suffix),
+				"dn_orig": newParentDN.DNOrigEncodedStrWithoutSuffix(r.server.Suffix),
 			}); err != nil {
 				return xerrors.Errorf("Unexpected insert container error. id: %d, dn_norm: %s, err: %w",
 					newParentID, oldParentDN.DNNormStr(), err)
@@ -763,7 +761,7 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 		"id":           oldEntry.dbEntryID,
 		"parent_id":    newParentID,
 		"new_rdn_norm": newDN.RDNNormStr(),
-		"new_rdn_orig": newDN.RDNOrigStr(),
+		"new_rdn_orig": newDN.RDNOrigEncodedStr(),
 		"attrs_norm":   dbEntry.AttrsNorm,
 		"attrs_orig":   dbEntry.AttrsOrig,
 	}); err != nil {
@@ -776,16 +774,16 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 		if _, err = r.exec(tx, updateContainerDNByIdStmt, map[string]interface{}{
 			"id":          oldEntry.dbEntryID,
 			"new_dn_norm": newDN.DNNormStrWithoutSuffix(r.server.Suffix),
-			"new_dn_orig": newDN.DNOrigStrWithoutSuffix(r.server.Suffix),
+			"new_dn_orig": newDN.DNOrigEncodedStrWithoutSuffix(r.server.Suffix),
 		}); err != nil {
 			return xerrors.Errorf("Failed to update container DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
 		}
 
 		if _, err = r.exec(tx, updateContainerDNsByIdStmt, map[string]interface{}{
 			"new_dn_norm":         "\\1" + newDN.DNNormStrWithoutSuffix(r.server.Suffix),
-			"new_dn_orig":         "\\1" + newDN.DNOrigStrWithoutSuffix(r.server.Suffix),
+			"new_dn_orig":         "\\1" + newDN.DNOrigEncodedStrWithoutSuffix(r.server.Suffix),
 			"old_dn_norm_pattern": "(.*,)" + escapeRegex(oldDN.DNNormStrWithoutSuffix(r.server.Suffix)) + "$",
-			"old_dn_orig_pattern": "(.*,)" + escapeRegex(oldDN.DNOrigStrWithoutSuffix(r.server.Suffix)) + "$",
+			"old_dn_orig_pattern": "(.*,)" + escapeRegex(oldDN.DNOrigEncodedStrWithoutSuffix(r.server.Suffix)) + "$",
 		}); err != nil {
 			return xerrors.Errorf("Failed to update sub containers DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
 		}
@@ -833,7 +831,7 @@ func (r *HybridRepository) updateRDN(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *Rela
 	if _, err := r.exec(tx, updateRDNByIdStmt, map[string]interface{}{
 		"id":           oldEntry.dbEntryID,
 		"new_rdn_norm": newDN.RDNNormStr(),
-		"new_rdn_orig": newDN.RDNOrigStr(),
+		"new_rdn_orig": newDN.RDNOrigEncodedStr(),
 		"attrs_norm":   dbEntry.AttrsNorm,
 		"attrs_orig":   dbEntry.AttrsOrig,
 	}); err != nil {
@@ -846,16 +844,16 @@ func (r *HybridRepository) updateRDN(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *Rela
 		if _, err = r.exec(tx, updateContainerDNByIdStmt, map[string]interface{}{
 			"id":          oldEntry.dbEntryID,
 			"new_dn_norm": newDN.RDNNormStr(),
-			"new_dn_orig": newDN.RDNOrigStr(),
+			"new_dn_orig": newDN.RDNOrigEncodedStr(),
 		}); err != nil {
 			return xerrors.Errorf("Failed to update container DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
 		}
 
 		if _, err = r.exec(tx, updateContainerDNByIdStmt, map[string]interface{}{
 			"new_dn_norm":         "\\1" + newDN.RDNNormStr(),
-			"new_dn_orig":         "\\1" + newDN.RDNOrigStr(),
+			"new_dn_orig":         "\\1" + newDN.RDNOrigEncodedStr(),
 			"old_dn_norm_pattern": "(.*,)" + escapeRegex(oldDN.DNNormStrWithoutSuffix(r.server.Suffix)) + "$",
-			"old_dn_orig_pattern": "(.*,)" + escapeRegex(oldDN.DNOrigStrWithoutSuffix(r.server.Suffix)) + "$",
+			"old_dn_orig_pattern": "(.*,)" + escapeRegex(oldDN.DNOrigEncodedStrWithoutSuffix(r.server.Suffix)) + "$",
 		}); err != nil {
 			return xerrors.Errorf("Failed to update sub containers DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
 		}
@@ -2069,13 +2067,11 @@ func (r *HybridRepository) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*Hyb
 	dn := entry.DN()
 
 	dbEntry := &HybridDBEntry{
-		DNNormWithoutSuffix: dn.DNNormStrWithoutSuffix(r.server.Suffix),
-		DNOrigWithoutSuffix: dn.DNOrigStrWithoutSuffix(r.server.Suffix),
-		RDNNorm:             dn.RDNNormStr(),
-		RDNOrig:             dn.RDNOrigStr(),
-		AttrsNorm:           types.JSONText(string(bNorm)),
-		AttrsOrig:           types.JSONText(string(bOrig)),
-		ParentDN:            entry.ParentDN(),
+		RDNNorm:   dn.RDNNormStr(),
+		RDNOrig:   dn.RDNOrigEncodedStr(),
+		AttrsNorm: types.JSONText(string(bNorm)),
+		AttrsOrig: types.JSONText(string(bOrig)),
+		ParentDN:  entry.ParentDN(),
 	}
 
 	return dbEntry, association, nil
