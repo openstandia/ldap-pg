@@ -72,6 +72,7 @@ func (j *AddEntry) Add(attrName string, attrValue []string) error {
 	if len(attrValue) == 0 {
 		return nil
 	}
+	// Duplicate error is detected here
 	sv, err := NewSchemaValue(j.schemaMap, attrName, attrValue)
 	if err != nil {
 		return err
@@ -90,7 +91,8 @@ func (j *AddEntry) addsv(value *SchemaValue) error {
 		j.attributes[name] = value
 		return nil
 	} else {
-		// TODO
+		// When adding the attribute with same value as both DN and attribute,
+		// we need to ignore the duplicate error.
 		current.Add(value)
 	}
 	return nil
