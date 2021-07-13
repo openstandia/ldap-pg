@@ -709,7 +709,7 @@ func (s *SchemaValue) Orig() []string {
 	return s.value
 }
 
-func (s *SchemaValue) Norm() interface{} {
+func (s *SchemaValue) Norm() []interface{} {
 	return s.norm
 }
 

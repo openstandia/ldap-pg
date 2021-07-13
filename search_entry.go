@@ -2,21 +2,21 @@ package main
 
 type SearchEntry struct {
 	schemaMap  *SchemaMap
-	dn         *DN
+	dnOrig     string
 	attributes map[string][]string
 }
 
-func NewSearchEntry(schemaMap *SchemaMap, dn *DN, valuesOrig map[string][]string) *SearchEntry {
+func NewSearchEntry(schemaMap *SchemaMap, dnOrig string, valuesOrig map[string][]string) *SearchEntry {
 	readEntry := &SearchEntry{
 		schemaMap:  schemaMap,
-		dn:         dn,
+		dnOrig:     dnOrig,
 		attributes: valuesOrig,
 	}
 	return readEntry
 }
 
-func (j *SearchEntry) DNOrigEncodedStr() string {
-	return j.dn.DNOrigEncodedStr()
+func (j *SearchEntry) DNOrig() string {
+	return j.dnOrig
 }
 
 func (j *SearchEntry) GetAttrsOrig() map[string][]string {

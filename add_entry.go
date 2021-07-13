@@ -104,8 +104,8 @@ func (j *AddEntry) addsv(value *SchemaValue) error {
 	return nil
 }
 
-func (j *AddEntry) Attrs() (map[string]interface{}, map[string][]string) {
-	norm := make(map[string]interface{}, len(j.attributes))
+func (j *AddEntry) Attrs() (map[string][]interface{}, map[string][]string) {
+	norm := make(map[string][]interface{}, len(j.attributes))
 	orig := make(map[string][]string, len(j.attributes))
 	for k, v := range j.attributes {
 		norm[k] = v.Norm()

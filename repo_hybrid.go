@@ -1161,11 +1161,7 @@ FROM
 			log.Printf("info: Executed DB search: %d [ms], count: %d", end.Sub(start).Milliseconds(), maxCount)
 		}
 
-		readEntry, err := r.toSearchEntry(&dbEntry)
-		if err != nil {
-			log.Printf("error: Unexpected fetched DN error: %v", err)
-			return 0, 0, err
-		}
+		readEntry := r.toSearchEntry(&dbEntry)
 
 		err = handler(readEntry)
 		if err != nil {
@@ -1180,7 +1176,7 @@ FROM
 	return maxCount, count, nil
 }
 
-func (r *HybridRepository) toSearchEntry(dbEntry *HybridFetchedDBEntry) (*SearchEntry, error) {
+func (r *HybridRepository) toSearchEntry(dbEntry *HybridFetchedDBEntry) *SearchEntry {
 	orig := dbEntry.AttrsOrig()
 
 	// hasSubordinates
@@ -1193,14 +1189,9 @@ func (r *HybridRepository) toSearchEntry(dbEntry *HybridFetchedDBEntry) (*Search
 	r.resolveAssociationSuffix(orig, "uniqueMember")
 	r.resolveAssociationSuffix(orig, "memberOf")
 
-	dn, err := r.server.NormalizeDN(dbEntry.DNOrig)
-	if err != nil {
-		return nil, err
-	}
+	readEntry := NewSearchEntry(r.server.schemaMap, dbEntry.DNOrig, orig)
 
-	readEntry := NewSearchEntry(r.server.schemaMap, dn, orig)
-
-	return readEntry, nil
+	return readEntry
 }
 
 func (r *HybridRepository) resolveAssociationSuffix(attrsOrig map[string][]string, attrName string) {
@@ -2023,7 +2014,7 @@ func (r *HybridRepository) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*Hyb
 	// TODO strict mode
 	if _, ok := norm["entryUUID"]; !ok {
 		u, _ := uuid.NewRandom()
-		norm["entryUUID"] = []string{u.String()}
+		norm["entryUUID"] = []interface{}{u.String()}
 		orig["entryUUID"] = []string{u.String()}
 	}
 
@@ -2059,7 +2050,7 @@ func (r *HybridRepository) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*Hyb
 		// Migration mode
 		// It's already normlized
 	} else {
-		norm["createTimestamp"] = []int64{created.Unix()}
+		norm["createTimestamp"] = []interface{}{created.Unix()}
 		orig["createTimestamp"] = []string{created.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 	}
 
@@ -2068,7 +2059,7 @@ func (r *HybridRepository) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*Hyb
 		// Migration mode
 		// It's already normlized
 	} else {
-		norm["modifyTimestamp"] = []int64{updated.Unix()}
+		norm["modifyTimestamp"] = []interface{}{updated.Unix()}
 		orig["modifyTimestamp"] = []string{updated.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 	}
 
@@ -2090,7 +2081,7 @@ func (r *HybridRepository) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*Hyb
 	return dbEntry, association, nil
 }
 
-func (r *HybridRepository) dropAssociationAttrs(norm map[string]interface{}, orig map[string][]string) {
+func (r *HybridRepository) dropAssociationAttrs(norm map[string][]interface{}, orig map[string][]string) {
 	delete(norm, "member")
 	delete(norm, "uniqueMember")
 	delete(norm, "memberOf")
@@ -2108,17 +2099,17 @@ func (r *HybridRepository) schemaValueToIDArray(tx *sqlx.Tx, schemaValueMap map[
 		return rtn, nil
 	}
 
-	m := make(map[string]interface{}, 1)
+	m := make(map[string][]interface{}, 1)
 	m[attrName] = schemaValue.Norm()
 
 	return r.dnArrayToIDArray(tx, m, attrName)
 }
 
-func (r *HybridRepository) dnArrayToIDArray(tx *sqlx.Tx, norm map[string]interface{}, attrName string) ([]int64, error) {
+func (r *HybridRepository) dnArrayToIDArray(tx *sqlx.Tx, norm map[string][]interface{}, attrName string) ([]int64, error) {
 	rtn := []int64{}
 
 	// It's already normalized as *DN
-	dnArray, ok := norm[attrName].([]*DN)
+	dnArray, ok := norm[attrName]
 	if !ok || len(dnArray) == 0 {
 		return rtn, nil
 	}
@@ -2126,7 +2117,12 @@ func (r *HybridRepository) dnArrayToIDArray(tx *sqlx.Tx, norm map[string]interfa
 	dnMap := map[string]StringSet{}
 	indexMap := map[string]int{} // key: dn_norm, value: index
 
-	for i, dn := range dnArray {
+	for i, v := range dnArray {
+		dn, ok := v.(*DN)
+		if !ok {
+			return nil, NewInvalidPerSyntax(attrName, i)
+
+		}
 		indexMap[dn.DNNormStrWithoutSuffix(r.server.Suffix)] = i
 
 		parentDNNorm := dn.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
@@ -2271,7 +2267,7 @@ func (r *HybridRepository) modifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry)
 
 	// Timestamp
 	updated := time.Now()
-	norm["modifyTimestamp"] = []int64{updated.Unix()}
+	norm["modifyTimestamp"] = []interface{}{updated.Unix()}
 	orig["modifyTimestamp"] = []string{updated.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 
 	bNorm, _ := json.Marshal(norm)

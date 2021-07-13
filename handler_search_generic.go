@@ -153,8 +153,8 @@ func responseEntry(s *Server, w ldap.ResponseWriter, m *ldap.Message, r message.
 
 	session := getAuthSession(m)
 
-	encodedDNOrig := searchEntry.DNOrigEncodedStr()
-	e := ldap.NewSearchResultEntry(resolveSuffix(s, encodedDNOrig))
+	dnOrig := searchEntry.DNOrig()
+	e := ldap.NewSearchResultEntry(resolveSuffix(s, dnOrig))
 
 	sentAttrs := map[string]struct{}{}
 
@@ -228,7 +228,7 @@ func responseEntry(s *Server, w ldap.ResponseWriter, m *ldap.Message, r message.
 
 	w.Write(e)
 
-	log.Printf("Response an entry. dn: %s", encodedDNOrig)
+	log.Printf("Response an entry. dn: %s", dnOrig)
 }
 
 func responseSearchError(w ldap.ResponseWriter, err error) {

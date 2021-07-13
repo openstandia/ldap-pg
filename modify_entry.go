@@ -309,8 +309,8 @@ func (j *ModifyEntry) ObjectClassesNorm() ([]string, bool) {
 	return v.NormStr(), true
 }
 
-func (j *ModifyEntry) Attrs() (map[string]interface{}, map[string][]string) {
-	norm := make(map[string]interface{}, len(j.attributes))
+func (j *ModifyEntry) Attrs() (map[string][]interface{}, map[string][]string) {
+	norm := make(map[string][]interface{}, len(j.attributes))
 	orig := make(map[string][]string, len(j.attributes))
 	for k, v := range j.attributes {
 		norm[k] = v.Norm()

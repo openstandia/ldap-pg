@@ -1,89 +1,13 @@
 package main
 
 import (
-	"log"
-	"strconv"
 	"strings"
-
-	"github.com/jmoiron/sqlx/types"
 )
 
 type DN struct {
 	RDNs      []*RelativeDN
 	cachedRDN map[string]string
 }
-
-type FetchedDN struct {
-	ID       int64  `db:"id"`
-	ParentID int64  `db:"parent_id"`
-	Path     string `db:"path"`
-	DNOrig   string `db:"dn_orig"`
-	HasSub   bool   `db:"has_sub"`
-	dnNorm   string // not fetched from DB, it's computed
-}
-
-type FetchedEntry struct {
-	FetchedDN
-	AttrsOrig types.JSONText `db:"attrs_orig"`
-}
-
-func (e *FetchedEntry) GetAttrsOrig() map[string][]string {
-	if len(e.AttrsOrig) > 0 {
-		jsonMap := make(map[string][]string)
-		if err := e.AttrsOrig.Unmarshal(&jsonMap); err != nil {
-			log.Printf("error: Unexpected unmarshal error. err: %s", err)
-		}
-
-		return jsonMap
-	}
-	return nil
-}
-
-func (f *FetchedDN) IsRoot() bool {
-	return !strings.Contains(f.Path, ".")
-}
-
-func (f *FetchedDN) DNNorm(schemaMap *SchemaMap) string {
-	if f.dnNorm == "" {
-		dn, err := NormalizeDN(schemaMap, f.DNOrig)
-		if err != nil {
-			log.Printf("error: Invalid DN: %s, err: %v", f.DNOrig, err)
-			return ""
-		}
-		// Cached
-		f.dnNorm = dn.DNNormStr()
-	}
-	return f.dnNorm
-}
-
-func (f *FetchedDN) ParentDN(schemaMap *SchemaMap) *FetchedDN {
-	if f.IsRoot() {
-		return nil
-	}
-
-	path := strings.Split(f.Path, ".")
-	parentPath := strings.Join(path[:len(path)-2], ".")
-	parentID, err := strconv.ParseInt(path[len(path)-1], 10, 64)
-	if err != nil {
-		log.Printf("error: Invalid path: %s, err: %v", f.Path, err)
-		return nil
-	}
-	dn, err := NormalizeDN(schemaMap, f.DNOrig)
-	if err != nil {
-		log.Printf("error: Invalid DN: %s, err: %v", f.DNOrig, err)
-		return nil
-	}
-	parentDN := dn.ParentDN()
-
-	return &FetchedDN{
-		ID:     parentID,
-		Path:   parentPath,
-		DNOrig: parentDN.DNOrigStr(),
-		dnNorm: parentDN.DNNormStr(),
-		HasSub: true,
-	}
-}
-
 type RelativeDN struct {
 	Attributes []*AttributeTypeAndValue
 }
@@ -102,26 +26,12 @@ func (r *RelativeDN) OrigStr() string {
 	return b.String()
 }
 
-func (r *RelativeDN) OrigEncodedStr() string {
-	var b strings.Builder
-	b.Grow(128)
-	for i, attr := range r.Attributes {
-		if i > 0 {
-			b.WriteString("+")
-		}
-		b.WriteString(attr.TypeOrig)
-		b.WriteString("=")
-		b.WriteString(encodeDN(attr.ValueOrig))
-	}
-	return b.String()
-}
-
 // encodeDN encodes special characters for response DN in search.
 // Special characters: "+,;<>\#<space>
 // See: https://www.ipa.go.jp/security/rfc/RFC4514EN.html
 func encodeDN(str string) string {
 	var b strings.Builder
-	b.Grow(128)
+	b.Grow(len(str) + 10)
 
 	last := len(str) - 1
 
@@ -243,7 +153,7 @@ func (d *DN) DNOrigEncodedStr() string {
 		if i > 0 {
 			b.WriteString(",")
 		}
-		b.WriteString(rdn.OrigEncodedStr())
+		b.WriteString(rdn.OrigStr())
 	}
 	return b.String()
 }
