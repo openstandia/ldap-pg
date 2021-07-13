@@ -1,12 +1,33 @@
 package main
 
 import (
+	"context"
 	"log"
 	"strings"
 
 	ldap "github.com/openstandia/ldapserver"
 	"golang.org/x/xerrors"
 )
+
+type contextKey string
+
+const authContextKey contextKey = "auth"
+
+func SetSessionContext(parents context.Context, m *ldap.Message) context.Context {
+	session := getAuthSession(m)
+	return context.WithValue(parents, authContextKey, session)
+}
+
+func AuthSessionContext(ctx context.Context) (*AuthSession, error) {
+	v := ctx.Value(authContextKey)
+
+	session, ok := v.(*AuthSession)
+	if !ok {
+		return nil, xerrors.Errorf("No authSession in the context")
+	}
+
+	return session, nil
+}
 
 type LDAPAction int
 

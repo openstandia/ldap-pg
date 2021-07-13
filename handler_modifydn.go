@@ -9,7 +9,7 @@ import (
 )
 
 func handleModifyDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
-	ctx := context.Background()
+	ctx := SetSessionContext(context.Background(), m)
 
 	r := m.GetModifyDNRequest()
 	dn, err := s.NormalizeDN(string(r.Entry()))

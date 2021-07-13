@@ -10,7 +10,7 @@ import (
 )
 
 func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
-	ctx := context.Background()
+	ctx := SetSessionContext(context.Background(), m)
 
 	r := m.GetModifyRequest()
 	dn, err := s.NormalizeDN(string(r.Object()))

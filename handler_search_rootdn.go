@@ -9,6 +9,13 @@ import (
 )
 
 func handleSearchRootDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
+	session := getAuthSession(m)
+	if !session.IsRoot {
+		// Return 32 No such object
+		responseSearchError(w, NewNoSuchObject())
+		return
+	}
+
 	r := m.GetSearchRequest()
 
 	log.Printf("info: handleSearchRootDN")

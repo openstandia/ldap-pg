@@ -314,7 +314,7 @@ func (r *HybridRepository) Insert(ctx context.Context, entry *AddEntry) (int64, 
 
 	// We lock the association entries here first.
 	// From a performance standpoint, lock with share mode.
-	dbEntry, association, err := r.AddEntryToDBEntry(tx, entry)
+	dbEntry, association, err := r.AddEntryToDBEntry(ctx, tx, entry)
 	if err != nil {
 		log.Printf("warn: Failed to prepare insert. dn_norm: %s, newID: %d, err: %v", entry.DN().DNNormStr(), newID, err)
 		rollback(tx)
@@ -521,7 +521,7 @@ func (r *HybridRepository) Update(ctx context.Context, dn *DN, callback func(cur
 		return xerrors.Errorf("Invalid dbEntryId for update DBEntry. dn_norm: %s", dn.DNNormStr())
 	}
 
-	dbEntry, addAssociation, delAssociation, err := r.modifyEntryToDBEntry(tx, newEntry)
+	dbEntry, addAssociation, delAssociation, err := r.modifyEntryToDBEntry(ctx, tx, newEntry)
 	if err != nil {
 		rollback(tx)
 		return err
@@ -666,10 +666,10 @@ func (r *HybridRepository) UpdateDN(ctx context.Context, oldDN, newDN *DN, oldRD
 
 	if !oldDN.ParentDN().Equal(newDN.ParentDN()) {
 		// Move or copy under the new parent case
-		err = r.updateDNUnderNewParent(tx, oldDN, newDN, oldRDN, entry)
+		err = r.updateDNUnderNewParent(ctx, tx, oldDN, newDN, oldRDN, entry)
 	} else {
 		// Update rdn only case
-		err = r.updateRDN(tx, oldDN, newDN, oldRDN, entry)
+		err = r.updateRDN(ctx, tx, oldDN, newDN, oldRDN, entry)
 	}
 
 	if err != nil {
@@ -687,7 +687,7 @@ func (r *HybridRepository) UpdateDN(ctx context.Context, oldDN, newDN *DN, oldRD
 	return nil
 }
 
-func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *RelativeDN, oldEntry *ModifyEntry) error {
+func (r *HybridRepository) updateDNUnderNewParent(ctx context.Context, tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *RelativeDN, oldEntry *ModifyEntry) error {
 	oldParentDN := oldDN.ParentDN()
 	newParentDN := newDN.ParentDN()
 
@@ -751,7 +751,7 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 	}
 
 	// ModifyDN doesn't affect the member, ignore it
-	dbEntry, _, _, err := r.modifyEntryToDBEntry(tx, newEntry)
+	dbEntry, _, _, err := r.modifyEntryToDBEntry(ctx, tx, newEntry)
 	if err != nil {
 		return err
 	}
@@ -808,7 +808,7 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 	return nil
 }
 
-func (r *HybridRepository) updateRDN(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *RelativeDN, oldEntry *ModifyEntry) error {
+func (r *HybridRepository) updateRDN(ctx context.Context, tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *RelativeDN, oldEntry *ModifyEntry) error {
 	// Update the entry even if it's same RDN to update modifyTimestamp
 	newEntry := oldEntry.ModifyRDN(newDN)
 
@@ -823,7 +823,7 @@ func (r *HybridRepository) updateRDN(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *Rela
 	log.Printf("Update RDN. newDN: %s, hasSub: %v", newDN.DNOrigStr(), oldEntry.hasSub)
 
 	// Modify RDN doesn't affect the member, ignore it
-	dbEntry, _, _, err := r.modifyEntryToDBEntry(tx, newEntry)
+	dbEntry, _, _, err := r.modifyEntryToDBEntry(ctx, tx, newEntry)
 	if err != nil {
 		return err
 	}
@@ -1183,16 +1183,20 @@ func (r *HybridRepository) toSearchEntry(dbEntry *HybridFetchedDBEntry) *SearchE
 	}
 
 	// resolve association suffix
-	r.resolveAssociationSuffix(orig, "member")
-	r.resolveAssociationSuffix(orig, "uniqueMember")
-	r.resolveAssociationSuffix(orig, "memberOf")
+	r.resolveDNSuffix(orig, "member")
+	r.resolveDNSuffix(orig, "uniqueMember")
+	r.resolveDNSuffix(orig, "memberOf")
+
+	// resolve creators/modifiers suffix
+	r.resolveDNSuffix(orig, "creatorsName")
+	r.resolveDNSuffix(orig, "modifiersName")
 
 	readEntry := NewSearchEntry(r.server.schemaMap, dbEntry.DNOrig, orig)
 
 	return readEntry
 }
 
-func (r *HybridRepository) resolveAssociationSuffix(attrsOrig map[string][]string, attrName string) {
+func (r *HybridRepository) resolveDNSuffix(attrsOrig map[string][]string, attrName string) {
 	um := attrsOrig[attrName]
 	if len(um) > 0 {
 		for i, v := range um {
@@ -2006,7 +2010,7 @@ func (t *HybridDBFilterTranslator) ApproxMatch(s *AttributeType, q *HybridDBFilt
 // AddEntryToDBEntry converts LDAP entry object to DB entry object.
 // It handles metadata such as createTimistamp, modifyTimestamp and entryUUID.
 // Also, it handles member and uniqueMember attributes.
-func (r *HybridRepository) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*HybridDBEntry, map[string][]int64, error) {
+func (r *HybridRepository) AddEntryToDBEntry(ctx context.Context, tx *sqlx.Tx, entry *AddEntry) (*HybridDBEntry, map[string][]int64, error) {
 	norm, orig := entry.Attrs()
 
 	// TODO strict mode
@@ -2039,6 +2043,14 @@ func (r *HybridRepository) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*Hyb
 
 	// Remove attributes to reduce attrs_orig column size
 	r.dropAssociationAttrs(norm, orig)
+
+	// Creator, Modifiers
+	if session, err := AuthSessionContext(ctx); err == nil {
+		norm["creatorsName"] = []interface{}{session.DN.DNOrigEncodedStrWithoutSuffix(r.server.Suffix)}
+		orig["creatorsName"] = []string{session.DN.DNNormStrWithoutSuffix(r.server.Suffix)}
+		norm["modifiersName"] = norm["creatorsName"]
+		orig["modifiersName"] = orig["creatorsName"]
+	}
 
 	// Timestamp
 	created := time.Now()
@@ -2214,7 +2226,7 @@ func (r *HybridRepository) resolveDNMap(tx *sqlx.Tx, dnMap map[string]StringSet)
 	return rtn, nil
 }
 
-func (r *HybridRepository) modifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry) (*HybridDBEntry, map[string][]int64, map[string][]int64, error) {
+func (r *HybridRepository) modifyEntryToDBEntry(ctx context.Context, tx *sqlx.Tx, entry *ModifyEntry) (*HybridDBEntry, map[string][]int64, map[string][]int64, error) {
 	norm, orig := entry.Attrs()
 
 	// Convert the value of member, uniqueMamber and memberOf attributes, DN => int64
@@ -2260,6 +2272,12 @@ func (r *HybridRepository) modifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry)
 
 	// Remove attributes to reduce attrs_orig column size
 	r.dropAssociationAttrs(norm, orig)
+
+	// Modifiers
+	if session, err := AuthSessionContext(ctx); err == nil {
+		norm["modifiersName"] = []interface{}{session.DN.DNOrigEncodedStrWithoutSuffix(r.server.Suffix)}
+		orig["modifiersName"] = []string{session.DN.DNNormStrWithoutSuffix(r.server.Suffix)}
+	}
 
 	// Timestamp
 	updated := time.Now()
