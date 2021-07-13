@@ -261,7 +261,7 @@ func TestSearchSpecialCharacters(t *testing.T) {
 			&AssertEntry{},
 		},
 		Add{
-			// TODO Need to escape '='? (OpenLDAP desn't need it)
+			// TODO Need to escape '='? (OpenLDAP doesn't need it)
 			"uid=!@#$%^&*()_\\+|~{}:\\;'\\<\\>?`-\\=[]'/.\\,\"\\\\", "ou=Users",
 			M{
 				"objectClass":    A{"inetOrgPerson"},
@@ -274,13 +274,12 @@ func TestSearchSpecialCharacters(t *testing.T) {
 		},
 		Search{
 			"ou=Users," + testServer.GetSuffix(),
-			"uid=!@#$%^&\\2a\\28\\29_+|~{}:;'<>?`-=[]'/.,\"\\5c",
+			"uid=!@#$%^&\\2A\\28\\29_\\2B|~{}:;'<>?`-=[]'/.,\"\\5C",
 			ldap.ScopeWholeSubtree,
 			A{"*"},
 			&AssertEntries{
 				ExpectEntry{
-					// TODO Need to be encoded?
-					"uid=!@#$%^&*()_+|~{}:;'<>?`-=[]'/.,\"\\",
+					"uid=!@#$%^&*()_\\2B|~{}:\\3B'\\3C\\3E?`-\\3D[]'/.\\2C\\22\\5C",
 					"ou=Users",
 					M{
 						"sn": A{"user2"},

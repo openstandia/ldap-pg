@@ -32,20 +32,12 @@ func (j *AddEntry) SetDN(dn *DN) {
 	rdn := dn.RDN()
 	for k, v := range rdn {
 		// rdn is validated already
-		j.attributes[k], _ = NewSchemaValue(j.schemaMap, k, []string{v})
+		j.attributes[k], _ = NewSchemaValue(j.schemaMap, k, []string{v.Orig})
 	}
 }
 
 func (j *AddEntry) IsRoot() bool {
 	return j.dn.IsRoot()
-}
-
-func (j *AddEntry) RDNNorm() string {
-	return j.dn.RDNNormStr()
-}
-
-func (j *AddEntry) RDNOrig() string {
-	return j.dn.RDNOrigStr()
 }
 
 func (j *AddEntry) DN() *DN {
@@ -80,6 +72,7 @@ func (j *AddEntry) Add(attrName string, attrValue []string) error {
 	if len(attrValue) == 0 {
 		return nil
 	}
+	// Duplicate error is detected here
 	sv, err := NewSchemaValue(j.schemaMap, attrName, attrValue)
 	if err != nil {
 		return err
@@ -98,30 +91,18 @@ func (j *AddEntry) addsv(value *SchemaValue) error {
 		j.attributes[name] = value
 		return nil
 	} else {
-		// TODO
+		// When adding the attribute with same value as both DN and attribute,
+		// we need to ignore the duplicate error.
 		current.Add(value)
 	}
 	return nil
 }
 
-func (j *AddEntry) AttrNorm(attrName string) ([]string, bool) {
-	s, ok := j.schemaMap.AttributeType(attrName)
-	if !ok {
-		return nil, false
-	}
-
-	v, ok := j.attributes[s.Name]
-	if !ok {
-		return nil, false
-	}
-	return v.Norm(), true
-}
-
-func (j *AddEntry) Attrs() (map[string]interface{}, map[string][]string) {
-	norm := make(map[string]interface{}, len(j.attributes))
+func (j *AddEntry) Attrs() (map[string][]interface{}, map[string][]string) {
+	norm := make(map[string][]interface{}, len(j.attributes))
 	orig := make(map[string][]string, len(j.attributes))
 	for k, v := range j.attributes {
-		norm[k] = v.GetForJSON()
+		norm[k] = v.Norm()
 		orig[k] = v.Orig()
 	}
 	return norm, orig

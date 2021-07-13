@@ -463,7 +463,7 @@ func (e AssertEntries) AssertEntries(conn *ldap.Conn, err error, sr *ldap.Search
 	for _, v := range sr.Entries {
 		expect, ok := m[strings.ToLower(v.DN)]
 		if !ok {
-			return xerrors.Errorf("Unexpected entry. want = [%v] got = dn: %s, entry: %v", m, v.DN, *v)
+			return xerrors.Errorf("Not found entry. want = [%v] got = dn: %s, entry: %v", m, v.DN, *v)
 		}
 
 		for k, expectAttrs := range expect.attrs {

@@ -51,6 +51,12 @@ var (
 
 	// repo_read for bind
 	findCredByDN *sqlx.NamedStmt
+	// repo_update for bind
+	updateAfterBindSuccessByDN *sqlx.NamedStmt
+	updateAfterBindFailureByDN *sqlx.NamedStmt
+
+	// repo_read for ppolicy
+	findPPolicyByDN *sqlx.NamedStmt
 )
 
 func (r *HybridRepository) Init() error {
@@ -102,7 +108,53 @@ func (r *HybridRepository) Init() error {
 	}
 
 	findCredByDN, err = db.PrepareNamed(`SELECT
-		e.id, e.attrs_orig->'userPassword' AS credential
+		e.id,
+		e.attrs_orig->'userPassword' AS credential,
+		e.attrs_orig->'pwdAccountLockedTime' AS locked_time,
+		e.attrs_orig->'pwdFailureTime' AS failure_time,
+		memberOf.memberOf AS memberof,
+		dpp.attrs_orig AS default_ppolicy
+	FROM
+		ldap_entry e
+		LEFT JOIN ldap_container c ON e.parent_id = c.id
+		LEFT JOIN LATERAL (
+			SELECT jsonb_agg(ae.rdn_orig || ',' || ac.dn_orig) AS memberOf
+			FROM ldap_association a, ldap_entry ae, ldap_container ac
+			WHERE e.id = a.member_id AND ae.id = a.id AND ac.id = ae.parent_id
+		) AS memberOf ON true 
+		LEFT JOIN LATERAL (
+			SELECT dppe.attrs_orig
+			FROM ldap_entry dppe, ldap_container dppc
+			WHERE dppe.rdn_norm = :dpp_rdn_norm AND dppc.id = dppe.parent_id AND dppc.dn_norm = :dpp_parent_dn_norm
+		) AS dpp ON true 
+	WHERE
+		e.rdn_norm = :rdn_norm
+		AND c.dn_norm = :parent_dn_norm
+	FOR UPDATE OF e
+	`)
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
+
+	updateAfterBindSuccessByDN, err = db.PrepareNamed(`UPDATE ldap_entry SET
+	attrs_norm = attrs_norm - 'pwdAccountLockedTime' - 'pwdFailureTime' || jsonb_build_object('authTimestamp', :auth_timestamp_norm ::::jsonb),
+	attrs_orig = attrs_orig - 'pwdAccountLockedTime' - 'pwdFailureTime' || jsonb_build_object('authTimestamp', :auth_timestamp_orig ::::jsonb)
+	WHERE id = :id`)
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
+
+	updateAfterBindFailureByDN, err = db.PrepareNamed(`UPDATE ldap_entry SET
+	attrs_norm = attrs_norm || jsonb_build_object('pwdAccountLockedTime', :lock_time_norm ::::jsonb) || jsonb_build_object('pwdFailureTime', :failure_time_norm ::::jsonb),
+	attrs_orig = attrs_orig || jsonb_build_object('pwdAccountLockedTime', :lock_time_orig ::::jsonb) || jsonb_build_object('pwdFailureTime', :failure_time_orig ::::jsonb)
+	WHERE id = :id`)
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
+
+	findPPolicyByDN, err = db.PrepareNamed(`SELECT
+		e.id,
+		e.attrs_orig AS ppolicy
 	FROM
 		ldap_entry e
 		LEFT JOIN ldap_container c ON e.parent_id = c.id
@@ -240,14 +292,12 @@ func (r *HybridRepository) Init() error {
 
 // HybridDBEntry is used as insert or update entry.
 type HybridDBEntry struct {
-	ID                  int64          `db:"id"`
-	DNNormWithoutSuffix string         `db:"dn_norm"`
-	DNOrigWithoutSuffix string         `db:"dn_orig"`
-	RDNNorm             string         `db:"rdn_norm"`
-	RDNOrig             string         `db:"rdn_orig"`
-	AttrsNorm           types.JSONText `db:"attrs_norm"`
-	AttrsOrig           types.JSONText `db:"attrs_orig"`
-	ParentDN            *DN
+	ID        int64          `db:"id"`
+	RDNNorm   string         `db:"rdn_norm"`
+	RDNOrig   string         `db:"rdn_orig"`
+	AttrsNorm types.JSONText `db:"attrs_norm"`
+	AttrsOrig types.JSONText `db:"attrs_orig"`
+	ParentDN  *DN
 }
 
 //////////////////////////////////////////
@@ -264,7 +314,7 @@ func (r *HybridRepository) Insert(ctx context.Context, entry *AddEntry) (int64, 
 
 	// We lock the association entries here first.
 	// From a performance standpoint, lock with share mode.
-	dbEntry, association, err := r.AddEntryToDBEntry(tx, entry)
+	dbEntry, association, err := r.AddEntryToDBEntry(ctx, tx, entry)
 	if err != nil {
 		log.Printf("warn: Failed to prepare insert. dn_norm: %s, newID: %d, err: %v", entry.DN().DNNormStr(), newID, err)
 		rollback(tx)
@@ -371,7 +421,7 @@ func (r *HybridRepository) insertInternal(tx *sqlx.Tx, dbEntry *HybridDBEntry) (
 		if _, err := r.exec(tx, insertContainerStmtWithUpdateLock, map[string]interface{}{
 			"id":      parentId,
 			"dn_norm": parentDN.DNNormStrWithoutSuffix(r.server.Suffix),
-			"dn_orig": parentDN.DNOrigStrWithoutSuffix(r.server.Suffix),
+			"dn_orig": parentDN.DNOrigEncodedStrWithoutSuffix(r.server.Suffix),
 		}); err != nil {
 			return 0, xerrors.Errorf("Failed to insert container record.dn_norm: %s,%s, err: %w",
 				dbEntry.RDNNorm, dbEntry.ParentDN.DNNormStr(), err)
@@ -471,7 +521,7 @@ func (r *HybridRepository) Update(ctx context.Context, dn *DN, callback func(cur
 		return xerrors.Errorf("Invalid dbEntryId for update DBEntry. dn_norm: %s", dn.DNNormStr())
 	}
 
-	dbEntry, addAssociation, delAssociation, err := r.modifyEntryToDBEntry(tx, newEntry)
+	dbEntry, addAssociation, delAssociation, err := r.modifyEntryToDBEntry(ctx, tx, newEntry)
 	if err != nil {
 		rollback(tx)
 		return err
@@ -616,10 +666,10 @@ func (r *HybridRepository) UpdateDN(ctx context.Context, oldDN, newDN *DN, oldRD
 
 	if !oldDN.ParentDN().Equal(newDN.ParentDN()) {
 		// Move or copy under the new parent case
-		err = r.updateDNUnderNewParent(tx, oldDN, newDN, oldRDN, entry)
+		err = r.updateDNUnderNewParent(ctx, tx, oldDN, newDN, oldRDN, entry)
 	} else {
 		// Update rdn only case
-		err = r.updateRDN(tx, oldDN, newDN, oldRDN, entry)
+		err = r.updateRDN(ctx, tx, oldDN, newDN, oldRDN, entry)
 	}
 
 	if err != nil {
@@ -637,7 +687,7 @@ func (r *HybridRepository) UpdateDN(ctx context.Context, oldDN, newDN *DN, oldRD
 	return nil
 }
 
-func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *RelativeDN, oldEntry *ModifyEntry) error {
+func (r *HybridRepository) updateDNUnderNewParent(ctx context.Context, tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *RelativeDN, oldEntry *ModifyEntry) error {
 	oldParentDN := oldDN.ParentDN()
 	newParentDN := newDN.ParentDN()
 
@@ -680,7 +730,7 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 			if _, err := r.exec(tx, insertContainerStmtWithUpdateLock, map[string]interface{}{
 				"id":      newParentID,
 				"dn_norm": newParentDN.DNNormStrWithoutSuffix(r.server.Suffix),
-				"dn_orig": newParentDN.DNOrigStrWithoutSuffix(r.server.Suffix),
+				"dn_orig": newParentDN.DNOrigEncodedStrWithoutSuffix(r.server.Suffix),
 			}); err != nil {
 				return xerrors.Errorf("Unexpected insert container error. id: %d, dn_norm: %s, err: %w",
 					newParentID, oldParentDN.DNNormStr(), err)
@@ -701,7 +751,7 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 	}
 
 	// ModifyDN doesn't affect the member, ignore it
-	dbEntry, _, _, err := r.modifyEntryToDBEntry(tx, newEntry)
+	dbEntry, _, _, err := r.modifyEntryToDBEntry(ctx, tx, newEntry)
 	if err != nil {
 		return err
 	}
@@ -711,7 +761,7 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 		"id":           oldEntry.dbEntryID,
 		"parent_id":    newParentID,
 		"new_rdn_norm": newDN.RDNNormStr(),
-		"new_rdn_orig": newDN.RDNOrigStr(),
+		"new_rdn_orig": newDN.RDNOrigEncodedStr(),
 		"attrs_norm":   dbEntry.AttrsNorm,
 		"attrs_orig":   dbEntry.AttrsOrig,
 	}); err != nil {
@@ -724,16 +774,16 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 		if _, err = r.exec(tx, updateContainerDNByIdStmt, map[string]interface{}{
 			"id":          oldEntry.dbEntryID,
 			"new_dn_norm": newDN.DNNormStrWithoutSuffix(r.server.Suffix),
-			"new_dn_orig": newDN.DNOrigStrWithoutSuffix(r.server.Suffix),
+			"new_dn_orig": newDN.DNOrigEncodedStrWithoutSuffix(r.server.Suffix),
 		}); err != nil {
 			return xerrors.Errorf("Failed to update container DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
 		}
 
 		if _, err = r.exec(tx, updateContainerDNsByIdStmt, map[string]interface{}{
 			"new_dn_norm":         "\\1" + newDN.DNNormStrWithoutSuffix(r.server.Suffix),
-			"new_dn_orig":         "\\1" + newDN.DNOrigStrWithoutSuffix(r.server.Suffix),
+			"new_dn_orig":         "\\1" + newDN.DNOrigEncodedStrWithoutSuffix(r.server.Suffix),
 			"old_dn_norm_pattern": "(.*,)" + escapeRegex(oldDN.DNNormStrWithoutSuffix(r.server.Suffix)) + "$",
-			"old_dn_orig_pattern": "(.*,)" + escapeRegex(oldDN.DNOrigStrWithoutSuffix(r.server.Suffix)) + "$",
+			"old_dn_orig_pattern": "(.*,)" + escapeRegex(oldDN.DNOrigEncodedStrWithoutSuffix(r.server.Suffix)) + "$",
 		}); err != nil {
 			return xerrors.Errorf("Failed to update sub containers DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
 		}
@@ -758,7 +808,7 @@ func (r *HybridRepository) updateDNUnderNewParent(tx *sqlx.Tx, oldDN, newDN *DN,
 	return nil
 }
 
-func (r *HybridRepository) updateRDN(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *RelativeDN, oldEntry *ModifyEntry) error {
+func (r *HybridRepository) updateRDN(ctx context.Context, tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *RelativeDN, oldEntry *ModifyEntry) error {
 	// Update the entry even if it's same RDN to update modifyTimestamp
 	newEntry := oldEntry.ModifyRDN(newDN)
 
@@ -773,7 +823,7 @@ func (r *HybridRepository) updateRDN(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *Rela
 	log.Printf("Update RDN. newDN: %s, hasSub: %v", newDN.DNOrigStr(), oldEntry.hasSub)
 
 	// Modify RDN doesn't affect the member, ignore it
-	dbEntry, _, _, err := r.modifyEntryToDBEntry(tx, newEntry)
+	dbEntry, _, _, err := r.modifyEntryToDBEntry(ctx, tx, newEntry)
 	if err != nil {
 		return err
 	}
@@ -781,7 +831,7 @@ func (r *HybridRepository) updateRDN(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *Rela
 	if _, err := r.exec(tx, updateRDNByIdStmt, map[string]interface{}{
 		"id":           oldEntry.dbEntryID,
 		"new_rdn_norm": newDN.RDNNormStr(),
-		"new_rdn_orig": newDN.RDNOrigStr(),
+		"new_rdn_orig": newDN.RDNOrigEncodedStr(),
 		"attrs_norm":   dbEntry.AttrsNorm,
 		"attrs_orig":   dbEntry.AttrsOrig,
 	}); err != nil {
@@ -794,16 +844,16 @@ func (r *HybridRepository) updateRDN(tx *sqlx.Tx, oldDN, newDN *DN, oldRDN *Rela
 		if _, err = r.exec(tx, updateContainerDNByIdStmt, map[string]interface{}{
 			"id":          oldEntry.dbEntryID,
 			"new_dn_norm": newDN.RDNNormStr(),
-			"new_dn_orig": newDN.RDNOrigStr(),
+			"new_dn_orig": newDN.RDNOrigEncodedStr(),
 		}); err != nil {
 			return xerrors.Errorf("Failed to update container DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
 		}
 
 		if _, err = r.exec(tx, updateContainerDNByIdStmt, map[string]interface{}{
 			"new_dn_norm":         "\\1" + newDN.RDNNormStr(),
-			"new_dn_orig":         "\\1" + newDN.RDNOrigStr(),
+			"new_dn_orig":         "\\1" + newDN.RDNOrigEncodedStr(),
 			"old_dn_norm_pattern": "(.*,)" + escapeRegex(oldDN.DNNormStrWithoutSuffix(r.server.Suffix)) + "$",
-			"old_dn_orig_pattern": "(.*,)" + escapeRegex(oldDN.DNOrigStrWithoutSuffix(r.server.Suffix)) + "$",
+			"old_dn_orig_pattern": "(.*,)" + escapeRegex(oldDN.DNOrigEncodedStrWithoutSuffix(r.server.Suffix)) + "$",
 		}); err != nil {
 			return xerrors.Errorf("Failed to update sub containers DN. oldDN: %s, newDN: %s, err: %w", oldDN.DNNormStr(), newDN.DNNormStr(), err)
 		}
@@ -1133,16 +1183,20 @@ func (r *HybridRepository) toSearchEntry(dbEntry *HybridFetchedDBEntry) *SearchE
 	}
 
 	// resolve association suffix
-	r.resolveAssociationSuffix(orig, "member")
-	r.resolveAssociationSuffix(orig, "uniqueMember")
-	r.resolveAssociationSuffix(orig, "memberOf")
+	r.resolveDNSuffix(orig, "member")
+	r.resolveDNSuffix(orig, "uniqueMember")
+	r.resolveDNSuffix(orig, "memberOf")
+
+	// resolve creators/modifiers suffix
+	r.resolveDNSuffix(orig, "creatorsName")
+	r.resolveDNSuffix(orig, "modifiersName")
 
 	readEntry := NewSearchEntry(r.server.schemaMap, dbEntry.DNOrig, orig)
 
 	return readEntry
 }
 
-func (r *HybridRepository) resolveAssociationSuffix(attrsOrig map[string][]string, attrName string) {
+func (r *HybridRepository) resolveDNSuffix(attrsOrig map[string][]string, attrName string) {
 	um := attrsOrig[attrName]
 	if len(um) > 0 {
 		for i, v := range um {
@@ -1528,7 +1582,7 @@ func (t *HybridDBFilterTranslator) StartsWithMatch(s *AttributeType, sb *strings
 	sb.WriteString(`$."`)
 	sb.WriteString(escapeName(s.Name))
 	sb.WriteString(`" starts with "`)
-	sb.WriteString(escapeValue(sv.Norm()[0]))
+	sb.WriteString(escapeValue(sv.NormStr()[0]))
 	sb.WriteString(`"`)
 }
 
@@ -1549,7 +1603,7 @@ func (t *HybridDBFilterTranslator) AnyMatch(s *AttributeType, sb *strings.Builde
 	sb.WriteString(`$."`)
 	sb.WriteString(escapeName(s.Name))
 	sb.WriteString(`" like_regex ".*`)
-	sb.WriteString(escapeRegex(sv.Norm()[0]))
+	sb.WriteString(escapeRegex(sv.NormStr()[0]))
 	sb.WriteString(`.*"`)
 }
 
@@ -1570,7 +1624,7 @@ func (t *HybridDBFilterTranslator) EndsMatch(s *AttributeType, sb *strings.Build
 	sb.WriteString(`$."`)
 	sb.WriteString(escapeName(s.Name))
 	sb.WriteString(`" like_regex ".*`)
-	sb.WriteString(escapeRegex(sv.Norm()[0]))
+	sb.WriteString(escapeRegex(sv.NormStr()[0]))
 	sb.WriteString(`$"`)
 }
 
@@ -1614,7 +1668,7 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *AttributeType, q *HybridDBFi
 			) t1 ON t1.id = e.id
 
 			[CASE NOT EXISTS]
-			-- association filter by memberOf
+			-- association filter by uniqueMember
 			LEFT JOIN (
 				SELECT DISTINCT
 					a1.id
@@ -1762,7 +1816,7 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *AttributeType, q *HybridDBFi
 
 	} else {
 		var sb strings.Builder
-		sb.Grow(10 + len(s.Name) + len(sv.Norm()[0]))
+		sb.Grow(10 + len(s.Name) + len(sv.NormStr()[0]))
 
 		if isNot {
 			sb.WriteString(`!(`)
@@ -1770,7 +1824,7 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *AttributeType, q *HybridDBFi
 		sb.WriteString(`$."`)
 		sb.WriteString(escapeName(s.Name))
 		sb.WriteString(`" == "`)
-		sb.WriteString(escapeValue(sv.Norm()[0]))
+		sb.WriteString(escapeValue(sv.NormStr()[0]))
 		sb.WriteString(`"`)
 		if isNot {
 			sb.WriteString(`)`)
@@ -1804,7 +1858,7 @@ func (t *HybridDBFilterTranslator) GreaterOrEqualMatch(s *AttributeType, q *Hybr
 	}
 
 	var sb strings.Builder
-	sb.Grow(10 + len(s.Name) + len(sv.Norm()[0]))
+	sb.Grow(10 + len(s.Name) + len(sv.NormStr()[0]))
 
 	if isNot {
 		sb.WriteString(`!(`)
@@ -1812,7 +1866,7 @@ func (t *HybridDBFilterTranslator) GreaterOrEqualMatch(s *AttributeType, q *Hybr
 	sb.WriteString(`$."`)
 	sb.WriteString(escapeName(s.Name))
 	sb.WriteString(`" >= `)
-	sb.WriteString(escapeValue(sv.Norm()[0]))
+	sb.WriteString(escapeValue(sv.NormStr()[0]))
 	if isNot {
 		sb.WriteString(`)`)
 	}
@@ -1845,7 +1899,7 @@ func (t *HybridDBFilterTranslator) LessOrEqualMatch(s *AttributeType, q *HybridD
 	}
 
 	var sb strings.Builder
-	sb.Grow(10 + len(s.Name) + len(sv.Norm()[0]))
+	sb.Grow(10 + len(s.Name) + len(sv.NormStr()[0]))
 
 	if isNot {
 		sb.WriteString(`!(`)
@@ -1853,7 +1907,7 @@ func (t *HybridDBFilterTranslator) LessOrEqualMatch(s *AttributeType, q *HybridD
 	sb.WriteString(`$."`)
 	sb.WriteString(escapeName(s.Name))
 	sb.WriteString(`" <= `)
-	sb.WriteString(escapeValue(sv.Norm()[0]))
+	sb.WriteString(escapeValue(sv.NormStr()[0]))
 	if isNot {
 		sb.WriteString(`)`)
 	}
@@ -1926,7 +1980,7 @@ func (t *HybridDBFilterTranslator) ApproxMatch(s *AttributeType, q *HybridDBFilt
 	}
 
 	var sb strings.Builder
-	sb.Grow(25 + len(s.Name) + len(sv.Norm()[0]))
+	sb.Grow(25 + len(s.Name) + len(sv.NormStr()[0]))
 
 	if isNot {
 		sb.WriteString(`!(`)
@@ -1934,7 +1988,7 @@ func (t *HybridDBFilterTranslator) ApproxMatch(s *AttributeType, q *HybridDBFilt
 	sb.WriteString(`$."`)
 	sb.WriteString(escapeName(s.Name))
 	sb.WriteString(`" like_regex ".*`)
-	sb.WriteString(escapeRegex(sv.Norm()[0]))
+	sb.WriteString(escapeRegex(sv.NormStr()[0]))
 	sb.WriteString(`.*"`)
 	if isNot {
 		sb.WriteString(`)`)
@@ -1956,13 +2010,13 @@ func (t *HybridDBFilterTranslator) ApproxMatch(s *AttributeType, q *HybridDBFilt
 // AddEntryToDBEntry converts LDAP entry object to DB entry object.
 // It handles metadata such as createTimistamp, modifyTimestamp and entryUUID.
 // Also, it handles member and uniqueMember attributes.
-func (r *HybridRepository) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*HybridDBEntry, map[string][]int64, error) {
+func (r *HybridRepository) AddEntryToDBEntry(ctx context.Context, tx *sqlx.Tx, entry *AddEntry) (*HybridDBEntry, map[string][]int64, error) {
 	norm, orig := entry.Attrs()
 
 	// TODO strict mode
 	if _, ok := norm["entryUUID"]; !ok {
 		u, _ := uuid.NewRandom()
-		norm["entryUUID"] = []string{u.String()}
+		norm["entryUUID"] = []interface{}{u.String()}
 		orig["entryUUID"] = []string{u.String()}
 	}
 
@@ -1990,22 +2044,34 @@ func (r *HybridRepository) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*Hyb
 	// Remove attributes to reduce attrs_orig column size
 	r.dropAssociationAttrs(norm, orig)
 
+	// Creator, Modifiers
+	if session, err := AuthSessionContext(ctx); err == nil {
+		norm["creatorsName"] = []interface{}{session.DN.DNOrigEncodedStrWithoutSuffix(r.server.Suffix)}
+		orig["creatorsName"] = []string{session.DN.DNNormStrWithoutSuffix(r.server.Suffix)}
+		norm["modifiersName"] = norm["creatorsName"]
+		orig["modifiersName"] = orig["creatorsName"]
+	}
+
 	// Timestamp
 	created := time.Now()
 	updated := created
+	// If migration mode is enabled, we use the specified values
 	if _, ok := norm["createTimestamp"]; ok {
-		// Already validated, ignore error
-		created, _ = time.Parse(TIMESTAMP_FORMAT, norm["createTimestamp"].([]string)[0])
+		// Migration mode
+		// It's already normlized
+	} else {
+		norm["createTimestamp"] = []interface{}{created.Unix()}
+		orig["createTimestamp"] = []string{created.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 	}
-	norm["createTimestamp"] = []int64{created.Unix()}
-	orig["createTimestamp"] = []string{created.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 
+	// If migration mode is enabled, we use the specified values
 	if _, ok := norm["modifyTimestamp"]; ok {
-		// Already validated, ignore error
-		updated, _ = time.Parse(TIMESTAMP_FORMAT, norm["modifyTimestamp"].([]string)[0])
+		// Migration mode
+		// It's already normlized
+	} else {
+		norm["modifyTimestamp"] = []interface{}{updated.Unix()}
+		orig["modifyTimestamp"] = []string{updated.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 	}
-	norm["modifyTimestamp"] = []int64{updated.Unix()}
-	orig["modifyTimestamp"] = []string{updated.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 
 	bNorm, _ := json.Marshal(norm)
 	bOrig, _ := json.Marshal(orig)
@@ -2013,19 +2079,17 @@ func (r *HybridRepository) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*Hyb
 	dn := entry.DN()
 
 	dbEntry := &HybridDBEntry{
-		DNNormWithoutSuffix: dn.DNNormStrWithoutSuffix(r.server.Suffix),
-		DNOrigWithoutSuffix: dn.DNOrigStrWithoutSuffix(r.server.Suffix),
-		RDNNorm:             dn.RDNNormStr(),
-		RDNOrig:             dn.RDNOrigStr(),
-		AttrsNorm:           types.JSONText(string(bNorm)),
-		AttrsOrig:           types.JSONText(string(bOrig)),
-		ParentDN:            entry.ParentDN(),
+		RDNNorm:   dn.RDNNormStr(),
+		RDNOrig:   dn.RDNOrigEncodedStr(),
+		AttrsNorm: types.JSONText(string(bNorm)),
+		AttrsOrig: types.JSONText(string(bOrig)),
+		ParentDN:  entry.ParentDN(),
 	}
 
 	return dbEntry, association, nil
 }
 
-func (r *HybridRepository) dropAssociationAttrs(norm map[string]interface{}, orig map[string][]string) {
+func (r *HybridRepository) dropAssociationAttrs(norm map[string][]interface{}, orig map[string][]string) {
 	delete(norm, "member")
 	delete(norm, "uniqueMember")
 	delete(norm, "memberOf")
@@ -2043,40 +2107,17 @@ func (r *HybridRepository) schemaValueToIDArray(tx *sqlx.Tx, schemaValueMap map[
 		return rtn, nil
 	}
 
-	dnMap := map[string]StringSet{}
-	indexMap := map[string]int{} // key: dn_norm, value: index
+	m := make(map[string][]interface{}, 1)
+	m[attrName] = schemaValue.Norm()
 
-	for i, v := range schemaValue.Orig() {
-		dn, err := NormalizeDN(r.server.schemaMap, v)
-		if err != nil {
-			log.Printf("warn: Failed to normalize DN: %s", v)
-			return nil, NewInvalidPerSyntax(attrName, i)
-		}
-
-		parentDNNorm := dn.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
-		if set, ok := dnMap[parentDNNorm]; ok {
-			set.Add(dn.RDNNormStr())
-		} else {
-			set = NewStringSet(dn.RDNNormStr())
-			dnMap[parentDNNorm] = set
-		}
-	}
-
-	ids, err := r.resolveDNMap(tx, dnMap)
-	if err != nil {
-		if dnErr, ok := err.(*InvalidDNError); ok {
-			index := indexMap[dnErr.dnNorm]
-			return nil, NewInvalidPerSyntax(attrName, index)
-		}
-	}
-
-	return ids, err
+	return r.dnArrayToIDArray(tx, m, attrName)
 }
 
-func (r *HybridRepository) dnArrayToIDArray(tx *sqlx.Tx, norm map[string]interface{}, attrName string) ([]int64, error) {
+func (r *HybridRepository) dnArrayToIDArray(tx *sqlx.Tx, norm map[string][]interface{}, attrName string) ([]int64, error) {
 	rtn := []int64{}
 
-	dnArray, ok := norm[attrName].([]string)
+	// It's already normalized as *DN
+	dnArray, ok := norm[attrName]
 	if !ok || len(dnArray) == 0 {
 		return rtn, nil
 	}
@@ -2085,12 +2126,11 @@ func (r *HybridRepository) dnArrayToIDArray(tx *sqlx.Tx, norm map[string]interfa
 	indexMap := map[string]int{} // key: dn_norm, value: index
 
 	for i, v := range dnArray {
-		dn, err := NormalizeDN(r.server.schemaMap, v)
-		if err != nil {
-			log.Printf("warn: Failed to normalize DN: %s", v)
+		dn, ok := v.(*DN)
+		if !ok {
 			return nil, NewInvalidPerSyntax(attrName, i)
-		}
 
+		}
 		indexMap[dn.DNNormStrWithoutSuffix(r.server.Suffix)] = i
 
 		parentDNNorm := dn.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
@@ -2186,8 +2226,8 @@ func (r *HybridRepository) resolveDNMap(tx *sqlx.Tx, dnMap map[string]StringSet)
 	return rtn, nil
 }
 
-func (r *HybridRepository) modifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry) (*HybridDBEntry, map[string][]int64, map[string][]int64, error) {
-	norm, orig := entry.GetAttrs()
+func (r *HybridRepository) modifyEntryToDBEntry(ctx context.Context, tx *sqlx.Tx, entry *ModifyEntry) (*HybridDBEntry, map[string][]int64, map[string][]int64, error) {
+	norm, orig := entry.Attrs()
 
 	// Convert the value of member, uniqueMamber and memberOf attributes, DN => int64
 	addAssociation := map[string][]int64{}
@@ -2233,9 +2273,15 @@ func (r *HybridRepository) modifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry)
 	// Remove attributes to reduce attrs_orig column size
 	r.dropAssociationAttrs(norm, orig)
 
+	// Modifiers
+	if session, err := AuthSessionContext(ctx); err == nil {
+		norm["modifiersName"] = []interface{}{session.DN.DNOrigEncodedStrWithoutSuffix(r.server.Suffix)}
+		orig["modifiersName"] = []string{session.DN.DNNormStrWithoutSuffix(r.server.Suffix)}
+	}
+
 	// Timestamp
 	updated := time.Now()
-	norm["modifyTimestamp"] = []int64{updated.Unix()}
+	norm["modifyTimestamp"] = []interface{}{updated.Unix()}
 	orig["modifyTimestamp"] = []string{updated.In(time.UTC).Format(TIMESTAMP_FORMAT)}
 
 	bNorm, _ := json.Marshal(norm)
@@ -2254,35 +2300,260 @@ func (r *HybridRepository) modifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry)
 // Bind
 //////////////////////////////////////////
 
-func (r *HybridRepository) FindCredByDN(ctx context.Context, dn *DN) ([]string, error) {
+func (r *HybridRepository) Bind(ctx context.Context, dn *DN, callback func(current *FetchedCredential) error) error {
+	tx, err := r.begin(ctx)
+	if err != nil {
+		return err
+	}
+
+	dest := struct {
+		ID                 int64          `db:"id"`
+		RawCredentialOrig  types.JSONText `db:"credential"`      // No real column in the table
+		RawLockedTimeOrig  types.JSONText `db:"locked_time"`     // No real column in the table
+		RawFailureTimeOrig types.JSONText `db:"failure_time"`    // No real column in the table
+		RawMemberOf        types.JSONText `db:"memberof"`        // No real column in the table
+		RawDefaultPPolicy  types.JSONText `db:"default_ppolicy"` // No real column in the table
+	}{}
+
+	var dppRDNNorm string
+	var dppParentDNNorm string
+
+	if !r.server.defaultPPolicyDN.IsAnonymous() {
+		dppRDNNorm = r.server.defaultPPolicyDN.RDNNormStr()
+		dppParentDNNorm = r.server.defaultPPolicyDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
+	}
+
+	if err := r.get(tx, findCredByDN, &dest, map[string]interface{}{
+		"rdn_norm":           dn.RDNNormStr(),
+		"parent_dn_norm":     dn.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix),
+		"dpp_rdn_norm":       dppRDNNorm,
+		"dpp_parent_dn_norm": dppParentDNNorm,
+	}); err != nil {
+		rollback(tx)
+		if isNoResult(err) {
+			// Return Invalid credentials (49) if no user
+			return NewInvalidCredentials()
+		}
+		return xerrors.Errorf("Failed to find cred by DN. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
+	}
+
+	attrsOrig := struct {
+		Credentials          []string `json:"credentials"`          // No real column in the table
+		PwdAccountLockedTime []string `json:"pwdAccountLockedTime"` // No real column in the table
+		PwdFailureTime       []string `json:"pwdFailureTime"`       // No real column in the table
+	}{}
+
+	if len(dest.RawCredentialOrig) > 0 {
+		err = dest.RawCredentialOrig.Unmarshal(&attrsOrig.Credentials)
+		if err != nil {
+			rollback(tx)
+			return xerrors.Errorf("Failed to unmarshal credential. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
+		}
+	}
+	if len(dest.RawLockedTimeOrig) > 0 {
+		err = dest.RawLockedTimeOrig.Unmarshal(&attrsOrig.PwdAccountLockedTime)
+		if err != nil {
+			rollback(tx)
+			return xerrors.Errorf("Failed to unmarshal lockedTime. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
+		}
+	}
+	if len(dest.RawFailureTimeOrig) > 0 {
+		err = dest.RawFailureTimeOrig.Unmarshal(&attrsOrig.PwdFailureTime)
+		if err != nil {
+			rollback(tx)
+			return xerrors.Errorf("Failed to unmarshal failureTime. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
+		}
+	}
+
+	var memberOfDN []*DN
+
+	if len(dest.RawMemberOf) > 0 {
+		var memberOf []string
+		err = dest.RawMemberOf.Unmarshal(&memberOf)
+		if err != nil {
+			rollback(tx)
+			return xerrors.Errorf("Failed to unmarshal memberOf array. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
+		}
+
+		memberOfDN = make([]*DN, len(memberOf))
+		for i, v := range memberOf {
+			memberOfDN[i], err = r.server.NormalizeDN(resolveSuffix(r.server, v))
+			if err != nil {
+				rollback(tx)
+				return xerrors.Errorf("Failed to normalize memberOf. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
+			}
+		}
+	}
+
+	var ppolicy PPolicy
+
+	// Currently, resolve default ppolicy only
+	// TODO implement use-specific ppolicy using pwdPolicySubentry
+	if len(dest.RawDefaultPPolicy) > 0 {
+		err = dest.RawDefaultPPolicy.Unmarshal(&ppolicy)
+		if err != nil {
+			rollback(tx)
+			return xerrors.Errorf("Failed to unmarshal default ppolicy. dn_orig: %s, err: %w", r.server.defaultPPolicyDN.DNOrigStr(), err)
+		}
+	}
+
+	var pwdAccountLockedTime time.Time
+
+	if len(attrsOrig.PwdAccountLockedTime) > 0 {
+		pwdAccountLockedTime, err = time.Parse(TIMESTAMP_FORMAT, attrsOrig.PwdAccountLockedTime[0])
+		if err != nil {
+			rollback(tx)
+			return xerrors.Errorf("Failed to parse pwdAccountLockedTime. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
+		}
+	}
+
+	var lastPwdFailureTime *time.Time
+	var currentPwdFailureTime []*time.Time
+
+	if len(attrsOrig.PwdFailureTime) > 0 {
+		for _, v := range attrsOrig.PwdFailureTime {
+			t, err := time.Parse(TIMESTAMP_NANO_FORMAT, v)
+			if err != nil {
+				rollback(tx)
+				return xerrors.Errorf("Failed to parse pwdFailureTime. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
+			}
+			if lastPwdFailureTime == nil {
+				lastPwdFailureTime = &t
+			} else {
+				if t.After(*lastPwdFailureTime) {
+					lastPwdFailureTime = &t
+				}
+			}
+			currentPwdFailureTime = append(currentPwdFailureTime, &t)
+		}
+	}
+
+	fc := &FetchedCredential{
+		ID:                   dest.ID,
+		Credential:           attrsOrig.Credentials,
+		MemberOf:             memberOfDN,
+		PPolicy:              &ppolicy,
+		PwdAccountLockedTime: &pwdAccountLockedTime,
+		LastPwdFailureTime:   lastPwdFailureTime,
+		PwdFailureCount:      len(attrsOrig.PwdFailureTime),
+	}
+
+	// Call the callback implemented bind logic
+	callbackErr := callback(fc)
+
+	// After bind, record the results into DB
+	if callbackErr != nil {
+		var lerr *LDAPError
+		isLDAPError := xerrors.As(callbackErr, &lerr)
+		if !isLDAPError || !lerr.IsInvalidCredentials() {
+			rollback(tx)
+			return err
+		}
+
+		if lerr.IsAccountLocked() {
+			rollback(tx)
+			log.Printf("Account is locked, dn_norm: %s", dn.DNNormStr())
+			return callbackErr
+		}
+
+		if ppolicy.IsLockoutEnabled() {
+			ft := time.Now()
+
+			var ltn, lto types.JSONText
+
+			if lerr.IsAccountLocking() {
+				// Record pwdAccountLockedTime to lock it
+				ltn, lto = timeToJSONAttrs(TIMESTAMP_FORMAT, &ft)
+			} else {
+				// Clear pwdAccountLockedTime
+				ltn, lto = emptyJSONArray()
+			}
+
+			currentPwdFailureTime = append(currentPwdFailureTime, &ft)
+			over := len(currentPwdFailureTime) - fc.PPolicy.MaxFailure()
+			if over > 0 {
+				currentPwdFailureTime = currentPwdFailureTime[over:]
+			}
+			ftn, fto := timesToJSONAttrs(TIMESTAMP_NANO_FORMAT, currentPwdFailureTime)
+
+			// Don't rollback, commit the transaction.
+			if _, err := r.exec(tx, updateAfterBindFailureByDN, map[string]interface{}{
+				"id":                dest.ID,
+				"lock_time_norm":    ltn,
+				"lock_time_orig":    lto,
+				"failure_time_norm": ftn,
+				"failure_time_orig": fto,
+			}); err != nil {
+				rollback(tx)
+				return xerrors.Errorf("Failed to update entry after bind failure. id: %d, err: %w", dest.ID, err)
+			}
+		} else {
+			log.Printf("Lockout is disabled, so don't record failure count")
+		}
+	} else {
+		// Record authTimestamp, also remove pwdAccountLockedTime and pwdFailureTime
+		n, o := nowTimeToJSONAttrs(TIMESTAMP_FORMAT)
+
+		if _, err := r.exec(tx, updateAfterBindSuccessByDN, map[string]interface{}{
+			"id":                  dest.ID,
+			"auth_timestamp_norm": n,
+			"auth_timestamp_orig": o,
+		}); err != nil {
+			rollback(tx)
+			return xerrors.Errorf("Failed to update entry after bind success. id: %d, err: %w", dest.ID, err)
+		}
+	}
+
+	if err := commit(tx); err != nil {
+		log.Printf("error: Failed to commit bind. id: %d, dn_norm: %s, err: %v", dest.ID, dn.DNNormStr(), err)
+		return err
+	}
+
+	return callbackErr
+}
+
+//////////////////////////////////////////
+// PPolicy
+//////////////////////////////////////////
+
+func (r *HybridRepository) FindPPolicyByDN(ctx context.Context, dn *DN) (*PPolicy, error) {
 	tx, err := r.beginReadonly(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rollback(tx)
 
 	dest := struct {
-		ID   int64          `db:"id"`
-		Cred types.JSONText `db:"credential"`
+		ID         int64          `db:"id"`
+		RawPPolicy types.JSONText `db:"ppolicy"` // No real column in the table
 	}{}
 
-	if err := r.get(tx, findCredByDN, &dest, map[string]interface{}{
+	if err := r.get(tx, findPPolicyByDN, &dest, map[string]interface{}{
 		"rdn_norm":       dn.RDNNormStr(),
 		"parent_dn_norm": dn.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix),
 	}); err != nil {
 		if isNoResult(err) {
-			return nil, NewInvalidCredentials()
+			// Don't return error
+			return nil, nil
 		}
-		return nil, xerrors.Errorf("Failed to find cred by DN. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
+		// TODO error
+		return nil, xerrors.Errorf("Failed to find ppolicy by DN. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
 	}
 
-	var cred []string
-	err = dest.Cred.Unmarshal(&cred)
-	if err != nil {
-		return nil, xerrors.Errorf("Failed to unmarshal cred array. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
-	}
+	defer rollback(tx)
 
-	return cred, nil
+	var ppolicy PPolicy
+
+	if len(dest.RawPPolicy) > 0 {
+		err = dest.RawPPolicy.Unmarshal(&ppolicy)
+		if err != nil {
+			// TODO error
+			return nil, xerrors.Errorf("Failed to unmarshal ppolicy. dn_orig: %s, err: %w", dn.DNOrigStr(), err)
+		}
+		return &ppolicy, nil
+	} else {
+		// TODO error
+		return nil, xerrors.Errorf("Invalid ppolicy entry. dn_orig: %s", dn.DNOrigStr())
+	}
 }
 
 //////////////////////////////////////////

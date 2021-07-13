@@ -5,8 +5,8 @@ import (
 	"log"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
-	"time"
 )
 
 func NewSchema(server *Server) *SchemaMap {
@@ -549,10 +549,11 @@ func (m SchemaValueMap) Has(val string) bool {
 }
 
 type SchemaValue struct {
-	schema          *AttributeType
-	value           []string
-	cachedNorm      []string
-	cachedNormIndex map[string]struct{}
+	schema    *AttributeType
+	value     []string
+	norm      []interface{}
+	normStr   []string
+	normIndex map[string]struct{}
 }
 
 func NewSchemaValue(schemaMap *SchemaMap, attrName string, attrValue []string) (*SchemaValue, error) {
@@ -571,7 +572,7 @@ func NewSchemaValue(schemaMap *SchemaMap, attrName string, attrValue []string) (
 		value:  attrValue,
 	}
 
-	_, err := sv.Normalize()
+	err := sv.normalize()
 	if err != nil {
 		return nil, err
 	}
@@ -584,10 +585,8 @@ func (s *SchemaValue) Name() string {
 }
 
 func (s *SchemaValue) HasDuplicate(value *SchemaValue) bool {
-	s.Normalize()
-
-	for _, v := range value.Norm() {
-		if _, ok := s.cachedNormIndex[v]; ok {
+	for _, v := range value.NormStr() {
+		if _, ok := s.normIndex[v]; ok {
 			return true
 		}
 	}
@@ -618,10 +617,18 @@ func (s *SchemaValue) Clone() *SchemaValue {
 	newValue := make([]string, len(s.value))
 	copy(newValue, s.value)
 
-	return &SchemaValue{
+	nsv := &SchemaValue{
 		schema: s.schema,
 		value:  newValue,
 	}
+
+	err := nsv.normalize()
+	if err != nil {
+		log.Printf("Unexpected normalization error when cloning. err: %+v", err)
+		return nil
+	}
+
+	return nsv
 }
 
 func (s *SchemaValue) Equals(value *SchemaValue) bool {
@@ -629,16 +636,14 @@ func (s *SchemaValue) Equals(value *SchemaValue) bool {
 		return false
 	}
 	if s.IsSingle() {
-		return s.Norm()[0] == value.Norm()[0]
+		return s.NormStr()[0] == value.NormStr()[0]
 	} else {
 		if len(s.value) != len(value.value) {
 			return false
 		}
 
-		s.Normalize()
-
-		for _, v := range value.Norm() {
-			if _, ok := s.cachedNormIndex[v]; !ok {
+		for _, v := range value.NormStr() {
+			if _, ok := s.normIndex[v]; !ok {
 				return false
 			}
 		}
@@ -657,21 +662,19 @@ func (s *SchemaValue) Add(value *SchemaValue) error {
 		}
 	}
 	s.value = append(s.value, value.value...)
-	s.cachedNorm = nil
-	s.cachedNormIndex = nil
+	s.norm = append(s.norm, value.norm...)
+	s.normStr = append(s.normStr, value.normStr...)
+	s.normIndex = mergeIndex(s.normIndex, value.normIndex)
 
 	return nil
 }
 
 func (s *SchemaValue) Delete(value *SchemaValue) error {
-	s.Normalize()
-	value.Normalize()
-
 	// TODO Duplicate delete error
 
 	// Check the values
-	for _, v := range value.Norm() {
-		if _, ok := s.cachedNormIndex[v]; !ok {
+	for _, v := range value.NormStr() {
+		if _, ok := s.normIndex[v]; !ok {
 			// Not found the value
 			return NewNoSuchAttribute("modify/delete", value.Name())
 		}
@@ -679,20 +682,25 @@ func (s *SchemaValue) Delete(value *SchemaValue) error {
 
 	// Create new values
 	newValue := make([]string, len(s.value)-len(value.value))
-	newValueNorm := make([]string, len(newValue))
+	newValueNorm := make([]interface{}, len(newValue))
+	newValueNormStr := make([]string, len(newValue))
+	newNormIndex := make(map[string]struct{}, len(newValue))
 
 	i := 0
-	for j, v := range s.Norm() {
-		if _, ok := value.cachedNormIndex[v]; !ok {
+	for j, v := range s.NormStr() {
+		if _, ok := value.normIndex[v]; !ok {
 			newValue[i] = s.value[j]
-			newValueNorm[i] = s.cachedNorm[j]
+			newValueNorm[i] = s.norm[j]
+			newValueNormStr[i] = s.normStr[j]
+			newNormIndex[s.normStr[j]] = struct{}{}
 			i++
 		}
 	}
 
 	s.value = newValue
-	s.cachedNorm = newValueNorm
-	s.cachedNormIndex = nil
+	s.norm = newValueNorm
+	s.normStr = newValueNormStr
+	s.normIndex = newNormIndex
 
 	return nil
 }
@@ -701,30 +709,19 @@ func (s *SchemaValue) Orig() []string {
 	return s.value
 }
 
-func (s *SchemaValue) AsTime() []time.Time {
-	t := make([]time.Time, len(s.value))
-	for i := range s.value {
-		// Already validated, ignore error
-		t[i], _ = time.Parse(TIMESTAMP_FORMAT, s.value[i])
-	}
-	return t
+func (s *SchemaValue) Norm() []interface{} {
+	return s.norm
 }
 
-func (s *SchemaValue) Norm() []string {
-	s.Normalize()
-	return s.cachedNorm
+func (s *SchemaValue) NormStr() []string {
+	return s.normStr
 }
 
-func (s *SchemaValue) GetForJSON() interface{} {
-	s.Normalize()
-	return s.cachedNorm
-}
-
-// Normalize the value using schema definition.
+// normalize the value using schema definition.
 // The value is expected as a valid value. It means you need to validte the value in advance.
-func (s *SchemaValue) Normalize() ([]string, error) {
-	if len(s.cachedNorm) > 0 {
-		return s.cachedNorm, nil
+func (s *SchemaValue) normalize() error {
+	if len(s.normStr) > 0 {
+		return nil
 	}
 
 	// objectClasses need additional nomalization
@@ -738,12 +735,12 @@ func (s *SchemaValue) Normalize() ([]string, error) {
 		for i, v := range s.value {
 			oc, ok := s.schema.schemaDef.ObjectClass(v)
 			if !ok {
-				return nil, NewInvalidPerSyntax("objectClass", i)
+				return NewInvalidPerSyntax("objectClass", i)
 			}
 
 			// Check if it contains duplicate value
 			if _, ok := dup[oc.Name]; ok {
-				return nil, NewMoreThanOnceError(s.Name(), i)
+				return NewMoreThanOnceError(s.Name(), i)
 			}
 			dup[oc.Name] = struct{}{}
 
@@ -785,45 +782,78 @@ func (s *SchemaValue) Normalize() ([]string, error) {
 
 		sortObjectClasses(s.schema.schemaDef, stocs)
 		if err := verifyChainedObjectClasses(s.schema.schemaDef, stocs); err != nil {
-			return nil, err
+			return err
 		}
 
-		rtn := make([]string, len(stocs)+len(nstocs))
-		m := make(map[string]struct{}, len(stocs)+len(nstocs))
+		norm := make([]interface{}, len(stocs)+len(nstocs))
+		normStr := make([]string, len(norm))
+		m := make(map[string]struct{}, len(norm))
 
 		for i := range stocs {
-			rtn[i] = strings.ToLower(stocs[i].Name)
-			m[rtn[i]] = struct{}{}
+			var err error
+			// TODO fix index (use index before the sort)
+			norm[i], err = normalize(s.schema, stocs[i].Name, i)
+			if err != nil {
+				return err
+			}
+			normStr[i] = toNormStr(norm[i])
+			m[normStr[i]] = struct{}{}
 		}
 		for i := range nstocs {
 			j := i + len(stocs)
-			rtn[j] = strings.ToLower(nstocs[i].Name)
-			m[rtn[j]] = struct{}{}
-		}
-		s.cachedNorm = rtn
-		s.cachedNormIndex = m
 
-		return rtn, nil
+			var err error
+			// TODO fix index (use index before the sort)
+			norm[j], err = normalize(s.schema, nstocs[i].Name, i)
+			if err != nil {
+				return err
+			}
+			normStr[j] = toNormStr(norm[j])
+			m[normStr[j]] = struct{}{}
+		}
+		s.norm = norm
+		s.normStr = normStr
+		s.normIndex = m
+
+		return nil
 
 	} else {
-		rtn := make([]string, len(s.value))
-		m := make(map[string]struct{}, len(s.value))
+		norm := make([]interface{}, len(s.value))
+		normStr := make([]string, len(norm))
+		m := make(map[string]struct{}, len(norm))
 		for i, v := range s.value {
 			var err error
-			rtn[i], err = normalize(s.schema, v)
+			norm[i], err = normalize(s.schema, v, i)
 			if err != nil {
-				return nil, err
+				return err
 			}
-			// Check if it contains duplicate value
-			if _, ok := m[rtn[i]]; ok {
-				return nil, NewMoreThanOnceError(s.Name(), i)
-			}
-			m[rtn[i]] = struct{}{}
-		}
-		s.cachedNorm = rtn
-		s.cachedNormIndex = m
+			normStr[i] = toNormStr(norm[i])
 
-		return rtn, nil
+			// Check if it contains duplicate value
+			if _, ok := m[normStr[i]]; ok {
+				return NewMoreThanOnceError(s.Name(), i)
+			}
+			m[normStr[i]] = struct{}{}
+		}
+		s.norm = norm
+		s.normStr = normStr
+		s.normIndex = m
+
+		return nil
+	}
+}
+
+func toNormStr(norm interface{}) string {
+	switch v := norm.(type) {
+	case string:
+		return v
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case *DN:
+		return v.DNNormStr()
+	default:
+		log.Printf("error: Unexpected type for converting norm value: %v", v)
+		return ""
 	}
 }
 
@@ -845,7 +875,8 @@ func (s *AttributeType) IsCaseIgnoreSubstr() bool {
 
 func (s *AttributeType) IsOperationalAttribute() bool {
 	if s.Usage == "directoryOperation" ||
-		s.Usage == "dSAOperation" {
+		s.Usage == "dSAOperation" ||
+		s.Usage == "distributedOperation" {
 		return true
 	}
 	// TODO check other case

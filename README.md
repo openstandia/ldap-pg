@@ -41,6 +41,13 @@
   - [ ] More schema processing
   - [x] User defined schema
   - [ ] Multiple RDNs
+- Password Policy
+  - [x] Account lock
+  - [ ] More policy controls
+- Authorization
+  - [x] Simple ACL
+- Last bind
+  - [x] Record the timestamp of the last successful bind
 - Network
   - [ ] SSL/StartTLS
 - [ ] Prometheus metrics
@@ -80,6 +87,8 @@ Usage:
 
 Options:
 
+  -acl value
+        Simple ACL: the format is <DN(User, Group or empty(everyone))>:<Scope(R, W or RW)>:<Invisible Attributes> (e.g. cn=reader,dc=example,dc=com:RO:userPassword,telephoneNumber)
   -b string
         Bind address (default "127.0.0.1:8389")
   -d string
@@ -88,6 +97,8 @@ Options:
         DB max idle connections (default 2)
   -db-max-open-conns int
         DB max open connections (default 5)
+  -default-ppolicy-dn string
+        DN of the default password policy entry (e.g. cn=standard-policy,ou=Policies,dc=example,dc=com)
   -gomaxprocs int
         GOMAXPROCS (Use CPU num with default)
   -h string
@@ -103,7 +114,7 @@ Options:
   -pass-through-ldap-domain string
         Pass-through/LDAP: Domain for pass-through/LDAP
   -pass-through-ldap-filter string
-        Pass-through/LDAP: Filter for finding an user (ex. (cn=%u))
+        Pass-through/LDAP: Filter for finding an user (e.g. (cn=%u))
   -pass-through-ldap-password string
         Pass-through/LDAP: Bind password
   -pass-through-ldap-scope string
@@ -111,7 +122,7 @@ Options:
   -pass-through-ldap-search-base string
         Pass-through/LDAP: Search base
   -pass-through-ldap-server string
-        Pass-through/LDAP: Server address and port (ex. myldap:389)
+        Pass-through/LDAP: Server address and port (e.g. myldap:389)
   -pass-through-ldap-timeout int
         Pass-through/LDAP: Timeout seconds (Default: 10) (default 10)
   -pprof string

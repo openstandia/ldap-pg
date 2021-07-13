@@ -11,7 +11,7 @@ import (
 )
 
 func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
-	ctx := context.Background()
+	ctx := SetSessionContext(context.Background(), m)
 
 	r := m.GetSearchRequest()
 
@@ -63,15 +63,20 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	if err != nil {
 		log.Printf("info: Invalid baseDN error: %#v", err)
 
-		// TODO return correct error code
-		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultOperationsError)
+		// # search result
+		// search: 2
+		// result: 34 Invalid DN syntax
+		// text: invalid DN
+		res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultInvalidDNSyntax)
+		res.SetDiagnosticMessage("invalid DN")
 		w.Write(res)
 		return
 	}
 
 	// Phase 2: authorization
-	if !requiredAuthz(m, "search", baseDN) {
-		responseSearchError(w, NewInsufficientAccess())
+	if !s.RequiredAuthz(m, SearchOps, baseDN) {
+		// Return 32 No such object
+		responseSearchError(w, NewNoSuchObject())
 		return
 	}
 
@@ -103,7 +108,7 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	}
 
 	maxCount, limittedCount, err := s.Repo().Search(ctx, baseDN, option, func(searchEntry *SearchEntry) error {
-		responseEntry(s, w, r, searchEntry)
+		responseEntry(s, w, m, r, searchEntry)
 		return nil
 	})
 	if err != nil {
@@ -143,15 +148,23 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	}
 }
 
-func responseEntry(s *Server, w ldap.ResponseWriter, r message.SearchRequest, searchEntry *SearchEntry) {
+func responseEntry(s *Server, w ldap.ResponseWriter, m *ldap.Message, r message.SearchRequest, searchEntry *SearchEntry) {
 	log.Printf("Response Entry: %+v", searchEntry)
 
-	e := ldap.NewSearchResultEntry(resolveSuffix(s, searchEntry.DNOrigStr()))
+	session := getAuthSession(m)
+
+	dnOrig := searchEntry.DNOrig()
+	e := ldap.NewSearchResultEntry(resolveSuffix(s, dnOrig))
 
 	sentAttrs := map[string]struct{}{}
 
 	if isAllAttributesRequested(r) {
 		for k, v := range searchEntry.GetAttrsOrigWithoutOperationalAttrs() {
+			if !s.simpleACL.CanVisible(session, k) {
+				log.Printf("- Ignore Attribute %s", k)
+				continue
+			}
+
 			log.Printf("- Attribute %s: %#v", k, v)
 
 			av := make([]message.AttributeValue, len(v))
@@ -166,6 +179,11 @@ func responseEntry(s *Server, w ldap.ResponseWriter, r message.SearchRequest, se
 
 	for _, attr := range r.Attributes() {
 		a := string(attr)
+
+		if !s.simpleACL.CanVisible(session, a) {
+			log.Printf("- Ignore Attribute %s", a)
+			continue
+		}
 
 		log.Printf("Requested attr: %s", a)
 
@@ -195,6 +213,11 @@ func responseEntry(s *Server, w ldap.ResponseWriter, r message.SearchRequest, se
 
 	if isOperationalAttributesRequested(r) {
 		for k, v := range searchEntry.GetOperationalAttrsOrig() {
+			if !s.simpleACL.CanVisible(session, k) {
+				log.Printf("- Ignore Attribute %s", k)
+				continue
+			}
+
 			if _, ok := sentAttrs[k]; !ok {
 				for _, vv := range v {
 					e.AddAttribute(message.AttributeDescription(k), message.AttributeValue(vv))
@@ -205,7 +228,7 @@ func responseEntry(s *Server, w ldap.ResponseWriter, r message.SearchRequest, se
 
 	w.Write(e)
 
-	log.Printf("Response an entry. dn: %s", searchEntry.DNOrigStr())
+	log.Printf("Response an entry. dn: %s", dnOrig)
 }
 
 func responseSearchError(w ldap.ResponseWriter, err error) {

@@ -9,6 +9,13 @@ import (
 )
 
 func handleSearchRootDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
+	session := getAuthSession(m)
+	if !session.IsRoot {
+		// Return 32 No such object
+		responseSearchError(w, NewNoSuchObject())
+		return
+	}
+
 	r := m.GetSearchRequest()
 
 	log.Printf("info: handleSearchRootDN")
@@ -26,7 +33,7 @@ func handleSearchRootDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	searchEntry := NewSearchEntry(s.schemaMap, "", map[string][]string{
 		"objectClass":           {"simpleSecurityObject", "organizationalRole"},
 		"structuralObjectClass": {"organizationalRole"},
-		"cn":                    {s.GetRootDN().RDN()["cn"]},
+		"cn":                    {s.GetRootDN().RDN()["cn"].Orig},
 		"description":           {"LDAP administrator"},
 		// OperationalAttributes
 		"entryUUID":         {uuid.String()},

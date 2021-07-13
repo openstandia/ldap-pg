@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	enchex "encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/jmoiron/sqlx/types"
 	"github.com/lib/pq"
 	"github.com/openstandia/goldap/message"
 	ldap "github.com/openstandia/ldapserver"
@@ -23,6 +25,13 @@ import (
 )
 
 const TIMESTAMP_FORMAT string = "20060102150405Z"
+const TIMESTAMP_NANO_FORMAT string = "20060102150405.000000Z"
+
+type AuthSession struct {
+	DN     *DN
+	Groups []*DN
+	IsRoot bool
+}
 
 func getSession(m *ldap.Message) map[string]interface{} {
 	store := m.Client.GetCustomData()
@@ -35,30 +44,15 @@ func getSession(m *ldap.Message) map[string]interface{} {
 	}
 }
 
-func getAuthSession(m *ldap.Message) map[string]*DN {
+func getAuthSession(m *ldap.Message) *AuthSession {
 	session := getSession(m)
 	if authSession, ok := session["auth"]; ok {
-		return authSession.(map[string]*DN)
+		return authSession.(*AuthSession)
 	} else {
-		authSession := map[string]*DN{}
+		authSession := &AuthSession{}
 		session["auth"] = authSession
 		return authSession
 	}
-}
-
-func requiredAuthz(m *ldap.Message, operation string, targetDN *DN) bool {
-	session := getAuthSession(m)
-	if dn, ok := session["dn"]; ok {
-		log.Printf("info: Authorized. authorizedDN: %s, targetDN: %s", dn.DNNormStr(), targetDN.DNNormStr())
-
-		// TODO authz
-
-		return true
-	}
-
-	log.Printf("warn: Not Authorized for anonymous. targetDN: %s", targetDN.DNNormStr())
-
-	return false
 }
 
 func getPageSession(m *ldap.Message) map[string]int32 {
@@ -211,30 +205,38 @@ func arrayDiff(a, b []string) []string {
 	return diff
 }
 
-func normalize(s *AttributeType, value string) (string, error) {
+func normalize(s *AttributeType, value string, index int) (interface{}, error) {
 	switch s.Equality {
 	case "caseExactMatch":
 		return normalizeSpace(value), nil
 	case "caseIgnoreMatch":
 		return strings.ToLower(normalizeSpace(value)), nil
 	case "distinguishedNameMatch":
-		return normalizeDistinguishedName(s.schemaDef, value)
+		return normalizeDistinguishedName(s, value, index)
 	case "caseExactIA5Match":
 		return normalizeSpace(value), nil
 	case "caseIgnoreIA5Match":
 		return strings.ToLower(normalizeSpace(value)), nil
 	case "generalizedTimeMatch":
-		return normalizeGeneralizedTime(value)
+		return normalizeGeneralizedTime(s, value, index)
 	case "objectIdentifierMatch":
 		return strings.ToLower(value), nil
 	case "numericStringMatch":
 		return removeAllSpace(value), nil
 	case "integerMatch":
-		return value, nil
+		i, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			// Invalid syntax (21)
+			// additional info: pwdLockoutDuration: value #0 invalid per syntax
+			return 0, NewInvalidPerSyntax(s.Name, index)
+		}
+		return i, nil
+	case "booleanMatch":
+		return normalizeBoolean(s, value, index)
 	case "UUIDMatch":
 		return normalizeUUID(value)
 	case "uniqueMemberMatch":
-		nv, err := normalizeDistinguishedName(s.schemaDef, value)
+		nv, err := normalizeDistinguishedName(s, value, index)
 		if err != nil {
 			// fallback
 			return strings.ToLower(normalizeSpace(value)), nil
@@ -294,17 +296,11 @@ func ParseDN(schemaMap *SchemaMap, str string) (*DN, error) {
 
 		sv, err := NewSchemaValue(schemaMap, t, []string{orig})
 		if err != nil {
-			log.Printf("warn: Invalid DN syntax. Not found in schema. dn: %s err: %v", str, err)
+			log.Printf("warn: Invalid DN syntax. dn_orig: %s err: %v", str, err)
 			return "", "", NewInvalidDNSyntax()
 		}
 
-		norm, err := sv.Normalize()
-		if err != nil {
-			log.Printf("warn: Invalid RDN of DN syntax. dn: %s", str)
-			return "", "", NewInvalidDNSyntax()
-		}
-
-		return orig, norm[0], nil
+		return orig, sv.NormStr()[0], nil
 	}
 
 	for i := 0; i < len(str); i++ {
@@ -371,6 +367,7 @@ func ParseDN(schemaMap *SchemaMap, str string) (*DN, error) {
 				return nil, xerrors.Errorf("failed to normalize dn: %w", err)
 			}
 			attribute.ValueOrig = orig
+			attribute.ValueOrigEncoded = encodeDN(orig)
 			attribute.ValueNorm = norm
 			rdn.Attributes = append(rdn.Attributes, attribute)
 			attribute = new(AttributeTypeAndValue)
@@ -402,6 +399,7 @@ func ParseDN(schemaMap *SchemaMap, str string) (*DN, error) {
 			return nil, xerrors.Errorf("failed to normalize dn: %w", err)
 		}
 		attribute.ValueOrig = orig
+		attribute.ValueOrigEncoded = encodeDN(orig)
 		attribute.ValueNorm = norm
 		rdn.Attributes = append(rdn.Attributes, attribute)
 		dn.RDNs = append(dn.RDNs, rdn)
@@ -409,21 +407,31 @@ func ParseDN(schemaMap *SchemaMap, str string) (*DN, error) {
 	return dn, nil
 }
 
-func normalizeDistinguishedName(schemaMap *SchemaMap, value string) (string, error) {
-	dn, err := NormalizeDN(schemaMap, value)
+func normalizeDistinguishedName(s *AttributeType, value string, index int) (*DN, error) {
+	dn, err := NormalizeDN(s.schemaDef, value)
 	if err != nil {
-		return "", err
+		return nil, NewInvalidPerSyntax(s.Name, index)
 	}
 
-	return dn.DNNormStr(), nil
+	// Return original DN
+	return dn, nil
 }
 
-func normalizeGeneralizedTime(value string) (string, error) {
+func normalizeGeneralizedTime(s *AttributeType, value string, index int) (int64, error) {
 	t, err := time.Parse(TIMESTAMP_FORMAT, value)
 	if err != nil {
-		return "", err
+		return 0, NewInvalidPerSyntax(s.Name, index)
 	}
-	return strconv.FormatInt(t.Unix(), 10), nil
+	return t.Unix(), nil
+}
+
+func normalizeBoolean(s *AttributeType, value string, index int) (string, error) {
+	// The spec says Boolean = "TRUE" / "FALSE"
+	// https://datatracker.ietf.org/doc/html/rfc4517#section-3.3.3
+	if value != "TRUE" && value != "FALSE" {
+		return "", NewInvalidPerSyntax(s.Name, index)
+	}
+	return value, nil
 }
 
 func normalizeUUID(value string) (string, error) {
@@ -576,4 +584,62 @@ func (s StringSet) Values() []string {
 		i++
 	}
 	return rtn
+}
+
+func timeToJSONAttrs(format string, t *time.Time) (types.JSONText, types.JSONText) {
+	norm := []int64{t.Unix()}
+	orig := []string{t.In(time.UTC).Format(format)}
+
+	bNorm, _ := json.Marshal(norm)
+	bOrig, _ := json.Marshal(orig)
+
+	return types.JSONText(bNorm), types.JSONText(bOrig)
+}
+
+func nowTimeToJSONAttrs(format string) (types.JSONText, types.JSONText) {
+	now := time.Now()
+
+	norm := []int64{now.Unix()}
+	orig := []string{now.In(time.UTC).Format(format)}
+
+	bNorm, _ := json.Marshal(norm)
+	bOrig, _ := json.Marshal(orig)
+
+	return types.JSONText(bNorm), types.JSONText(bOrig)
+}
+
+func emptyJSONArray() (types.JSONText, types.JSONText) {
+	norm := make([]string, 0)
+	orig := make([]string, 0)
+
+	bNorm, _ := json.Marshal(norm)
+	bOrig, _ := json.Marshal(orig)
+
+	return types.JSONText(bNorm), types.JSONText(bOrig)
+}
+
+func timesToJSONAttrs(format string, t []*time.Time) (types.JSONText, types.JSONText) {
+	norm := make([]int64, len(t))
+	orig := make([]string, len(t))
+
+	for i, v := range t {
+		norm[i] = v.Unix()
+		orig[i] = v.In(time.UTC).Format(format)
+	}
+
+	bNorm, _ := json.Marshal(norm)
+	bOrig, _ := json.Marshal(orig)
+
+	return types.JSONText(bNorm), types.JSONText(bOrig)
+}
+
+func mergeIndex(m1, m2 map[string]struct{}) map[string]struct{} {
+	m := make(map[string]struct{}, len(m1)+len(m2))
+	for k, v := range m1 {
+		m[k] = v
+	}
+	for k, v := range m2 {
+		m[k] = v
+	}
+	return m
 }

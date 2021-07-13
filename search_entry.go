@@ -15,7 +15,7 @@ func NewSearchEntry(schemaMap *SchemaMap, dnOrig string, valuesOrig map[string][
 	return readEntry
 }
 
-func (j *SearchEntry) DNOrigStr() string {
+func (j *SearchEntry) DNOrig() string {
 	return j.dnOrig
 }
 

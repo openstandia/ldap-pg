@@ -50,7 +50,7 @@ func TestNormalize(t *testing.T) {
 			t.Errorf("Unexpected error on %d:\n'%s' -> '%s' expected, got no schema\n", i, tc.Value, tc.Expected)
 			continue
 		}
-		v, err := normalize(s, tc.Value)
+		v, err := normalize(s, tc.Value, 0)
 		if err != nil {
 			t.Errorf("Unexpected error on %d:\nSchema: %v\n'%s' -> '%s' expected, got error %s\n", i, s, tc.Value, tc.Expected, err)
 			continue

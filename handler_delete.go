@@ -9,7 +9,7 @@ import (
 )
 
 func handleDelete(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
-	ctx := context.Background()
+	ctx := SetSessionContext(context.Background(), m)
 
 	r := m.GetDeleteRequest()
 	dn, err := s.NormalizeDN(string(r))
@@ -22,7 +22,7 @@ func handleDelete(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	if !requiredAuthz(m, "delete", dn) {
+	if !s.RequiredAuthz(m, DeleteOps, dn) {
 		responseDeleteError(w, NewInsufficientAccess())
 		return
 	}

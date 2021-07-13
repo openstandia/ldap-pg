@@ -10,7 +10,7 @@ import (
 )
 
 func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
-	ctx := context.Background()
+	ctx := SetSessionContext(context.Background(), m)
 
 	r := m.GetModifyRequest()
 	dn, err := s.NormalizeDN(string(r.Object()))
@@ -24,7 +24,7 @@ func handleModify(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	if !requiredAuthz(m, "modify", dn) {
+	if !s.RequiredAuthz(m, ModifyOps, dn) {
 		responseModifyError(w, NewInsufficientAccess())
 		return
 	}
@@ -66,7 +66,7 @@ Retry:
 		}
 
 		// Validate ObjectClass
-		ocs, ok := newEntry.GetAttrNorm("objectClass")
+		ocs, ok := newEntry.ObjectClassesNorm()
 		if !ok {
 			return NewObjectClassViolation()
 		}

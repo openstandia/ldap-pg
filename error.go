@@ -10,6 +10,7 @@ type LDAPError struct {
 	Code      int
 	Msg       string
 	MatchedDN string
+	Subtype   string
 	err       error
 }
 
@@ -23,6 +24,18 @@ func (e *LDAPError) Unwrap() error {
 
 func (e *LDAPError) IsNoSuchObjectError() bool {
 	return e.Code == ldap.LDAPResultNoSuchObject
+}
+
+func (e *LDAPError) IsInvalidCredentials() bool {
+	return e.Code == ldap.LDAPResultInvalidCredentials
+}
+
+func (e *LDAPError) IsAccountLocked() bool {
+	return e.Code == ldap.LDAPResultInvalidCredentials && e.Subtype == "Account locked"
+}
+
+func (e *LDAPError) IsAccountLocking() bool {
+	return e.Code == ldap.LDAPResultInvalidCredentials && e.Subtype == "Account locking"
 }
 
 func NewSuccess() *LDAPError {
@@ -109,7 +122,21 @@ func NewInvalidDNSyntax() *LDAPError {
 
 func NewInvalidCredentials() *LDAPError {
 	return &LDAPError{
-		Code: 49,
+		Code: ldap.LDAPResultInvalidCredentials,
+	}
+}
+
+func NewAccountLocking() *LDAPError {
+	return &LDAPError{
+		Code:    ldap.LDAPResultInvalidCredentials,
+		Subtype: "Account locking",
+	}
+}
+
+func NewAccountLocked() *LDAPError {
+	return &LDAPError{
+		Code:    ldap.LDAPResultInvalidCredentials,
+		Subtype: "Account locked",
 	}
 }
 

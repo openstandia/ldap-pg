@@ -1,94 +1,24 @@
 package main
 
 import (
-	"log"
-	"strconv"
 	"strings"
-
-	"github.com/jmoiron/sqlx/types"
 )
 
 type DN struct {
-	RDNs      []*RelativeDN
-	cachedRDN map[string]string
+	RDNs     []*RelativeDN
+	RDNIndex map[string]NormString
 }
 
-type FetchedDN struct {
-	ID       int64  `db:"id"`
-	ParentID int64  `db:"parent_id"`
-	Path     string `db:"path"`
-	DNOrig   string `db:"dn_orig"`
-	HasSub   bool   `db:"has_sub"`
-	dnNorm   string // not fetched from DB, it's computed
-}
-
-type FetchedEntry struct {
-	FetchedDN
-	AttrsOrig types.JSONText `db:"attrs_orig"`
-}
-
-func (e *FetchedEntry) GetAttrsOrig() map[string][]string {
-	if len(e.AttrsOrig) > 0 {
-		jsonMap := make(map[string][]string)
-		if err := e.AttrsOrig.Unmarshal(&jsonMap); err != nil {
-			log.Printf("error: Unexpected unmarshal error. err: %s", err)
-		}
-
-		return jsonMap
-	}
-	return nil
-}
-
-func (f *FetchedDN) IsRoot() bool {
-	return !strings.Contains(f.Path, ".")
-}
-
-func (f *FetchedDN) DNNorm(schemaMap *SchemaMap) string {
-	if f.dnNorm == "" {
-		dn, err := NormalizeDN(schemaMap, f.DNOrig)
-		if err != nil {
-			log.Printf("error: Invalid DN: %s, err: %v", f.DNOrig, err)
-			return ""
-		}
-		// Cached
-		f.dnNorm = dn.DNNormStr()
-	}
-	return f.dnNorm
-}
-
-func (f *FetchedDN) ParentDN(schemaMap *SchemaMap) *FetchedDN {
-	if f.IsRoot() {
-		return nil
-	}
-
-	path := strings.Split(f.Path, ".")
-	parentPath := strings.Join(path[:len(path)-2], ".")
-	parentID, err := strconv.ParseInt(path[len(path)-1], 10, 64)
-	if err != nil {
-		log.Printf("error: Invalid path: %s, err: %v", f.Path, err)
-		return nil
-	}
-	dn, err := NormalizeDN(schemaMap, f.DNOrig)
-	if err != nil {
-		log.Printf("error: Invalid DN: %s, err: %v", f.DNOrig, err)
-		return nil
-	}
-	parentDN := dn.ParentDN()
-
-	return &FetchedDN{
-		ID:     parentID,
-		Path:   parentPath,
-		DNOrig: parentDN.DNOrigStr(),
-		dnNorm: parentDN.DNNormStr(),
-		HasSub: true,
-	}
+type NormString struct {
+	Orig string
+	Norm string
 }
 
 type RelativeDN struct {
 	Attributes []*AttributeTypeAndValue
 }
 
-func (r *RelativeDN) OrigStr() string {
+func (r *RelativeDN) OrigEncodedStr() string {
 	var b strings.Builder
 	b.Grow(128)
 	for i, attr := range r.Attributes {
@@ -97,7 +27,49 @@ func (r *RelativeDN) OrigStr() string {
 		}
 		b.WriteString(attr.TypeOrig)
 		b.WriteString("=")
-		b.WriteString(attr.ValueOrig)
+		b.WriteString(attr.ValueOrigEncoded)
+	}
+	return b.String()
+}
+
+// encodeDN encodes special characters for response DN in search.
+// Special characters: "+,;<>\#<space>
+// See: https://www.ipa.go.jp/security/rfc/RFC4514EN.html
+func encodeDN(str string) string {
+	var b strings.Builder
+	b.Grow(len(str) + 10)
+
+	last := len(str) - 1
+
+	for i := 0; i < len(str); i++ {
+		char := str[i]
+
+		switch {
+		case i == 0 && char == ' ':
+			b.WriteString("\\20")
+		case i == last && char == ' ':
+			b.WriteString("\\20")
+		case char == '"':
+			b.WriteString("\\22")
+		case i == 0 && char == '#':
+			b.WriteString("\\23")
+		case char == '+':
+			b.WriteString("\\2B")
+		case char == ',':
+			b.WriteString("\\2C")
+		case char == ';':
+			b.WriteString("\\3B")
+		case char == '<':
+			b.WriteString("\\3C")
+		case char == '=':
+			b.WriteString("\\3D")
+		case char == '>':
+			b.WriteString("\\3E")
+		case char == '\\':
+			b.WriteString("\\5C")
+		default:
+			b.WriteByte(char)
+		}
 	}
 	return b.String()
 }
@@ -123,6 +95,8 @@ type AttributeTypeAndValue struct {
 	TypeNorm string
 	// Value is the original attribute value
 	ValueOrig string
+	// Value is the encoded original attribute value
+	ValueOrigEncoded string
 	// Value is the normalized attribute value
 	ValueNorm string
 }
@@ -177,12 +151,12 @@ func (d *DN) DNOrigStr() string {
 		if i > 0 {
 			b.WriteString(",")
 		}
-		b.WriteString(rdn.OrigStr())
+		b.WriteString(rdn.OrigEncodedStr())
 	}
 	return b.String()
 }
 
-func (d *DN) DNOrigStrWithoutSuffix(suffix *DN) string {
+func (d *DN) DNOrigEncodedStrWithoutSuffix(suffix *DN) string {
 	sRDNs := suffix.RDNs
 	diff := len(d.RDNs) - len(sRDNs)
 
@@ -195,7 +169,7 @@ func (d *DN) DNOrigStrWithoutSuffix(suffix *DN) string {
 		if i > 0 {
 			b.WriteString(",")
 		}
-		b.WriteString(rdn.OrigStr())
+		b.WriteString(rdn.OrigEncodedStr())
 	}
 	return b.String()
 }
@@ -214,7 +188,7 @@ func (d *DN) RDNNormStr() string {
 	return b.String()
 }
 
-func (d *DN) RDNOrigStr() string {
+func (d *DN) RDNOrigEncodedStr() string {
 	var b strings.Builder
 	b.Grow(128)
 	for i, attr := range d.RDNs[0].Attributes {
@@ -223,7 +197,7 @@ func (d *DN) RDNOrigStr() string {
 		}
 		b.WriteString(attr.TypeOrig)
 		b.WriteString("=")
-		b.WriteString(attr.ValueOrig)
+		b.WriteString(attr.ValueOrigEncoded)
 	}
 	return b.String()
 }
@@ -247,23 +221,26 @@ func (d *DN) IsSubOf(o *DN) bool {
 	return len(d.RDNs) > len(o.RDNs) && strings.HasSuffix(d.DNNormStr(), o.DNNormStr())
 }
 
-func (d *DN) RDN() map[string]string {
-	if len(d.cachedRDN) > 0 {
-		return d.cachedRDN
+func (d *DN) RDN() map[string]NormString {
+	if len(d.RDNIndex) > 0 {
+		return d.RDNIndex
 	}
 
 	// Check DC case
 	if len(d.RDNs) == 0 {
-		return map[string]string{}
+		return map[string]NormString{}
 	}
 
-	m := make(map[string]string, len(d.RDNs[0].Attributes))
+	m := make(map[string]NormString, len(d.RDNs[0].Attributes))
 
 	for _, a := range d.RDNs[0].Attributes {
-		m[a.TypeNorm] = a.ValueNorm
+		m[a.TypeNorm] = NormString{
+			Orig: a.ValueOrig,
+			Norm: a.ValueNorm,
+		}
 	}
 
-	d.cachedRDN = m
+	d.RDNIndex = m
 
 	return m
 }

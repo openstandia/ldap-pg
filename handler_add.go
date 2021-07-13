@@ -9,7 +9,7 @@ import (
 )
 
 func handleAdd(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
-	ctx := context.Background()
+	ctx := SetSessionContext(context.Background(), m)
 
 	r := m.GetAddRequest()
 
@@ -20,7 +20,10 @@ func handleAdd(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	if !requiredAuthz(m, "add", dn) {
+	if !s.RequiredAuthz(m, AddOps, dn) {
+		// TODO return errror message
+		// ldap_add: Insufficient access (50)
+		// additional info: no write access to parent
 		responseAddError(w, NewInsufficientAccess())
 		return
 	}

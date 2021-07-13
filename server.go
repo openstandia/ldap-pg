@@ -46,25 +46,36 @@ type ServerConfig struct {
 	GoMaxProcs        int
 	MigrationEnabled  bool
 	QueryTranslator   string
+	SimpleACL         []string
+	DefaultPPolicyDN  string
 }
 
 type Server struct {
-	config     *ServerConfig
-	rootDN     *DN
-	internal   *ldap.Server
-	suffixOrig []string
-	suffixNorm []string
-	Suffix     *DN
-	repo       Repository
-	schemaMap  *SchemaMap
+	config           *ServerConfig
+	rootDN           *DN
+	internal         *ldap.Server
+	suffixOrig       []string
+	suffixNorm       []string
+	Suffix           *DN
+	repo             Repository
+	schemaMap        *SchemaMap
+	simpleACL        *SimpleACL
+	defaultPPolicyDN *DN
 }
 
 func NewServer(c *ServerConfig) *Server {
-	hashedRootPW, err := ssha512.Generate(c.RootPW, 20)
-	if err != nil {
-		log.Fatalf("Initialize rootPW error: %+v", err)
+	if len(c.RootPW) > 7 && string(c.RootPW[0:6]) == "{SSHA}" ||
+		len(c.RootPW) > 10 && string(c.RootPW[0:9]) == "{SSHA256}" ||
+		len(c.RootPW) > 10 && string(c.RootPW[0:9]) == "{SSHA512}" {
+		// Use hashed password
+	} else {
+		// Plain
+		hashedRootPW, err := ssha512.Generate(c.RootPW, 20)
+		if err != nil {
+			log.Fatalf("Initialize rootPW error: %+v", err)
+		}
+		c.RootPW = hashedRootPW
 	}
-	c.RootPW = hashedRootPW
 
 	s := strings.Split(c.Suffix, ",")
 	sn := make([]string, len(s))
@@ -161,6 +172,18 @@ func (s *Server) Start() {
 	s.rootDN, err = s.NormalizeDN(s.config.RootDN)
 	if err != nil {
 		log.Fatalf("alert: Invalid root-dn format: %s, err: %s", s.config.RootDN, err)
+	}
+
+	// Init ACL
+	s.simpleACL, err = NewSimpleACL(s)
+	if err != nil {
+		log.Fatalf("alert: Invalid acl format: %v, err: %s", s.config.SimpleACL, err)
+	}
+
+	// Init Default ppolicy
+	s.defaultPPolicyDN, err = s.NormalizeDN(s.config.DefaultPPolicyDN)
+	if err != nil {
+		log.Fatalf("alert: Invalid default ppolicy: %v, err: %s", s.config.DefaultPPolicyDN, err)
 	}
 
 	//Create a new LDAP Server

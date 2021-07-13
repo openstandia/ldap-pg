@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/jsimonetti/pwscheme/ssha"
 	"github.com/jsimonetti/pwscheme/ssha256"
@@ -20,29 +21,30 @@ func handleBind(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	if r.AuthenticationChoice() == "simple" {
 		name := string(r.Name())
-		pass := string(r.AuthenticationSimple())
+		input := string(r.AuthenticationSimple())
 
 		dn, err := s.NormalizeDN(name)
 		if err != nil {
-			log.Printf("info: Bind failed. DN: %s err: %s", name, err)
-			res.SetResultCode(ldap.LDAPResultInvalidCredentials)
-			res.SetDiagnosticMessage("invalid credentials")
+			log.Printf("info: Bind failed - Invalid DN syntax. request_dn: %s err: %s", name, err)
+			res.SetResultCode(ldap.LDAPResultInvalidDNSyntax)
+			res.SetDiagnosticMessage("invalid DN")
 			w.Write(res)
 			return
 		}
 
 		// For rootdn
 		if dn.Equal(s.GetRootDN()) {
-			if ok := validateCred(s, pass, s.GetRootPW()); !ok {
-				log.Printf("info: Bind failed. DN: %s", name)
+			// TODO implement password policy for root user
+			if ok := validateCred(s, input, s.GetRootPW()); !ok {
+				log.Printf("info: Bind failed - Invalid credentials. dn_norm: %s", dn.DNNormStr())
 				res.SetResultCode(ldap.LDAPResultInvalidCredentials)
 				res.SetDiagnosticMessage("invalid credentials")
 				w.Write(res)
 				return
 			}
-			log.Printf("info: Bind ok. DN: %s", name)
+			log.Printf("info: Bind ok. dn_norm: %s", dn.DNNormStr())
 
-			saveAuthencatedDN(m, dn)
+			saveAuthencatedDNAsRoot(m, dn)
 
 			w.Write(res)
 			return
@@ -58,51 +60,59 @@ func handleBind(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 		log.Printf("info: Find bind user. DN: %s", dn.DNNormStr())
 
-		bindUserCred, err := s.Repo().FindCredByDN(ctx, dn)
+		err = s.Repo().Bind(ctx, dn, func(current *FetchedCredential) error {
+			// If the user doesn't have credentials, always return 'invalid credential'.
+			if len(current.Credential) == 0 {
+				log.Printf("info: Bind failed - Not found credentials. dn_norm: %s, err: %s", dn.DNNormStr(), err)
+				return NewInvalidCredentials()
+			}
+
+			if isLocked(current) {
+				log.Printf("info: Bind failed - Account locked. dn_norm: %s", dn.DNNormStr())
+				return NewAccountLocked()
+			}
+
+			bindOK := validateCreds(s, input, current)
+
+			if !bindOK {
+				if current.PPolicy.ShouldLockout(current.PwdFailureCount) {
+					log.Printf("info: Bind failed - Invalid credentials then locking now. dn_norm: %s", dn.DNNormStr())
+					return NewAccountLocking()
+				}
+
+				log.Printf("info: Bind failed - Invalid credentials. dn_norm: %s", dn.DNNormStr())
+				return NewInvalidCredentials()
+			}
+
+			saveAuthencatedDN(m, dn, current.MemberOf)
+
+			return nil
+		})
+
+		// Bind failure
 		if err != nil {
 			var lerr *LDAPError
 			if ok := xerrors.As(err, &lerr); ok {
-				log.Printf("info: Failed to bind. DN: %s", dn.DNNormStr())
-				log.Printf("debug: err: %+v", err)
+				if !lerr.IsInvalidCredentials() {
+					log.Printf("error: Bind failed - LDAP error. dn_norm: %s, err: %+v", dn.DNNormStr(), err)
+				}
 
 				res.SetResultCode(lerr.Code)
-				res.SetDiagnosticMessage("invalid credentials")
+				res.SetDiagnosticMessage(lerr.Msg)
 				w.Write(res)
 				return
+			} else {
+				log.Printf("error: Bind failed - System error. dn_norm: %s, err: %+v", dn.DNNormStr(), err)
 			}
 
-			log.Printf("warn: Failed to find cred by DN: %s, err: %+v", dn.DNNormStr(), err)
-
-			// Return 'invalid credentials' even if the cause is system error.
-			res.SetResultCode(ldap.LDAPResultInvalidCredentials)
-			res.SetDiagnosticMessage("invalid credentials")
+			// Return system error
+			res.SetResultCode(ldap.LDAPResultUnavailable)
 			w.Write(res)
 			return
 		}
 
-		// If the user doesn't have credentials, always return 'invalid credential'.
-		if len(bindUserCred) == 0 {
-			log.Printf("info: Bind failed - Not found credentials. DN: %s, err: %s", name, err)
-
-			res.SetResultCode(ldap.LDAPResultInvalidCredentials)
-			res.SetDiagnosticMessage("invalid credentials")
-			w.Write(res)
-			return
-		}
-
-		if ok := validateCreds(s, pass, bindUserCred); !ok {
-			log.Printf("info: Bind failed - Invalid credentials. DN: %s", name)
-
-			res.SetResultCode(ldap.LDAPResultInvalidCredentials)
-			res.SetDiagnosticMessage("invalid credentials")
-			w.Write(res)
-			return
-		}
-
-		saveAuthencatedDN(m, dn)
-
-		// Success
-		log.Printf("info: Bind ok. DN: %s", name)
+		// Bind success
+		log.Printf("info: Bind ok. dn_norm: %s", dn.DNNormStr())
 
 		w.Write(res)
 		return
@@ -115,8 +125,29 @@ func handleBind(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	w.Write(res)
 }
 
-func validateCreds(s *Server, input string, cred []string) bool {
-	for _, v := range cred {
+// isLocked checks the account is locked if the lock is enabled in the password policy
+func isLocked(cred *FetchedCredential) bool {
+	if cred.PPolicy.IsLockoutEnabled() {
+		if !cred.PwdAccountLockedTime.IsZero() {
+			if cred.PPolicy.LockoutDuration() == 0 {
+				// Locked until unlocking by administrator?
+				log.Println("Permanent locked")
+				return true
+			}
+			cur := time.Now()
+			unlockTime := cred.PwdAccountLockedTime.Add(time.Duration(cred.PPolicy.LockoutDuration()) * time.Second)
+			if cur.Before(unlockTime) {
+				// Temporarily locked
+				log.Println("Temporarily locked")
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func validateCreds(s *Server, input string, cred *FetchedCredential) bool {
+	for _, v := range cred.Credential {
 		if ok := validateCred(s, input, v); ok {
 			return true
 		}
@@ -186,11 +217,23 @@ func doPassThrough(s *Server, input, passThroughKey string) (bool, error) {
 	return false, xerrors.Errorf("Invalid domain. domain: %s, uid: %s", domain, uid)
 }
 
-func saveAuthencatedDN(m *ldap.Message, dn *DN) {
+func saveAuthencatedDNAsRoot(m *ldap.Message, dn *DN) {
 	session := getAuthSession(m)
-	if v, ok := session["dn"]; ok {
-		log.Printf("info: Switching authenticated user: %s -> %s", v.DNNormStr(), dn.DNNormStr())
+	if session.DN != nil {
+		log.Printf("info: Switching authenticated user: %s -> %s", session.DN.DNNormStr(), dn.DNNormStr())
 	}
-	session["dn"] = dn
+	session.DN = dn
+	session.IsRoot = true
+	log.Printf("Saved authenticated DN: %s", dn.DNNormStr())
+}
+
+func saveAuthencatedDN(m *ldap.Message, dn *DN, groups []*DN) {
+	session := getAuthSession(m)
+	if session.DN != nil {
+		log.Printf("info: Switching authenticated user: %s -> %s", session.DN.DNNormStr(), dn.DNNormStr())
+	}
+	session.DN = dn
+	session.Groups = groups
+	session.IsRoot = false
 	log.Printf("Saved authenticated DN: %s", dn.DNNormStr())
 }

@@ -97,7 +97,7 @@ var (
 	passThroughLDAPServer = fs.String(
 		"pass-through-ldap-server",
 		"",
-		"Pass-through/LDAP: Server address and port (ex. myldap:389)",
+		"Pass-through/LDAP: Server address and port (e.g. myldap:389)",
 	)
 	passThroughLDAPSearchBase = fs.String(
 		"pass-through-ldap-search-base",
@@ -107,7 +107,7 @@ var (
 	passThroughLDAPFilter = fs.String(
 		"pass-through-ldap-filter",
 		"",
-		"Pass-through/LDAP: Filter for finding an user (ex. (cn=%u))",
+		"Pass-through/LDAP: Filter for finding an user (e.g. (cn=%u))",
 	)
 	passThroughLDAPBindDN = fs.String(
 		"pass-through-ldap-bind-dn",
@@ -134,6 +134,11 @@ var (
 		false,
 		"Enable migration mode which means LDAP server accepts add/modify operational attributes (Default: false)",
 	)
+	defaultPPolicyDN = fs.String(
+		"default-ppolicy-dn",
+		"",
+		"DN of the default password policy entry (e.g. cn=standard-policy,ou=Policies,dc=example,dc=com)",
+	)
 )
 
 type arrayFlags []string
@@ -151,6 +156,9 @@ var customSchema arrayFlags
 
 func main() {
 	fs.Var(&customSchema, "schema", "Additional/overwriting custom schema")
+
+	var aclFlags arrayFlags
+	fs.Var(&aclFlags, "acl", `Simple ACL: the format is <DN(User, Group or empty(everyone))>:<Scope(R, W or RW)>:<Invisible Attributes> (e.g. cn=reader,dc=example,dc=com:R:userPassword,telephoneNumber)`)
 
 	fmt.Fprintf(os.Stdout, "ldap-pg %s (rev: %s)\n", version, revision)
 	fs.Usage = func() {
@@ -183,6 +191,11 @@ func main() {
 		})
 	}
 
+	var acl []string
+	if aclFlags != nil {
+		acl = strings.Split(aclFlags.String(), "\n")
+	}
+
 	NewServer(&ServerConfig{
 		DBHostName:        *dbHostName,
 		DBPort:            *dbPort,
@@ -202,5 +215,7 @@ func main() {
 		GoMaxProcs:        *gomaxprocs,
 		MigrationEnabled:  *migrationEnabled,
 		QueryTranslator:   "default",
+		SimpleACL:         acl,
+		DefaultPPolicyDN:  *defaultPPolicyDN,
 	}).Start()
 }

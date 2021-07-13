@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/openstandia/goldap/message"
@@ -68,9 +69,14 @@ type Repository interface {
 	// Init is called when initializing repository implementation.
 	Init() error
 
-	// FindCredByDN returns the credential by specified DN.
+	// Bind fetches the current bind entry by specified DN. Then execute callback with the entry.
+	// The callback is expected checking the credential, account lock status and so on.
 	// This is used for BIND operation.
-	FindCredByDN(ctx context.Context, dn *DN) ([]string, error)
+	Bind(ctx context.Context, dn *DN, callback func(current *FetchedCredential) error) error
+
+	// FindPPolicyByDN returns the password policy entry by specified DN.
+	// This is used for password policy process.
+	FindPPolicyByDN(ctx context.Context, dn *DN) (*PPolicy, error)
 
 	// Search handles search request by filter.
 	// This is used for SEARCH operation.
@@ -104,4 +110,17 @@ type SearchOption struct {
 type FetchedDNOrig struct {
 	ID     int64  `db:"id"`
 	DNOrig string `db:"dn_orig"`
+}
+
+type FetchedCredential struct {
+	ID int64
+	// Credential
+	Credential []string
+	// DN of the MemberOf
+	MemberOf []*DN
+	// PPolicy related to this entry
+	PPolicy              *PPolicy
+	PwdAccountLockedTime *time.Time
+	LastPwdFailureTime   *time.Time
+	PwdFailureCount      int
 }
