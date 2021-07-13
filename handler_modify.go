@@ -66,7 +66,7 @@ Retry:
 		}
 
 		// Validate ObjectClass
-		ocs, ok := newEntry.GetAttrNorm("objectClass")
+		ocs, ok := newEntry.ObjectClassesNorm()
 		if !ok {
 			return NewObjectClassViolation()
 		}

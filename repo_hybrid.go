@@ -1589,7 +1589,7 @@ func (t *HybridDBFilterTranslator) StartsWithMatch(s *AttributeType, sb *strings
 	sb.WriteString(`$."`)
 	sb.WriteString(escapeName(s.Name))
 	sb.WriteString(`" starts with "`)
-	sb.WriteString(escapeValue(sv.Norm()[0]))
+	sb.WriteString(escapeValue(sv.NormStr()[0]))
 	sb.WriteString(`"`)
 }
 
@@ -1610,7 +1610,7 @@ func (t *HybridDBFilterTranslator) AnyMatch(s *AttributeType, sb *strings.Builde
 	sb.WriteString(`$."`)
 	sb.WriteString(escapeName(s.Name))
 	sb.WriteString(`" like_regex ".*`)
-	sb.WriteString(escapeRegex(sv.Norm()[0]))
+	sb.WriteString(escapeRegex(sv.NormStr()[0]))
 	sb.WriteString(`.*"`)
 }
 
@@ -1631,7 +1631,7 @@ func (t *HybridDBFilterTranslator) EndsMatch(s *AttributeType, sb *strings.Build
 	sb.WriteString(`$."`)
 	sb.WriteString(escapeName(s.Name))
 	sb.WriteString(`" like_regex ".*`)
-	sb.WriteString(escapeRegex(sv.Norm()[0]))
+	sb.WriteString(escapeRegex(sv.NormStr()[0]))
 	sb.WriteString(`$"`)
 }
 
@@ -1823,7 +1823,7 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *AttributeType, q *HybridDBFi
 
 	} else {
 		var sb strings.Builder
-		sb.Grow(10 + len(s.Name) + len(sv.Norm()[0]))
+		sb.Grow(10 + len(s.Name) + len(sv.NormStr()[0]))
 
 		if isNot {
 			sb.WriteString(`!(`)
@@ -1831,7 +1831,7 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *AttributeType, q *HybridDBFi
 		sb.WriteString(`$."`)
 		sb.WriteString(escapeName(s.Name))
 		sb.WriteString(`" == "`)
-		sb.WriteString(escapeValue(sv.Norm()[0]))
+		sb.WriteString(escapeValue(sv.NormStr()[0]))
 		sb.WriteString(`"`)
 		if isNot {
 			sb.WriteString(`)`)
@@ -1865,7 +1865,7 @@ func (t *HybridDBFilterTranslator) GreaterOrEqualMatch(s *AttributeType, q *Hybr
 	}
 
 	var sb strings.Builder
-	sb.Grow(10 + len(s.Name) + len(sv.Norm()[0]))
+	sb.Grow(10 + len(s.Name) + len(sv.NormStr()[0]))
 
 	if isNot {
 		sb.WriteString(`!(`)
@@ -1873,7 +1873,7 @@ func (t *HybridDBFilterTranslator) GreaterOrEqualMatch(s *AttributeType, q *Hybr
 	sb.WriteString(`$."`)
 	sb.WriteString(escapeName(s.Name))
 	sb.WriteString(`" >= `)
-	sb.WriteString(escapeValue(sv.Norm()[0]))
+	sb.WriteString(escapeValue(sv.NormStr()[0]))
 	if isNot {
 		sb.WriteString(`)`)
 	}
@@ -1906,7 +1906,7 @@ func (t *HybridDBFilterTranslator) LessOrEqualMatch(s *AttributeType, q *HybridD
 	}
 
 	var sb strings.Builder
-	sb.Grow(10 + len(s.Name) + len(sv.Norm()[0]))
+	sb.Grow(10 + len(s.Name) + len(sv.NormStr()[0]))
 
 	if isNot {
 		sb.WriteString(`!(`)
@@ -1914,7 +1914,7 @@ func (t *HybridDBFilterTranslator) LessOrEqualMatch(s *AttributeType, q *HybridD
 	sb.WriteString(`$."`)
 	sb.WriteString(escapeName(s.Name))
 	sb.WriteString(`" <= `)
-	sb.WriteString(escapeValue(sv.Norm()[0]))
+	sb.WriteString(escapeValue(sv.NormStr()[0]))
 	if isNot {
 		sb.WriteString(`)`)
 	}
@@ -1987,7 +1987,7 @@ func (t *HybridDBFilterTranslator) ApproxMatch(s *AttributeType, q *HybridDBFilt
 	}
 
 	var sb strings.Builder
-	sb.Grow(25 + len(s.Name) + len(sv.Norm()[0]))
+	sb.Grow(25 + len(s.Name) + len(sv.NormStr()[0]))
 
 	if isNot {
 		sb.WriteString(`!(`)
@@ -1995,7 +1995,7 @@ func (t *HybridDBFilterTranslator) ApproxMatch(s *AttributeType, q *HybridDBFilt
 	sb.WriteString(`$."`)
 	sb.WriteString(escapeName(s.Name))
 	sb.WriteString(`" like_regex ".*`)
-	sb.WriteString(escapeRegex(sv.Norm()[0]))
+	sb.WriteString(escapeRegex(sv.NormStr()[0]))
 	sb.WriteString(`.*"`)
 	if isNot {
 		sb.WriteString(`)`)
@@ -2057,9 +2057,7 @@ func (r *HybridRepository) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*Hyb
 	// If migration mode is enabled, we use the specified values
 	if _, ok := norm["createTimestamp"]; ok {
 		// Migration mode
-		// It's normlized already, but it's string. Need to convert to int64
-		v, _ := strconv.ParseInt(norm["createTimestamp"].([]string)[0], 10, 64)
-		norm["createTimestamp"] = []int64{v}
+		// It's already normlized
 	} else {
 		norm["createTimestamp"] = []int64{created.Unix()}
 		orig["createTimestamp"] = []string{created.In(time.UTC).Format(TIMESTAMP_FORMAT)}
@@ -2068,9 +2066,7 @@ func (r *HybridRepository) AddEntryToDBEntry(tx *sqlx.Tx, entry *AddEntry) (*Hyb
 	// If migration mode is enabled, we use the specified values
 	if _, ok := norm["modifyTimestamp"]; ok {
 		// Migration mode
-		// It's normlized already, but it's string. Need to convert to int64
-		v, _ := strconv.ParseInt(norm["modifyTimestamp"].([]string)[0], 10, 64)
-		norm["modifyTimestamp"] = []int64{v}
+		// It's already normlized
 	} else {
 		norm["modifyTimestamp"] = []int64{updated.Unix()}
 		orig["modifyTimestamp"] = []string{updated.In(time.UTC).Format(TIMESTAMP_FORMAT)}
@@ -2112,40 +2108,17 @@ func (r *HybridRepository) schemaValueToIDArray(tx *sqlx.Tx, schemaValueMap map[
 		return rtn, nil
 	}
 
-	dnMap := map[string]StringSet{}
-	indexMap := map[string]int{} // key: dn_norm, value: index
+	m := make(map[string]interface{}, 1)
+	m[attrName] = schemaValue.Norm()
 
-	for i, v := range schemaValue.Orig() {
-		dn, err := NormalizeDN(r.server.schemaMap, v)
-		if err != nil {
-			log.Printf("warn: Failed to normalize DN: %s", v)
-			return nil, NewInvalidPerSyntax(attrName, i)
-		}
-
-		parentDNNorm := dn.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
-		if set, ok := dnMap[parentDNNorm]; ok {
-			set.Add(dn.RDNNormStr())
-		} else {
-			set = NewStringSet(dn.RDNNormStr())
-			dnMap[parentDNNorm] = set
-		}
-	}
-
-	ids, err := r.resolveDNMap(tx, dnMap)
-	if err != nil {
-		if dnErr, ok := err.(*InvalidDNError); ok {
-			index := indexMap[dnErr.dnNorm]
-			return nil, NewInvalidPerSyntax(attrName, index)
-		}
-	}
-
-	return ids, err
+	return r.dnArrayToIDArray(tx, m, attrName)
 }
 
 func (r *HybridRepository) dnArrayToIDArray(tx *sqlx.Tx, norm map[string]interface{}, attrName string) ([]int64, error) {
 	rtn := []int64{}
 
-	dnArray, ok := norm[attrName].([]string)
+	// It's already normalized as *DN
+	dnArray, ok := norm[attrName].([]*DN)
 	if !ok || len(dnArray) == 0 {
 		return rtn, nil
 	}
@@ -2153,13 +2126,7 @@ func (r *HybridRepository) dnArrayToIDArray(tx *sqlx.Tx, norm map[string]interfa
 	dnMap := map[string]StringSet{}
 	indexMap := map[string]int{} // key: dn_norm, value: index
 
-	for i, v := range dnArray {
-		dn, err := NormalizeDN(r.server.schemaMap, v)
-		if err != nil {
-			log.Printf("warn: Failed to normalize DN: %s", v)
-			return nil, NewInvalidPerSyntax(attrName, i)
-		}
-
+	for i, dn := range dnArray {
 		indexMap[dn.DNNormStrWithoutSuffix(r.server.Suffix)] = i
 
 		parentDNNorm := dn.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
@@ -2256,7 +2223,7 @@ func (r *HybridRepository) resolveDNMap(tx *sqlx.Tx, dnMap map[string]StringSet)
 }
 
 func (r *HybridRepository) modifyEntryToDBEntry(tx *sqlx.Tx, entry *ModifyEntry) (*HybridDBEntry, map[string][]int64, map[string][]int64, error) {
-	norm, orig := entry.GetAttrs()
+	norm, orig := entry.Attrs()
 
 	// Convert the value of member, uniqueMamber and memberOf attributes, DN => int64
 	addAssociation := map[string][]int64{}

@@ -108,7 +108,7 @@ func (j *AddEntry) Attrs() (map[string]interface{}, map[string][]string) {
 	norm := make(map[string]interface{}, len(j.attributes))
 	orig := make(map[string][]string, len(j.attributes))
 	for k, v := range j.attributes {
-		norm[k] = v.GetForJSON()
+		norm[k] = v.Norm()
 		orig[k] = v.Orig()
 	}
 	return norm, orig

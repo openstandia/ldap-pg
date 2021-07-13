@@ -9,9 +9,9 @@ import (
 
 func TestNewSchemaValue(t *testing.T) {
 	testcases := []struct {
-		Name         string
-		Value        []string
-		ExpectedNorm []string
+		Name            string
+		Value           []string
+		ExpectedNormStr []string
 	}{
 		{
 			"cn",
@@ -37,12 +37,12 @@ func TestNewSchemaValue(t *testing.T) {
 	for i, tc := range testcases {
 		sv, err := NewSchemaValue(schemaMap, tc.Name, tc.Value)
 		if err != nil {
-			t.Errorf("Unexpected error on %d:\nSchema: %s\n'%s' -> '%s' expected, got error %v\n", i, tc.Name, tc.Value, tc.ExpectedNorm, err)
+			t.Errorf("Unexpected error on %d:\nSchema: %s\n'%s' -> '%s' expected, got error %v\n", i, tc.Name, tc.Value, tc.ExpectedNormStr, err)
 			continue
 		}
 
-		if !reflect.DeepEqual(sv.Norm(), tc.ExpectedNorm) {
-			t.Errorf("Unexpected error on %d:\nSchema: %v\n'%s' -> %s' expected, got '%v'\n", i, tc.Name, tc.Value, tc.ExpectedNorm, sv)
+		if !reflect.DeepEqual(sv.NormStr(), tc.ExpectedNormStr) {
+			t.Errorf("Unexpected error on %d:\nSchema: %v\n'%s' -> %s' expected, got '%v'\n", i, tc.Name, tc.Value, tc.ExpectedNormStr, sv)
 			continue
 		}
 	}
@@ -50,11 +50,11 @@ func TestNewSchemaValue(t *testing.T) {
 
 func TestSchemaValueOp(t *testing.T) {
 	testcases := []struct {
-		Op           string
-		Name         string
-		Value        []string
-		ExpectedNorm []string
-		ExpectedOrig []string
+		Op              string
+		Name            string
+		Value           []string
+		ExpectedNormStr []string
+		ExpectedOrig    []string
 	}{
 		{
 			"",
@@ -91,13 +91,13 @@ func TestSchemaValueOp(t *testing.T) {
 		if sv == nil {
 			sv, err = NewSchemaValue(schemaMap, tc.Name, tc.Value)
 			if err != nil {
-				t.Errorf("Unexpected error on %d:\nSchema: %s\n'%v' -> '%v' / '%v' expected, got error %v\n", i, tc.Name, tc.Value, tc.ExpectedNorm, tc.ExpectedOrig, err)
+				t.Errorf("Unexpected error on %d:\nSchema: %s\n'%v' -> '%v' / '%v' expected, got error %v\n", i, tc.Name, tc.Value, tc.ExpectedNormStr, tc.ExpectedOrig, err)
 				continue
 			}
 		} else {
 			op, err := NewSchemaValue(schemaMap, tc.Name, tc.Value)
 			if err != nil {
-				t.Errorf("Unexpected error on %d:\nSchema: %s\n'%v' -> '%v' / '%v' expected, got error %v\n", i, tc.Name, tc.Value, tc.ExpectedNorm, tc.ExpectedOrig, err)
+				t.Errorf("Unexpected error on %d:\nSchema: %s\n'%v' -> '%v' / '%v' expected, got error %v\n", i, tc.Name, tc.Value, tc.ExpectedNormStr, tc.ExpectedOrig, err)
 				continue
 			}
 
@@ -105,18 +105,18 @@ func TestSchemaValueOp(t *testing.T) {
 			case "Add":
 				err = sv.Add(op)
 				if err != nil {
-					t.Errorf("Unexpected error on %d:\nSchema: %s\n'%v' -> '%v' / '%v' expected, got error %v\n", i, tc.Name, tc.Value, tc.ExpectedNorm, tc.ExpectedOrig, err)
+					t.Errorf("Unexpected error on %d:\nSchema: %s\n'%v' -> '%v' / '%v' expected, got error %v\n", i, tc.Name, tc.Value, tc.ExpectedNormStr, tc.ExpectedOrig, err)
 					continue
 				}
 			case "Delete":
 				err = sv.Delete(op)
 				if err != nil {
-					t.Errorf("Unexpected error on %d:\nSchema: %v\n'%v' -> '%v' / '%v' expected, got error %v\n", i, tc.Name, tc.Value, tc.ExpectedNorm, tc.ExpectedOrig, err)
+					t.Errorf("Unexpected error on %d:\nSchema: %v\n'%v' -> '%v' / '%v' expected, got error %v\n", i, tc.Name, tc.Value, tc.ExpectedNormStr, tc.ExpectedOrig, err)
 					continue
 				}
 			}
-			if !reflect.DeepEqual(sv.Norm(), tc.ExpectedNorm) {
-				t.Errorf("Unexpected error on %d:\nSchema: %v\n'%v' -> %v' expected, got '%v'\n", i, tc.Name, tc.Value, tc.ExpectedNorm, sv.Norm())
+			if !reflect.DeepEqual(sv.NormStr(), tc.ExpectedNormStr) {
+				t.Errorf("Unexpected error on %d:\nSchema: %v\n'%v' -> %v' expected, got '%v'\n", i, tc.Name, tc.Value, tc.ExpectedNormStr, sv.NormStr())
 				continue
 			}
 			if !reflect.DeepEqual(sv.Orig(), tc.ExpectedOrig) {
@@ -229,8 +229,8 @@ func TestObjectClassNormalization(t *testing.T) {
 			t.Errorf("Unexpected error on %d:\nValue: %v\nExpected: %v\ngot error %v\n", i, tc.Value, tc.Expected, err)
 			continue
 		}
-		if !reflect.DeepEqual(sv.Norm(), tc.Expected) {
-			t.Errorf("Unexpected error on %d:\nValue: %v\nExpected: %v\ngot '%v'\n", i, tc.Value, tc.Expected, sv.Norm())
+		if !reflect.DeepEqual(sv.NormStr(), tc.Expected) {
+			t.Errorf("Unexpected error on %d:\nValue: %v\nExpected: %v\ngot '%v'\n", i, tc.Value, tc.Expected, sv.NormStr())
 			continue
 		}
 	}

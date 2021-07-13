@@ -205,38 +205,38 @@ func arrayDiff(a, b []string) []string {
 	return diff
 }
 
-func normalize(s *AttributeType, value string, index int) (string, error) {
+func normalize(s *AttributeType, value string, index int) (interface{}, error) {
 	switch s.Equality {
 	case "caseExactMatch":
 		return normalizeSpace(value), nil
 	case "caseIgnoreMatch":
 		return strings.ToLower(normalizeSpace(value)), nil
 	case "distinguishedNameMatch":
-		return normalizeDistinguishedName(s.schemaDef, value)
+		return normalizeDistinguishedName(s, value, index)
 	case "caseExactIA5Match":
 		return normalizeSpace(value), nil
 	case "caseIgnoreIA5Match":
 		return strings.ToLower(normalizeSpace(value)), nil
 	case "generalizedTimeMatch":
-		return normalizeGeneralizedTime(value)
+		return normalizeGeneralizedTime(s, value, index)
 	case "objectIdentifierMatch":
 		return strings.ToLower(value), nil
 	case "numericStringMatch":
 		return removeAllSpace(value), nil
 	case "integerMatch":
-		_, err := strconv.ParseInt(value, 10, 64)
+		i, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
 			// Invalid syntax (21)
 			// additional info: pwdLockoutDuration: value #0 invalid per syntax
-			return "", NewInvalidPerSyntax(s.Name, index)
+			return 0, NewInvalidPerSyntax(s.Name, index)
 		}
-		return value, nil
+		return i, nil
 	case "booleanMatch":
 		return normalizeBoolean(s, value, index)
 	case "UUIDMatch":
 		return normalizeUUID(value)
 	case "uniqueMemberMatch":
-		nv, err := normalizeDistinguishedName(s.schemaDef, value)
+		nv, err := normalizeDistinguishedName(s, value, index)
 		if err != nil {
 			// fallback
 			return strings.ToLower(normalizeSpace(value)), nil
@@ -296,17 +296,11 @@ func ParseDN(schemaMap *SchemaMap, str string) (*DN, error) {
 
 		sv, err := NewSchemaValue(schemaMap, t, []string{orig})
 		if err != nil {
-			log.Printf("warn: Invalid DN syntax. Not found in schema. dn: %s err: %v", str, err)
+			log.Printf("warn: Invalid DN syntax. dn_orig: %s err: %v", str, err)
 			return "", "", NewInvalidDNSyntax()
 		}
 
-		norm, err := sv.Normalize()
-		if err != nil {
-			log.Printf("warn: Invalid RDN of DN syntax. dn: %s", str)
-			return "", "", NewInvalidDNSyntax()
-		}
-
-		return orig, norm[0], nil
+		return orig, sv.NormStr()[0], nil
 	}
 
 	for i := 0; i < len(str); i++ {
@@ -411,23 +405,22 @@ func ParseDN(schemaMap *SchemaMap, str string) (*DN, error) {
 	return dn, nil
 }
 
-func normalizeDistinguishedName(schemaMap *SchemaMap, value string) (string, error) {
-	// Validate DN only here
-	_, err := NormalizeDN(schemaMap, value)
+func normalizeDistinguishedName(s *AttributeType, value string, index int) (*DN, error) {
+	dn, err := NormalizeDN(s.schemaDef, value)
 	if err != nil {
-		return "", err
+		return nil, NewInvalidPerSyntax(s.Name, index)
 	}
 
 	// Return original DN
-	return value, nil
+	return dn, nil
 }
 
-func normalizeGeneralizedTime(value string) (string, error) {
+func normalizeGeneralizedTime(s *AttributeType, value string, index int) (int64, error) {
 	t, err := time.Parse(TIMESTAMP_FORMAT, value)
 	if err != nil {
-		return "", err
+		return 0, NewInvalidPerSyntax(s.Name, index)
 	}
-	return strconv.FormatInt(t.Unix(), 10), nil
+	return t.Unix(), nil
 }
 
 func normalizeBoolean(s *AttributeType, value string, index int) (string, error) {
@@ -636,4 +629,15 @@ func timesToJSONAttrs(format string, t []*time.Time) (types.JSONText, types.JSON
 	bOrig, _ := json.Marshal(orig)
 
 	return types.JSONText(bNorm), types.JSONText(bOrig)
+}
+
+func mergeIndex(m1, m2 map[string]struct{}) map[string]struct{} {
+	m := make(map[string]struct{}, len(m1)+len(m2))
+	for k, v := range m1 {
+		m[k] = v
+	}
+	for k, v := range m2 {
+		m[k] = v
+	}
+	return m
 }

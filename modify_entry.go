@@ -161,7 +161,7 @@ func (j *ModifyEntry) Replace(attrName string, attrValue []string) error {
 	// Validate ObjectClass
 	if sv.Name() == "objectClass" {
 		// Normalized objectClasses are sorted
-		stoc, ok := j.GetAttrNorm("objectClass")
+		stoc, ok := j.ObjectClassesNorm()
 		if !ok {
 			log.Printf("error: Unexpected entry. The entry doesn't have objectClass. Cancel the operation. id: %d, dn_norm: %s", j.dbEntryID, j.GetDNNorm())
 			return NewOperationsError()
@@ -219,7 +219,7 @@ func (j *ModifyEntry) Delete(attrName string, attrValue []string) error {
 	// Validate ObjectClass
 	if sv.Name() == "objectClass" {
 		// Normalized objectClasses are sorted
-		stoc, ok := j.GetAttrNorm("objectClass")
+		stoc, ok := j.ObjectClassesNorm()
 		if !ok {
 			log.Printf("error: Unexpected entry. The entry doesn't have objectClass. Cancel the operation. id: %d, dn_norm: %s", j.dbEntryID, j.GetDNNorm())
 			return NewOperationsError()
@@ -293,14 +293,6 @@ func (j *ModifyEntry) deleteAll(s *AttributeType) error {
 	return nil
 }
 
-func (j *ModifyEntry) ObjectClassLeaf() ([]string, bool) {
-	v, ok := j.attributes["objectClass"]
-	if !ok {
-		return nil, false
-	}
-	return v.Orig(), true
-}
-
 func (j *ModifyEntry) ObjectClassesOrig() ([]string, bool) {
 	v, ok := j.attributes["objectClass"]
 	if !ok {
@@ -309,24 +301,19 @@ func (j *ModifyEntry) ObjectClassesOrig() ([]string, bool) {
 	return v.Orig(), true
 }
 
-func (j *ModifyEntry) GetAttrNorm(attrName string) ([]string, bool) {
-	s, ok := j.schemaMap.AttributeType(attrName)
+func (j *ModifyEntry) ObjectClassesNorm() ([]string, bool) {
+	v, ok := j.attributes["objectClass"]
 	if !ok {
 		return nil, false
 	}
-
-	v, ok := j.attributes[s.Name]
-	if !ok {
-		return nil, false
-	}
-	return v.Norm(), true
+	return v.NormStr(), true
 }
 
-func (j *ModifyEntry) GetAttrs() (map[string]interface{}, map[string][]string) {
+func (j *ModifyEntry) Attrs() (map[string]interface{}, map[string][]string) {
 	norm := make(map[string]interface{}, len(j.attributes))
 	orig := make(map[string][]string, len(j.attributes))
 	for k, v := range j.attributes {
-		norm[k] = v.GetForJSON()
+		norm[k] = v.Norm()
 		orig[k] = v.Orig()
 	}
 	return norm, orig
