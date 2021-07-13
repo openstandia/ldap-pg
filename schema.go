@@ -808,7 +808,7 @@ func (s *SchemaValue) normalize() error {
 			if err != nil {
 				return err
 			}
-			normStr[i] = toNormStr(norm[j])
+			normStr[j] = toNormStr(norm[j])
 			m[normStr[j]] = struct{}{}
 		}
 		s.norm = norm
