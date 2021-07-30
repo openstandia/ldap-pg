@@ -31,10 +31,11 @@ var (
 	insertEntryStmt                   *sqlx.NamedStmt
 
 	// repo_read for update
-	findEntryIDByDNWithShareLock  *sqlx.NamedStmt
-	findEntryIDByDNWithUpdateLock *sqlx.NamedStmt
-	findEntryByDNWithShareLock    *sqlx.NamedStmt
-	findEntryByDNWithUpdateLock   *sqlx.NamedStmt
+	findEntryIDByDNWithShareLock               *sqlx.NamedStmt
+	findEntryIDByDNWithUpdateLock              *sqlx.NamedStmt
+	findEntryByDNWithShareLock                 *sqlx.NamedStmt
+	findEntryByDNWithUpdateLock                *sqlx.NamedStmt
+	findEntryWithAssociationByDNWithUpdateLock *sqlx.NamedStmt
 
 	// repo_update
 	updateAttrsByIdStmt        *sqlx.NamedStmt
@@ -173,11 +174,39 @@ func (r *HybridRepository) Init() error {
 		LEFT JOIN ldap_container c ON e.parent_id = c.id
 		LEFT JOIN LATERAL (
 			SELECT EXISTS (SELECT 1 FROM ldap_container WHERE id = e.id) AS has_sub
-	    ) AS has_sub ON true
+		) AS has_sub ON true
 	WHERE
 		e.rdn_norm = :rdn_norm
 		AND c.dn_norm = :parent_dn_norm
 	FOR UPDATE
+	`)
+	if err != nil {
+		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
+	}
+
+	findEntryWithAssociationByDNWithUpdateLock, err = db.PrepareNamed(`SELECT
+		e.id, e.parent_id, e.rdn_orig, e.attrs_orig, has_sub.has_sub,
+		member.member AS member, uniqueMember.uniqueMember AS uniqueMember
+	FROM
+		ldap_entry e
+		LEFT JOIN ldap_container c ON e.parent_id = c.id
+		LEFT JOIN LATERAL (
+			SELECT EXISTS (SELECT 1 FROM ldap_container WHERE id = e.id) AS has_sub
+		) AS has_sub ON true
+		LEFT JOIN LATERAL (
+			SELECT jsonb_agg(rae.rdn_orig || ',' || rc.dn_orig) AS member
+			FROM ldap_association ra, ldap_entry rae, ldap_container rc
+			WHERE e.id = ra.id AND ra.name = 'member' AND rae.id = ra.member_id AND rc.id = rae.parent_id
+		) AS member ON true
+		LEFT JOIN LATERAL (
+			SELECT jsonb_agg(rae.rdn_orig || ',' || rc.dn_orig) AS uniqueMember
+			FROM ldap_association ra, ldap_entry rae, ldap_container rc
+			WHERE e.id = ra.id AND ra.name = 'uniqueMember' AND rae.id = ra.member_id AND rc.id = rae.parent_id
+		) AS uniqueMember ON true
+	WHERE
+		e.rdn_norm = :rdn_norm
+		AND c.dn_norm = :parent_dn_norm
+	FOR UPDATE Of e
 	`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
@@ -492,8 +521,8 @@ func (r *HybridRepository) Update(ctx context.Context, dn *DN, callback func(cur
 	}
 
 	// Step 1: Fetch current entry with update lock
-	// TODO: Need to fetch all associations
-	oID, oParentID, _, oJSONMap, oHasSub, err := r.findByDNForUpdate(tx, dn)
+	// Need to fetch all associations
+	oID, oParentID, _, oJSONMap, oHasSub, err := r.findByDNForUpdate(tx, dn, true)
 	if err != nil {
 		rollback(tx)
 		return err
@@ -570,12 +599,12 @@ func (r *HybridRepository) Update(ctx context.Context, dn *DN, callback func(cur
 
 	// Step 3-2: Delete association if neccesary
 	where := []string{}
-	whereTemplate := `(id = '%s' AND id = %d AND member_id = %d)`
+	whereTemplate := `(name = '%s' AND id = %d AND member_id = %d)`
 
 	for k, v := range delAssociation {
 		for _, id := range v {
 			if k == "memberOf" {
-				// TODO configuable the default name when inserting memberOf
+				// TODO configuable the default name when deleting memberOf
 				where = append(where, fmt.Sprintf(whereTemplate, "member", id, dbEntry.ID))
 			} else {
 				where = append(where, fmt.Sprintf(whereTemplate, k, dbEntry.ID, id))
@@ -609,19 +638,30 @@ func (r *HybridRepository) Update(ctx context.Context, dn *DN, callback func(cur
 	return nil
 }
 
-func (r *HybridRepository) findByDNForUpdate(tx *sqlx.Tx, dn *DN) (int64, int64, string, map[string][]string, bool, error) {
-	dest := struct {
-		ID        int64          `db:"id"`
-		ParentID  int64          `db:"parent_id"`
-		RDNOrig   string         `db:"rdn_orig"`
-		AttrsOrig types.JSONText `db:"attrs_orig"`
-		HasSub    bool           `db:"has_sub"`
-	}{}
-
-	if err := r.get(tx, findEntryByDNWithUpdateLock, &dest, map[string]interface{}{
+func (r *HybridRepository) findByDNForUpdate(tx *sqlx.Tx, dn *DN, fetchAssociation bool) (int64, int64, string, map[string][]string, bool, error) {
+	params := map[string]interface{}{
 		"rdn_norm":       dn.RDNNormStr(),
 		"parent_dn_norm": dn.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix),
-	}); err != nil {
+	}
+
+	dest := struct {
+		ID              int64          `db:"id"`
+		ParentID        int64          `db:"parent_id"`
+		RDNOrig         string         `db:"rdn_orig"`
+		RawAttrsOrig    types.JSONText `db:"attrs_orig"`
+		RawMember       types.JSONText `db:"member"`       // No real column in the table
+		RawUniqueMember types.JSONText `db:"uniquemember"` // No real column in the table
+		HasSub          bool           `db:"has_sub"`      // No real column in the table
+	}{}
+
+	var err error
+	if fetchAssociation {
+		err = r.get(tx, findEntryWithAssociationByDNWithUpdateLock, &dest, params)
+	} else {
+		err = r.get(tx, findEntryByDNWithUpdateLock, &dest, params)
+	}
+
+	if err != nil {
 		if isNoResult(err) {
 			return 0, 0, "", nil, false, NewNoSuchObject()
 		}
@@ -629,16 +669,38 @@ func (r *HybridRepository) findByDNForUpdate(tx *sqlx.Tx, dn *DN) (int64, int64,
 	}
 
 	// Convert JSON => map
-	var attrsOrig map[string][]string
-	if len(dest.AttrsOrig) > 0 {
-		if err := dest.AttrsOrig.Unmarshal(&attrsOrig); err != nil {
+	jsonMap := make(map[string][]string)
+
+	if len(dest.RawAttrsOrig) > 0 {
+		if err := dest.RawAttrsOrig.Unmarshal(&jsonMap); err != nil {
 			return 0, 0, "", nil, false, xerrors.Errorf("Unexpected unmarshal error. dn_norm: %s, err: %w", dn.DNNormStr(), err)
 		}
 	}
+	if len(dest.RawMember) > 0 {
+		jsonArray := []string{}
+		if err := dest.RawMember.Unmarshal(&jsonArray); err != nil {
+			log.Printf("erro: Unexpectd umarshal error: %s", err)
+		}
+		for i, v := range jsonArray {
+			jsonArray[i] = v + "," + r.server.SuffixOrigStr()
+		}
+		jsonMap["member"] = jsonArray
+	}
 
-	log.Printf("Fetched current attrs_orig: %v", attrsOrig)
+	if len(dest.RawUniqueMember) > 0 {
+		jsonArray := []string{}
+		if err := dest.RawUniqueMember.Unmarshal(&jsonArray); err != nil {
+			log.Printf("erro: Unexpectd umarshal error: %s", err)
+		}
+		for i, v := range jsonArray {
+			jsonArray[i] = v + "," + r.server.SuffixOrigStr()
+		}
+		jsonMap["uniqueMember"] = jsonArray
+	}
 
-	return dest.ID, dest.ParentID, dest.RDNOrig, attrsOrig, dest.HasSub, nil
+	log.Printf("Fetched current attrs_orig: %v", jsonMap)
+
+	return dest.ID, dest.ParentID, dest.RDNOrig, jsonMap, dest.HasSub, nil
 }
 
 // oldRDN: set when keeping current entry
@@ -649,7 +711,7 @@ func (r *HybridRepository) UpdateDN(ctx context.Context, oldDN, newDN *DN, oldRD
 	}
 
 	// Fetch current entry with update lock
-	oID, oParentID, _, attrsOrig, oHasSub, err := r.findByDNForUpdate(tx, oldDN)
+	oID, oParentID, _, attrsOrig, oHasSub, err := r.findByDNForUpdate(tx, oldDN, false)
 	if err != nil {
 		rollback(tx)
 		return err

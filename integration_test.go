@@ -997,6 +997,7 @@ func TestMemberOf(t *testing.T) {
 			},
 			&AssertEntry{},
 		},
+		// Add entry with member
 		Add{
 			"cn=A1", "ou=Groups",
 			M{
@@ -1040,6 +1041,7 @@ func TestMemberOf(t *testing.T) {
 				},
 			},
 		},
+		// Add member
 		Add{
 			"uid=user2", "ou=Users",
 			M{
@@ -1050,9 +1052,98 @@ func TestMemberOf(t *testing.T) {
 			},
 			&AssertEntry{},
 		},
+		Add{
+			"uid=user3", "ou=Users",
+			M{
+				"objectClass":  A{"inetOrgPerson"},
+				"cn":           A{"user3"},
+				"sn":           A{"user3"},
+				"userPassword": A{SSHA("password1")},
+			},
+			&AssertEntry{},
+		},
+		Add{
+			"uid=user4", "ou=Users",
+			M{
+				"objectClass":  A{"inetOrgPerson"},
+				"cn":           A{"user4"},
+				"sn":           A{"user4"},
+				"userPassword": A{SSHA("password1")},
+			},
+			&AssertEntry{},
+		},
+		ModifyAdd{
+			"cn=A1", "ou=Groups",
+			M{
+				"member": A{
+					"uid=user2,ou=Users," + testServer.GetSuffix(),
+				},
+			},
+			&AssertEntry{
+				expectAttrs: M{
+					"member": A{
+						"uid=user1,ou=Users," + testServer.GetSuffix(),
+						"uid=user2,ou=Users," + testServer.GetSuffix(),
+					},
+				},
+			},
+		},
+		ModifyAdd{
+			"cn=A1", "ou=Groups",
+			M{
+				"member": A{
+					"uid=user3,ou=Users," + testServer.GetSuffix(),
+					"uid=user4,ou=Users," + testServer.GetSuffix(),
+				},
+			},
+			&AssertEntry{
+				expectAttrs: M{
+					"member": A{
+						"uid=user1,ou=Users," + testServer.GetSuffix(),
+						"uid=user2,ou=Users," + testServer.GetSuffix(),
+						"uid=user3,ou=Users," + testServer.GetSuffix(),
+						"uid=user4,ou=Users," + testServer.GetSuffix(),
+					},
+				},
+			},
+		},
+		// Delete member
+		ModifyDelete{
+			"cn=A1", "ou=Groups",
+			M{
+				"member": A{
+					"uid=user1,ou=Users," + testServer.GetSuffix(),
+				},
+			},
+			&AssertEntry{
+				expectAttrs: M{
+					"member": A{
+						"uid=user2,ou=Users," + testServer.GetSuffix(),
+						"uid=user3,ou=Users," + testServer.GetSuffix(),
+						"uid=user4,ou=Users," + testServer.GetSuffix(),
+					},
+				},
+			},
+		},
+		ModifyDelete{
+			"cn=A1", "ou=Groups",
+			M{
+				"member": A{
+					"uid=user2,ou=Users," + testServer.GetSuffix(),
+					"uid=user3,ou=Users," + testServer.GetSuffix(),
+				},
+			},
+			&AssertEntry{
+				expectAttrs: M{
+					"member": A{
+						"uid=user4,ou=Users," + testServer.GetSuffix(),
+					},
+				},
+			},
+		},
 		// Test case for duplicate members
 		Add{
-			"cn=A1", "ou=Groups",
+			"cn=A2", "ou=Groups",
 			M{
 				"objectClass": A{"groupOfNames"},
 				"member": A{
@@ -1066,7 +1157,7 @@ func TestMemberOf(t *testing.T) {
 		},
 		// Test case for adding a non-existent member
 		Add{
-			"cn=A1", "ou=Groups",
+			"cn=A2", "ou=Groups",
 			M{
 				"objectClass": A{"groupOfNames"},
 				"member": A{
@@ -1078,7 +1169,7 @@ func TestMemberOf(t *testing.T) {
 			},
 		},
 		Add{
-			"cn=A1", "ou=Groups",
+			"cn=A2", "ou=Groups",
 			M{
 				"objectClass": A{"groupOfNames"},
 				"member": A{
