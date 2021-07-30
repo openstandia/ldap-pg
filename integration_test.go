@@ -86,6 +86,89 @@ func TestParallel(t *testing.T) {
 	runTestCases(t, tcs)
 }
 
+func TestDeadlock(t *testing.T) {
+	type A []string
+	type M map[string][]string
+
+	tcs := []Command{
+		Conn{},
+		Bind{"cn=Manager", "secret", &AssertResponse{}},
+		AddDC("com").SetAssert(&AssertResponse{53}),
+		AddDC("example", "dc=com"),
+		AddOU("Users"),
+		AddOU("Groups"),
+		Add{
+			"uid=dummy", "ou=Users",
+			M{
+				"objectClass": A{"inetOrgPerson"},
+				"cn":          A{"dummy"},
+				"sn":          A{"dummy"},
+			},
+			&AssertEntry{},
+		},
+		Add{
+			"cn=A", "ou=Groups",
+			M{
+				"objectClass": A{"groupOfNames"},
+				"member": A{
+					"uid=dummy,ou=Users," + testServer.GetSuffix(),
+				},
+			},
+			&AssertEntry{},
+		},
+		Add{
+			"cn=B", "ou=Groups",
+			M{
+				"objectClass": A{"groupOfNames"},
+				"member": A{
+					"uid=dummy,ou=Users," + testServer.GetSuffix(),
+				},
+			},
+			&AssertEntry{},
+		},
+		Parallel{
+			100,
+			[][]Command{
+				{
+					Conn{},
+					Bind{"cn=Manager", "secret", &AssertResponse{}},
+					ModifyAdd{
+						"cn=A", "ou=Groups",
+						M{
+							"member": A{
+								"cn=B,ou=Groups," + testServer.GetSuffix(),
+							},
+						},
+						nil,
+					},
+					ModifyDelete{
+						"cn=A", "ou=Groups",
+						M{
+							"member": A{
+								"cn=B,ou=Groups," + testServer.GetSuffix(),
+							},
+						},
+						nil,
+					},
+				},
+				{
+					Conn{},
+					Bind{"cn=Manager", "secret", &AssertResponse{}},
+					ModifyReplace{
+						"cn=B", "ou=Groups",
+						M{
+							"description": A{"hogehoge"},
+						},
+						&AssertEntry{},
+					},
+				},
+			},
+		},
+	}
+
+	runTestCases(t, tcs)
+}
+
 func TestRootDSE(t *testing.T) {
 	type A []string
 	type M map[string][]string

@@ -670,6 +670,13 @@ func (r *HybridRepository) findByDNForUpdate(tx *sqlx.Tx, dn *DN, fetchAssociati
 		if isNoResult(err) {
 			return 0, 0, "", nil, false, NewNoSuchObject()
 		}
+		// TODO fix root cause of the deadlock
+		if isDeadlockError(err) {
+			log.Printf("warn: Detected deadlock for update. dn_norm: %s, dn_orig: %s, err: %v",
+				dn.DNNormStr(), dn.DNOrigStr(), err)
+			return 0, 0, "", nil, false, NewRetryError(err)
+		}
+
 		return 0, 0, "", nil, false, xerrors.Errorf("Failed to fetch current entry. dn_norm: %s, err: %w", dn.DNNormStr(), err)
 	}
 
@@ -2258,6 +2265,10 @@ func (r *HybridRepository) resolveDNMap(tx *sqlx.Tx, dnMap map[string]StringSet)
 
 		rows, err := tx.Queryx(q, params...)
 		if err != nil {
+			if isDeadlockError(err) {
+				log.Printf("warn: Detected deadlock when resolving DN to ID. rdn_norms: %v, parent_dn_norm: %s, err: %v", k, rdnNorms, err)
+				return nil, NewRetryError(err)
+			}
 			log.Printf("error: Unexpected execute query error. rdn_norms: %v, parent_dn_norm: %s, err: %v", k, rdnNorms, err)
 			// System error
 			return nil, NewUnavailable()
