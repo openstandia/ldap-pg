@@ -589,6 +589,11 @@ func (r *HybridRepository) Update(ctx context.Context, dn *DN, callback func(cur
 		result, err := r.execQuery(tx, q)
 		if err != nil {
 			rollback(tx)
+			if isDuplicateKeyError(err) {
+				log.Printf("warn: The association already exists. id: %d, dn_norm: %s, dn_orig: %s, err: %v",
+					dbEntry.ID, dn.DNNormStr(), dn.DNOrigStr(), err)
+				return NewRetryError(err)
+			}
 			return xerrors.Errorf("Failed to insert association record. id: %d, dn_norm: %s, dn_orig: %s, err: %w",
 				dbEntry.ID, dn.DNNormStr(), dn.DNOrigStr(), err)
 		}
