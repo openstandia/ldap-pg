@@ -29,7 +29,7 @@ func NewModifyEntry(schemaMap *SchemaMap, dn *DN, attrsOrig map[string][]string)
 	}
 
 	for k, v := range attrsOrig {
-		err := modifyEntry.AddNoCheck(k, v)
+		err := modifyEntry.ApplyCurrent(k, v)
 		if err != nil {
 			return nil, err
 		}
@@ -90,6 +90,20 @@ func (j *ModifyEntry) Validate() error {
 	return nil
 }
 
+func (j *ModifyEntry) ApplyCurrent(attrName string, attrValue []string) error {
+	sv, err := NewSchemaValue(j.schemaMap, attrName, attrValue)
+	if err != nil {
+		return err
+	}
+	if err := j.addsv(sv); err != nil {
+		return err
+	}
+
+	// Don't Record changelog
+
+	return nil
+}
+
 // Append to current value(s).
 func (j *ModifyEntry) Add(attrName string, attrValue []string) error {
 	sv, err := NewSchemaValue(j.schemaMap, attrName, attrValue)
@@ -101,26 +115,6 @@ func (j *ModifyEntry) Add(attrName string, attrValue []string) error {
 	}
 
 	// Apply change
-	if err := j.addsv(sv); err != nil {
-		return err
-	}
-
-	// Record changelog
-	if v, ok := j.AddChangeLog[sv.Name()]; !ok {
-		j.AddChangeLog[sv.Name()] = sv
-	} else {
-		// Need this case?
-		v.Add(sv)
-	}
-
-	return nil
-}
-
-func (j *ModifyEntry) AddNoCheck(attrName string, attrValue []string) error {
-	sv, err := NewSchemaValue(j.schemaMap, attrName, attrValue)
-	if err != nil {
-		return err
-	}
 	if err := j.addsv(sv); err != nil {
 		return err
 	}

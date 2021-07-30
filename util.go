@@ -465,6 +465,15 @@ func isForeignKeyError(err error) bool {
 	return false
 }
 
+func isDeadlockError(err error) bool {
+	// The error code is 40P01.
+	// see https://www.postgresql.org/docs/13/errcodes-appendix.html
+	if err, ok := err.(*pq.Error); ok {
+		return err.Code == pq.ErrorCode("40P01")
+	}
+	return false
+}
+
 func rollback(tx *sqlx.Tx) {
 	err := tx.Rollback()
 	if err != nil {
