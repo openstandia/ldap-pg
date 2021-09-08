@@ -88,7 +88,7 @@ Usage:
 Options:
 
   -acl value
-        Simple ACL: the format is <DN(User, Group or empty(everyone))>:<Scope(R, W or RW)>:<Invisible Attributes> (e.g. cn=reader,dc=example,dc=com:RO:userPassword,telephoneNumber)
+        Simple ACL: the format is <DN(User, Group or empty(everyone))>:<Scope(R, W or RW)>:<Invisible Attributes> (e.g. cn=reader,dc=example,dc=com:R:userPassword,telephoneNumber)
   -b string
         Bind address (default "127.0.0.1:8389")
   -d string
@@ -106,7 +106,7 @@ Options:
   -log-level string
         Log level, on of: debug, info, warn, error, alert (default "info")
   -migration
-        Enable migration mode which means LDAP server accepts add/modify operational attributes (Default: false)
+        Enable migration mode which means LDAP server accepts add/modify operational attributes (default false)
   -p int
         DB Port (default 5432)
   -pass-through-ldap-bind-dn string
@@ -118,13 +118,13 @@ Options:
   -pass-through-ldap-password string
         Pass-through/LDAP: Bind password
   -pass-through-ldap-scope string
-        Pass-through/LDAP: Search scope, on of: base, one, sub (Default: sub) (default "sub")
+        Pass-through/LDAP: Search scope, on of: base, one, sub (default "sub")
   -pass-through-ldap-search-base string
         Pass-through/LDAP: Search base
   -pass-through-ldap-server string
         Pass-through/LDAP: Server address and port (e.g. myldap:389)
   -pass-through-ldap-timeout int
-        Pass-through/LDAP: Timeout seconds (Default: 10) (default 10)
+        Pass-through/LDAP: Timeout seconds (default 10)
   -pprof string
         Bind address of pprof server (Don't start the server with default)
   -root-dn string
@@ -141,6 +141,7 @@ Options:
         DB User
   -w string
         DB Password
+
 ```
 
 #### Example
