@@ -1730,9 +1730,8 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *AttributeType, q *HybridDBFi
 		q.params[parentDNNormKey] = reqDN.ParentDN().DNNormStrWithoutSuffix(s.schemaDef.server.Suffix)
 
 		/*
-			[CASE EXISTS]
 			-- association filter by uniqueMember
-			INNER JOIN (
+			LEFT JOIN (
 				SELECT DISTINCT
 					a1.id
 				 FROM
@@ -1740,9 +1739,10 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *AttributeType, q *HybridDBFi
 				 WHERE
 					ae1.rdn_norm = 'uid=user1' AND c1.dn_norm = 'ou=people'
 			) t1 ON t1.id = e.id
+			WHERE
+				t1.id IS NOT NULL
 
-			[CASE NOT EXISTS]
-			-- association filter by uniqueMember
+			-- not association filter by uniqueMember
 			LEFT JOIN (
 				SELECT DISTINCT
 					a1.id
@@ -1758,11 +1758,7 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *AttributeType, q *HybridDBFi
 		q.join.WriteString(`		-- association filter by `)
 		q.join.WriteString(s.Name)
 		q.join.WriteString(" \n		")
-		if isNot {
-			q.join.WriteString(`LEFT JOIN (`)
-		} else {
-			q.join.WriteString(`INNER JOIN (`)
-		}
+		q.join.WriteString(`LEFT JOIN (`)
 		q.join.WriteString(`SELECT DISTINCT a`)
 		q.join.WriteString(nameKey)
 		q.join.WriteString(`.id FROM ldap_association a`)
@@ -1796,12 +1792,13 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *AttributeType, q *HybridDBFi
 		q.join.WriteString(` ON t`)
 		q.join.WriteString(nameKey)
 		q.join.WriteString(`.id = e.id`)
+
+		q.where.WriteString(`t`)
+		q.where.WriteString(nameKey)
 		if isNot {
-			q.where.WriteString(`t`)
-			q.where.WriteString(nameKey)
 			q.where.WriteString(`.id IS NULL`)
 		} else {
-			q.where.WriteString(`TRUE`)
+			q.where.WriteString(`.id IS NOT NULL`)
 		}
 
 	} else if s.IsReverseAssociationAttribute() {
@@ -1818,9 +1815,8 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *AttributeType, q *HybridDBFi
 		q.params[parentDNNormKey] = reqDN.ParentDN().DNNormStrWithoutSuffix(s.schemaDef.server.Suffix)
 
 		/*
-			[CASE EXISTS]
 			-- association filter by memberOf
-			INNER JOIN (
+			LEFT JOIN (
 				SELECT DISTINCT
 					a1.member_id
 				 FROM
@@ -1828,9 +1824,10 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *AttributeType, q *HybridDBFi
 				 WHERE
 					ae1.rdn_norm = 'cn=group1' AND c1.dn_norm = 'ou=groups'
 			) t1 ON t1.member_id = e.id
+			WHERE
+				t1.member_id IS NOT NULL
 
-			[CASE NOT EXISTS]
-			-- association filter by memberOf
+			-- not association filter by memberOf
 			LEFT JOIN (
 				SELECT DISTINCT
 					a1.member_id
@@ -1846,11 +1843,7 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *AttributeType, q *HybridDBFi
 		q.join.WriteString(`		-- association filter by `)
 		q.join.WriteString(s.Name)
 		q.join.WriteString(" \n		")
-		if isNot {
-			q.join.WriteString(`LEFT JOIN (`)
-		} else {
-			q.join.WriteString(`INNER JOIN (`)
-		}
+		q.join.WriteString(`LEFT JOIN (`)
 		q.join.WriteString(`SELECT DISTINCT a`)
 		q.join.WriteString(rdnNormKey)
 		q.join.WriteString(`.member_id FROM ldap_association a`)
@@ -1880,12 +1873,13 @@ func (t *HybridDBFilterTranslator) EqualityMatch(s *AttributeType, q *HybridDBFi
 		q.join.WriteString(` ON t`)
 		q.join.WriteString(rdnNormKey)
 		q.join.WriteString(`.member_id = e.id`)
+
+		q.where.WriteString(`t`)
+		q.where.WriteString(rdnNormKey)
 		if isNot {
-			q.where.WriteString(`t`)
-			q.where.WriteString(rdnNormKey)
 			q.where.WriteString(`.member_id IS NULL`)
 		} else {
-			q.where.WriteString(`TRUE`)
+			q.where.WriteString(`.member_id IS NOT NULL`)
 		}
 
 	} else {
@@ -2001,7 +1995,12 @@ func (t *HybridDBFilterTranslator) PresentMatch(s *AttributeType, q *HybridDBFil
 		q.params[nameKey] = s.Name
 
 		q.where.WriteString(`
-		(SELECT EXISTS (
+		(SELECT `)
+		if isNot {
+			q.where.WriteString(`NOT `)
+		}
+		q.where.WriteString(`
+	        EXISTS (
 			SELECT 1 FROM ldap_association a
 			WHERE
 				a.name = :`)
@@ -2011,8 +2010,13 @@ func (t *HybridDBFilterTranslator) PresentMatch(s *AttributeType, q *HybridDBFil
 
 	} else if s.IsReverseAssociationAttribute() {
 		q.where.WriteString(`
-		(SELECT EXISTS (
-			SELECT 1 FROM ldap_association a, ldap_entry moe, ldap_container moc
+		(SELECT `)
+		if isNot {
+			q.where.WriteString(`NOT `)
+		}
+		q.where.WriteString(`
+		EXISTS (
+			SELECT 1 FROM ldap_association a
 			WHERE
 				e.id = a.member_id
 	    ))`)
