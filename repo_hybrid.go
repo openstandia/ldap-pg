@@ -1995,7 +1995,12 @@ func (t *HybridDBFilterTranslator) PresentMatch(s *AttributeType, q *HybridDBFil
 		q.params[nameKey] = s.Name
 
 		q.where.WriteString(`
-		(SELECT EXISTS (
+		(SELECT `)
+		if isNot {
+			q.where.WriteString(`NOT `)
+		}
+		q.where.WriteString(`
+	        EXISTS (
 			SELECT 1 FROM ldap_association a
 			WHERE
 				a.name = :`)
@@ -2005,8 +2010,13 @@ func (t *HybridDBFilterTranslator) PresentMatch(s *AttributeType, q *HybridDBFil
 
 	} else if s.IsReverseAssociationAttribute() {
 		q.where.WriteString(`
-		(SELECT EXISTS (
-			SELECT 1 FROM ldap_association a, ldap_entry moe, ldap_container moc
+		(SELECT `)
+		if isNot {
+			q.where.WriteString(`NOT `)
+		}
+		q.where.WriteString(`
+		EXISTS (
+			SELECT 1 FROM ldap_association a
 			WHERE
 				e.id = a.member_id
 	    ))`)

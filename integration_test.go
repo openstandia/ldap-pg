@@ -1494,6 +1494,33 @@ func TestSearchByAssociation(t *testing.T) {
 				},
 			},
 		},
+		Search{
+			"ou=Groups," + testServer.GetSuffix(),
+			"(|(member=uid=user1,ou=Users," + testServer.GetSuffix() + ")(member=uid=user1,ou=Users," + testServer.GetSuffix() + "))",
+			ldap.ScopeWholeSubtree,
+			A{"member"},
+			&AssertEntries{
+				ExpectEntry{
+					"cn=A1",
+					"ou=Groups",
+					M{
+						"member": A{
+							"uid=user1,ou=Users," + testServer.GetSuffix(),
+						},
+					},
+				},
+				ExpectEntry{
+					"cn=A2",
+					"ou=Groups",
+					M{
+						"member": A{
+							"uid=user1,ou=Users," + testServer.GetSuffix(),
+							"uid=user2,ou=Users," + testServer.GetSuffix(),
+						},
+					},
+				},
+			},
+		},
 		// memberOf only
 		Search{
 			"ou=Users," + testServer.GetSuffix(),
@@ -1604,6 +1631,24 @@ func TestSearchByAssociation(t *testing.T) {
 						"memberOf": A{
 							"cn=A2,ou=Groups," + testServer.GetSuffix(),
 							"cn=A3,ou=Groups," + testServer.GetSuffix(),
+						},
+					},
+				},
+			},
+		},
+		Search{
+			"ou=Users," + testServer.GetSuffix(),
+			"(|(memberOf=cn=A1,ou=Groups," + testServer.GetSuffix() + ")(memberOf=cn=A1,ou=Groups," + testServer.GetSuffix() + "))",
+			ldap.ScopeWholeSubtree,
+			A{"memberOf"},
+			&AssertEntries{
+				ExpectEntry{
+					"uid=user1",
+					"ou=Users",
+					M{
+						"memberOf": A{
+							"cn=A1,ou=Groups," + testServer.GetSuffix(),
+							"cn=A2,ou=Groups," + testServer.GetSuffix(),
 						},
 					},
 				},
@@ -1754,6 +1799,235 @@ func TestSearchByAssociation(t *testing.T) {
 					"ou=Users",
 					"",
 					M{},
+				},
+				ExpectEntry{
+					"uid=user3",
+					"ou=Users",
+					M{},
+				},
+			},
+		},
+		// complex
+		Search{
+			"" + testServer.GetSuffix(),
+			"(|(member=*)(memberOf=*))",
+			ldap.ScopeWholeSubtree,
+			A{"member", "memberOf"},
+			&AssertEntries{
+				ExpectEntry{
+					"cn=A1",
+					"ou=Groups",
+					M{
+						"member": A{
+							"uid=user1,ou=Users," + testServer.GetSuffix(),
+						},
+					},
+				},
+				ExpectEntry{
+					"cn=A2",
+					"ou=Groups",
+					M{
+						"member": A{
+							"uid=user1,ou=Users," + testServer.GetSuffix(),
+							"uid=user2,ou=Users," + testServer.GetSuffix(),
+						},
+					},
+				},
+				ExpectEntry{
+					"cn=A3",
+					"ou=Groups",
+					M{
+						"member": A{
+							"uid=user2,ou=Users," + testServer.GetSuffix(),
+						},
+					},
+				},
+				ExpectEntry{
+					"uid=user1",
+					"ou=Users",
+					M{
+						"memberOf": A{
+							"cn=A1,ou=Groups," + testServer.GetSuffix(),
+							"cn=A2,ou=Groups," + testServer.GetSuffix(),
+						},
+					},
+				},
+				ExpectEntry{
+					"uid=user2",
+					"ou=Users",
+					M{
+						"memberOf": A{
+							"cn=A2,ou=Groups," + testServer.GetSuffix(),
+							"cn=A3,ou=Groups," + testServer.GetSuffix(),
+						},
+					},
+				},
+			},
+		},
+		Search{
+			"" + testServer.GetSuffix(),
+			"(|(member=uid=user1,ou=Users," + testServer.GetSuffix() + ")(memberOf=cn=A3,ou=Groups," + testServer.GetSuffix() + "))",
+			ldap.ScopeWholeSubtree,
+			A{"member", "memberOf"},
+			&AssertEntries{
+				ExpectEntry{
+					"cn=A1",
+					"ou=Groups",
+					M{
+						"member": A{
+							"uid=user1,ou=Users," + testServer.GetSuffix(),
+						},
+					},
+				},
+				ExpectEntry{
+					"cn=A2",
+					"ou=Groups",
+					M{
+						"member": A{
+							"uid=user1,ou=Users," + testServer.GetSuffix(),
+							"uid=user2,ou=Users," + testServer.GetSuffix(),
+						},
+					},
+				},
+				ExpectEntry{
+					"uid=user2",
+					"ou=Users",
+					M{
+						"memberOf": A{
+							"cn=A2,ou=Groups," + testServer.GetSuffix(),
+							"cn=A3,ou=Groups," + testServer.GetSuffix(),
+						},
+					},
+				},
+			},
+		},
+		Search{
+			"" + testServer.GetSuffix(),
+			"(|(member=uid=user1,ou=Users," + testServer.GetSuffix() + ")(memberOf=cn=A3,ou=Groups," + testServer.GetSuffix() + ")(member=*))",
+			ldap.ScopeWholeSubtree,
+			A{"member", "memberOf"},
+			&AssertEntries{
+				ExpectEntry{
+					"cn=A1",
+					"ou=Groups",
+					M{
+						"member": A{
+							"uid=user1,ou=Users," + testServer.GetSuffix(),
+						},
+					},
+				},
+				ExpectEntry{
+					"cn=A2",
+					"ou=Groups",
+					M{
+						"member": A{
+							"uid=user1,ou=Users," + testServer.GetSuffix(),
+							"uid=user2,ou=Users," + testServer.GetSuffix(),
+						},
+					},
+				},
+				ExpectEntry{
+					"cn=A3",
+					"ou=Groups",
+					M{
+						"member": A{
+							"uid=user2,ou=Users," + testServer.GetSuffix(),
+						},
+					},
+				},
+				ExpectEntry{
+					"uid=user2",
+					"ou=Users",
+					M{
+						"memberOf": A{
+							"cn=A2,ou=Groups," + testServer.GetSuffix(),
+							"cn=A3,ou=Groups," + testServer.GetSuffix(),
+						},
+					},
+				},
+			},
+		},
+		Search{
+			"" + testServer.GetSuffix(),
+			"(|(member=uid=user1,ou=Users," + testServer.GetSuffix() + ")(memberOf=cn=A3,ou=Groups," + testServer.GetSuffix() + ")(memberOf=*))",
+			ldap.ScopeWholeSubtree,
+			A{"member", "memberOf"},
+			&AssertEntries{
+				ExpectEntry{
+					"cn=A1",
+					"ou=Groups",
+					M{
+						"member": A{
+							"uid=user1,ou=Users," + testServer.GetSuffix(),
+						},
+					},
+				},
+				ExpectEntry{
+					"cn=A2",
+					"ou=Groups",
+					M{
+						"member": A{
+							"uid=user1,ou=Users," + testServer.GetSuffix(),
+							"uid=user2,ou=Users," + testServer.GetSuffix(),
+						},
+					},
+				},
+				ExpectEntry{
+					"uid=user1",
+					"ou=Users",
+					M{
+						"memberOf": A{
+							"cn=A1,ou=Groups," + testServer.GetSuffix(),
+							"cn=A2,ou=Groups," + testServer.GetSuffix(),
+						},
+					},
+				},
+				ExpectEntry{
+					"uid=user2",
+					"ou=Users",
+					M{
+						"memberOf": A{
+							"cn=A2,ou=Groups," + testServer.GetSuffix(),
+							"cn=A3,ou=Groups," + testServer.GetSuffix(),
+						},
+					},
+				},
+			},
+		},
+		Search{
+			"" + testServer.GetSuffix(),
+			"(|(member=uid=user1,ou=Users," + testServer.GetSuffix() + ")(memberOf=cn=A3,ou=Groups," + testServer.GetSuffix() + ")(&(!(memberOf=*))(objectClass=inetOrgPerson)))",
+			ldap.ScopeWholeSubtree,
+			A{"member", "memberOf"},
+			&AssertEntries{
+				ExpectEntry{
+					"cn=A1",
+					"ou=Groups",
+					M{
+						"member": A{
+							"uid=user1,ou=Users," + testServer.GetSuffix(),
+						},
+					},
+				},
+				ExpectEntry{
+					"cn=A2",
+					"ou=Groups",
+					M{
+						"member": A{
+							"uid=user1,ou=Users," + testServer.GetSuffix(),
+							"uid=user2,ou=Users," + testServer.GetSuffix(),
+						},
+					},
+				},
+				ExpectEntry{
+					"uid=user2",
+					"ou=Users",
+					M{
+						"memberOf": A{
+							"cn=A2,ou=Groups," + testServer.GetSuffix(),
+							"cn=A3,ou=Groups," + testServer.GetSuffix(),
+						},
+					},
 				},
 				ExpectEntry{
 					"uid=user3",
