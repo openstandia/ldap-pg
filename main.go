@@ -122,17 +122,17 @@ var (
 	passThroughLDAPScope = fs.String(
 		"pass-through-ldap-scope",
 		"sub",
-		"Pass-through/LDAP: Search scope, on of: base, one, sub (Default: sub)",
+		"Pass-through/LDAP: Search scope, on of: base, one, sub",
 	)
 	passThroughLDAPTimeout = fs.Int(
 		"pass-through-ldap-timeout",
 		10,
-		"Pass-through/LDAP: Timeout seconds (Default: 10)",
+		"Pass-through/LDAP: Timeout seconds",
 	)
 	migrationEnabled = fs.Bool(
 		"migration",
 		false,
-		"Enable migration mode which means LDAP server accepts add/modify operational attributes (Default: false)",
+		"Enable migration mode which means LDAP server accepts add/modify operational attributes (default false)",
 	)
 	defaultPPolicyDN = fs.String(
 		"default-ppolicy-dn",
