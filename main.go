@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 )
 
 var (
@@ -196,7 +200,12 @@ func main() {
 		acl = strings.Split(aclFlags.String(), "\n")
 	}
 
-	NewServer(&ServerConfig{
+	// When CTRL+C, SIGINT and SIGTERM signal occurs
+	// Then stop server gracefully
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	server := NewServer(&ServerConfig{
 		DBHostName:        *dbHostName,
 		DBPort:            *dbPort,
 		DBName:            *dbName,
@@ -217,5 +226,14 @@ func main() {
 		QueryTranslator:   "default",
 		SimpleACL:         acl,
 		DefaultPPolicyDN:  *defaultPPolicyDN,
-	}).Start()
+	})
+
+	go server.Start()
+
+	<-ctx.Done()
+	_, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	log.Printf("info: Shutdown ldap-pg...")
+	server.Stop()
 }

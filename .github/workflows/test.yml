@@ -8,11 +8,6 @@ jobs:
   setup:
     runs-on: ubuntu-latest
     steps:
-      - name: Set up Go
-        uses: actions/setup-go@v2
-        with:
-          go-version: 1.17.1
-        id: go
       - name: Check out code into the Go module directory
         uses: actions/checkout@v2
       - name: Cache
@@ -37,6 +32,11 @@ jobs:
     needs: setup
     runs-on: ubuntu-latest
     steps:
+      - name: Set up Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: 1.17.1
+        id: go
       - name: Check out code into the Go module directory
         uses: actions/checkout@v2
       - name: Running go tests

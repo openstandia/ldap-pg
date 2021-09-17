@@ -6,10 +6,8 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/signal"
 	"runtime"
 	"strings"
-	"syscall"
 
 	"net/http"
 	_ "net/http/pprof"
@@ -237,16 +235,7 @@ func (s *Server) Start() {
 	log.Printf("info: Starting ldap-pg on %s", *bindAddress)
 
 	// listen and serve
-	go server.ListenAndServe(*bindAddress)
-
-	// When CTRL+C, SIGINT and SIGTERM signal occurs
-	// Then stop server gracefully
-	ch := make(chan os.Signal)
-	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
-	<-ch
-	close(ch)
-
-	server.Stop()
+	server.ListenAndServe(*bindAddress)
 }
 
 func (s *Server) LoadSchema() {
