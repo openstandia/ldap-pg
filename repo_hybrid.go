@@ -86,7 +86,7 @@ func (r *HybridRepository) Init() error {
 	);
 	CREATE UNIQUE INDEX IF NOT EXISTS idx_ldap_entry_rdn_norm ON ldap_entry (parent_id, rdn_norm);
 	CREATE INDEX IF NOT EXISTS idx_ldap_entry_attrs ON ldap_entry USING gin (attrs_norm jsonb_path_ops);
-	CREATE UNIQUE INDEX uq_idx_ldap_entry_entry_uuid ON ldap_entry ((attrs_norm->'entryUUID'));
+	CREATE UNIQUE INDEX IF NOT EXISTS uq_idx_ldap_entry_entry_uuid ON ldap_entry ((attrs_norm->'entryUUID'));
 
 	CREATE TABLE IF NOT EXISTS ldap_association (
 		name VARCHAR(32) NOT NULL,
