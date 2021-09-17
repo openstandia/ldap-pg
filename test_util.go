@@ -1,4 +1,4 @@
-// +build integration
+//go:build integration
 
 package main
 
@@ -24,24 +24,7 @@ func IntegrationTestRunner(m *testing.M) int {
 	// shutdown := SetupDBConn()
 	// defer shutdown()
 
-	s := setupLDAPServer()
-	defer func() {
-		s.Stop()
-
-		i := 0
-		for {
-			if i > 10 {
-				log.Fatalf("error: Failed to stop test ldap server within 10 seconds.")
-			}
-
-			_, err := ldap.Dial("tcp", fmt.Sprintf("%s:%d", "localhost", 8389))
-			if err != nil {
-				break
-			}
-			time.Sleep(1 * time.Second)
-			i++
-		}
-	}()
+	_ = setupLDAPServer()
 
 	// truncateTables()
 
@@ -685,27 +668,25 @@ docker run --rm -e POSTGRES_DB=ldap -e POSTGRES_USER=dev  -e POSTGRES_PASSWORD=d
 var testPGPort int = 35432
 
 func setupLDAPServer() *Server {
-	go func() {
-		testServer = NewServer(&ServerConfig{
-			DBHostName:      "localhost",
-			DBPort:          testPGPort,
-			DBName:          "ldap",
-			DBSchema:        "public",
-			DBUser:          "dev",
-			DBPassword:      "dev",
-			DBMaxOpenConns:  2,
-			DBMaxIdleConns:  1,
-			Suffix:          "dc=example,dc=com",
-			RootDN:          "cn=Manager,dc=example,dc=com",
-			RootPW:          "secret",
-			BindAddress:     "127.0.0.1:8389",
-			LogLevel:        "warn",
-			PProfServer:     "127.0.0.1:10000",
-			GoMaxProcs:      0,
-			QueryTranslator: "default",
-		})
-		testServer.Start()
-	}()
+	testServer = NewServer(&ServerConfig{
+		DBHostName:      "localhost",
+		DBPort:          testPGPort,
+		DBName:          "ldap",
+		DBSchema:        "public",
+		DBUser:          "dev",
+		DBPassword:      "dev",
+		DBMaxOpenConns:  2,
+		DBMaxIdleConns:  1,
+		Suffix:          "dc=example,dc=com",
+		RootDN:          "cn=Manager,dc=example,dc=com",
+		RootPW:          "secret",
+		BindAddress:     "127.0.0.1:8389",
+		LogLevel:        "warn",
+		PProfServer:     "127.0.0.1:10000",
+		GoMaxProcs:      0,
+		QueryTranslator: "default",
+	})
+	go testServer.Start()
 
 	i := 0
 	for {
