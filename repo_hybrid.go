@@ -1578,7 +1578,7 @@ func (t *HybridDBFilterTranslator) translate(schemaMap *SchemaMap, packet messag
 		var s *AttributeType
 		s, ok := schemaMap.AttributeType(attrName)
 		if !ok {
-			log.Printf("warn: Ignore filter due to unsupported attribute: %s", attrName)
+			q.where.WriteString("FALSE")
 			return
 		}
 
@@ -1618,22 +1618,32 @@ func (t *HybridDBFilterTranslator) translate(schemaMap *SchemaMap, packet messag
 	case message.FilterEqualityMatch:
 		if s, ok := findSchema(schemaMap, string(f.AttributeDesc())); ok {
 			t.EqualityMatch(s, q, string(f.AssertionValue()), isNot)
+		} else {
+			q.where.WriteString("FALSE")
 		}
 	case message.FilterGreaterOrEqual:
 		if s, ok := findSchema(schemaMap, string(f.AttributeDesc())); ok {
 			t.GreaterOrEqualMatch(s, q, string(f.AssertionValue()), isNot)
+		} else {
+			q.where.WriteString("FALSE")
 		}
 	case message.FilterLessOrEqual:
 		if s, ok := findSchema(schemaMap, string(f.AttributeDesc())); ok {
 			t.LessOrEqualMatch(s, q, string(f.AssertionValue()), isNot)
+		} else {
+			q.where.WriteString("FALSE")
 		}
 	case message.FilterPresent:
 		if s, ok := findSchema(schemaMap, string(f)); ok {
 			t.PresentMatch(s, q, isNot)
+		} else {
+			q.where.WriteString("FALSE")
 		}
 	case message.FilterApproxMatch:
 		if s, ok := findSchema(schemaMap, string(f.AttributeDesc())); ok {
 			t.ApproxMatch(s, q, string(f.AssertionValue()), isNot)
+		} else {
+			q.where.WriteString("FALSE")
 		}
 	}
 
