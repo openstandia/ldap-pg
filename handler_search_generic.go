@@ -92,9 +92,22 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	if pageControl != nil {
 		reqCookie := pageControl.Cookie()
 		if reqCookie != "" {
-			offset = sessionMap[reqCookie]
-			// clear
-			delete(sessionMap, reqCookie)
+			var ok bool
+			if offset, ok = sessionMap[reqCookie]; ok {
+				log.Printf("debug: paged results cookie is ok")
+
+				// clear cookie
+				delete(sessionMap, reqCookie)
+			} else {
+				log.Printf("debug: invalid paged results cookie")
+
+				// Not found requested cookie
+				// Return error
+				res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultUnwillingToPerform)
+				res.SetDiagnosticMessage("paged results cookie is invalid or old")
+				w.Write(res)
+				return
+			}
 		}
 	}
 	option := &SearchOption{
@@ -137,9 +150,9 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultSuccess)
 
-	// https://www.ietf.org/rfc/rfc2696.txt
-	if nextCookie != "" {
-		control := message.NewSimplePagedResultsControl(pageSize, false, nextCookie)
+	if pageControl != nil {
+		// https://www.ietf.org/rfc/rfc2696.txt
+		control := message.NewSimplePagedResultsControl(maxCount, false, nextCookie)
 		var controls message.Controls = []message.Control{control}
 
 		w.WriteControls(res, &controls)
