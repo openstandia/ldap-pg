@@ -32,7 +32,6 @@ var (
 
 	// repo_read for update
 	findEntryIDByDNWithShareLock               *sqlx.NamedStmt
-	findEntryIDByDNWithUpdateLock              *sqlx.NamedStmt
 	findEntryByDNWithShareLock                 *sqlx.NamedStmt
 	findEntryByDNWithUpdateLock                *sqlx.NamedStmt
 	findEntryWithAssociationByDNWithUpdateLock *sqlx.NamedStmt
@@ -228,13 +227,6 @@ func (r *HybridRepository) Init() error {
 
 	findEntryIDByDNWithShareLock, err = db.PrepareNamed(findEntryIDByDN + `
 	FOR SHARE
-	`)
-	if err != nil {
-		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
-	}
-
-	findEntryIDByDNWithUpdateLock, err = db.PrepareNamed(findEntryIDByDN + `
-	FOR UPDATE
 	`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
@@ -947,14 +939,14 @@ func (r HybridRepository) DeleteByDN(ctx context.Context, dn *DN) error {
 		return err
 	}
 
-	// Step 1: fetch the target entry and parent container with lock for update
+	// Step 1: fetch the target entry and parent container with lock for share
 	fetchedEntry := struct {
 		ID       int64 `db:"id"`
 		ParentID int64 `db:"parent_id"`
 		HasSub   bool  `db:"has_sub"`
 	}{}
 
-	err = r.get(tx, findEntryIDByDNWithUpdateLock, &fetchedEntry, map[string]interface{}{
+	err = r.get(tx, findEntryIDByDNWithShareLock, &fetchedEntry, map[string]interface{}{
 		"rdn_norm":       dn.RDNNormStr(),
 		"parent_dn_norm": dn.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix),
 	})
@@ -2816,6 +2808,9 @@ func (r *HybridRepository) exec(tx *sqlx.Tx, stmt *sqlx.NamedStmt, params map[st
 	debugSQL(r.server.config.LogLevel, stmt.QueryString, params)
 	result, err := tx.NamedStmt(stmt).Exec(params)
 	errorSQL(err, stmt.QueryString, params)
+	if isForeignKeyError(err) {
+		return nil, NewRetryError(err)
+	}
 	return result, err
 }
 
