@@ -1239,6 +1239,56 @@ func TestAssociation(t *testing.T) {
 				},
 			},
 		},
+		// Test case for replacement
+		ModifyReplace{
+			"cn=A1", "ou=Groups",
+			M{
+				"member": A{
+					"uid=user1,ou=Users," + testServer.GetSuffix(),
+				},
+			},
+			&AssertEntry{
+				expectAttrs: M{
+					"member": A{
+						"uid=user1,ou=Users," + testServer.GetSuffix(),
+					},
+				},
+			},
+		},
+		ModifyReplace{
+			"cn=A1", "ou=Groups",
+			M{
+				"member": A{
+					"uid=user1,ou=Users," + testServer.GetSuffix(),
+					"uid=user2,ou=Users," + testServer.GetSuffix(),
+				},
+			},
+			&AssertEntry{
+				expectAttrs: M{
+					"member": A{
+						"uid=user1,ou=Users," + testServer.GetSuffix(),
+						"uid=user2,ou=Users," + testServer.GetSuffix(),
+					},
+				},
+			},
+		},
+		ModifyReplace{
+			"cn=A1", "ou=Groups",
+			M{
+				"member": A{
+					"uid=user2,ou=Users," + testServer.GetSuffix(),
+					"uid=user3,ou=Users," + testServer.GetSuffix(),
+				},
+			},
+			&AssertEntry{
+				expectAttrs: M{
+					"member": A{
+						"uid=user2,ou=Users," + testServer.GetSuffix(),
+						"uid=user3,ou=Users," + testServer.GetSuffix(),
+					},
+				},
+			},
+		},
 		// Test case for duplicate members
 		Add{
 			"cn=A2", "ou=Groups",

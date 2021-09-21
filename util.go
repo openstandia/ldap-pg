@@ -652,3 +652,30 @@ func mergeIndex(m1, m2 map[string]struct{}) map[string]struct{} {
 	}
 	return m
 }
+
+func diff(a, b []string) ([]string, []string) {
+	ma := make(map[string]struct{}, len(a))
+	for _, x := range a {
+		ma[x] = struct{}{}
+	}
+	mb := make(map[string]struct{}, len(b))
+	for _, x := range b {
+		mb[x] = struct{}{}
+	}
+
+	add := []string{}
+	del := []string{}
+
+	for k, _ := range mb {
+		if _, ok := ma[k]; !ok {
+			add = append(add, k)
+		}
+	}
+	for k, _ := range ma {
+		if _, ok := mb[k]; !ok {
+			del = append(del, k)
+		}
+	}
+
+	return add, del
+}
