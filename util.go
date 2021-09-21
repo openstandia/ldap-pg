@@ -234,7 +234,7 @@ func normalize(s *AttributeType, value string, index int) (interface{}, error) {
 	case "booleanMatch":
 		return normalizeBoolean(s, value, index)
 	case "UUIDMatch":
-		return normalizeUUID(value)
+		return normalizeUUID(s, value, index)
 	case "uniqueMemberMatch":
 		nv, err := normalizeDistinguishedName(s, value, index)
 		if err != nil {
@@ -434,10 +434,10 @@ func normalizeBoolean(s *AttributeType, value string, index int) (string, error)
 	return value, nil
 }
 
-func normalizeUUID(value string) (string, error) {
+func normalizeUUID(s *AttributeType, value string, index int) (string, error) {
 	u, err := uuid.Parse(value)
 	if err != nil {
-		return "", err
+		return "", NewInvalidPerSyntax(s.Name, index)
 	}
 	return u.String(), nil
 }
