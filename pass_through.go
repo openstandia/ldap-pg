@@ -82,7 +82,11 @@ func (c *LDAPPassThroughClient) Authenticate(domain, user, password string) (boo
 	)
 	sr, err := l.Search(search)
 	if err != nil {
-		return false, xerrors.Errorf("Failed to search an user for pass-through. domain:%s, uid: %s, filter: %s, err: %w", domain, user, filter, err)
+		if !ldap.IsErrorWithCode(err, 32) {
+			return false, xerrors.Errorf("Failed to search an user for pass-through. domain:%s, uid: %s, filter: %s, err: %w", domain, user, filter, err)
+		}
+		// LDAP Result Code 32 "No Such Object
+		return false, xerrors.Errorf("No such object. domain: %s, uid: %s", domain, user)
 	}
 
 	if len(sr.Entries) == 0 {

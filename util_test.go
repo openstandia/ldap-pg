@@ -3,6 +3,7 @@
 package main
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -145,6 +146,58 @@ func TestSortObjectClassesAndVerifyChain(t *testing.T) {
 				t.Errorf("Unexpected error on %d:\n'%v expected, got %v\n", i, tc.ExpectedChainVerifyError, err)
 				continue
 			}
+		}
+	}
+}
+
+func TestDiff(t *testing.T) {
+	testcases := []struct {
+		a           []string
+		b           []string
+		AddExpected []string
+		DelExpected []string
+	}{
+		{
+			[]string{"a"},
+			[]string{"b"},
+			[]string{"b"},
+			[]string{"a"},
+		},
+		{
+			[]string{"a", "b"},
+			[]string{"c", "d"},
+			[]string{"c", "d"},
+			[]string{"a", "b"},
+		},
+		{
+			[]string{"a", "b"},
+			[]string{"b", "c"},
+			[]string{"c"},
+			[]string{"a"},
+		},
+		{
+			[]string{},
+			[]string{"a"},
+			[]string{"a"},
+			[]string{},
+		},
+		{
+			[]string{"a"},
+			[]string{},
+			[]string{},
+			[]string{"a"},
+		},
+	}
+
+	for i, tc := range testcases {
+		add, del := diff(tc.a, tc.b)
+		if !reflect.DeepEqual(add, tc.AddExpected) {
+			t.Errorf("Unexpected error on %d:\nadd '%v' expected, got '%v'\n", i, tc.AddExpected, add)
+			continue
+		}
+		if !reflect.DeepEqual(del, tc.DelExpected) {
+			t.Errorf("Unexpected error on %d:\ndel '%v' expected, got '%v'\n", i, tc.DelExpected, del)
+			continue
 		}
 	}
 }

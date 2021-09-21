@@ -13,19 +13,28 @@ type ModifyEntry struct {
 	hasSub           bool
 	path             string
 	AddChangeLog     map[string]*SchemaValue
-	ReplaceChangeLog map[string]*SchemaValue
-	DelChangeLog     map[string]*SchemaValue
+	ReplaceChangeLog struct {
+		old map[string]*SchemaValue
+		new map[string]*SchemaValue
+	}
+	DelChangeLog map[string]*SchemaValue
 }
 
 func NewModifyEntry(schemaMap *SchemaMap, dn *DN, attrsOrig map[string][]string) (*ModifyEntry, error) {
 	// TODO
 	modifyEntry := &ModifyEntry{
-		schemaMap:        schemaMap,
-		dn:               dn,
-		attributes:       map[string]*SchemaValue{},
-		AddChangeLog:     map[string]*SchemaValue{},
-		ReplaceChangeLog: map[string]*SchemaValue{},
-		DelChangeLog:     map[string]*SchemaValue{},
+		schemaMap:    schemaMap,
+		dn:           dn,
+		attributes:   map[string]*SchemaValue{},
+		AddChangeLog: map[string]*SchemaValue{},
+		ReplaceChangeLog: struct {
+			old map[string]*SchemaValue
+			new map[string]*SchemaValue
+		}{
+			old: map[string]*SchemaValue{},
+			new: map[string]*SchemaValue{},
+		},
+		DelChangeLog: map[string]*SchemaValue{},
 	}
 
 	for k, v := range attrsOrig {
@@ -178,13 +187,16 @@ func (j *ModifyEntry) Replace(attrName string, attrValue []string) error {
 		}
 	}
 
+	// Record old attribute into changelog
+	j.ReplaceChangeLog.old[sv.Name()] = j.attributes[sv.Name()]
+
 	// Apply change
 	if err := j.replacesv(sv); err != nil {
 		return err
 	}
 
-	// Record changelog
-	j.ReplaceChangeLog[sv.Name()] = sv
+	// Record new attribute into changelog
+	j.ReplaceChangeLog.new[sv.Name()] = sv
 
 	return nil
 }
@@ -315,13 +327,19 @@ func (j *ModifyEntry) Attrs() (map[string][]interface{}, map[string][]string) {
 
 func (e *ModifyEntry) Clone() *ModifyEntry {
 	clone := &ModifyEntry{
-		schemaMap:        e.schemaMap,
-		dn:               e.dn,
-		attributes:       map[string]*SchemaValue{},
-		AddChangeLog:     map[string]*SchemaValue{},
-		ReplaceChangeLog: map[string]*SchemaValue{},
-		DelChangeLog:     map[string]*SchemaValue{},
-		dbEntryID:        e.dbEntryID,
+		schemaMap:    e.schemaMap,
+		dn:           e.dn,
+		attributes:   map[string]*SchemaValue{},
+		AddChangeLog: map[string]*SchemaValue{},
+		ReplaceChangeLog: struct {
+			old map[string]*SchemaValue
+			new map[string]*SchemaValue
+		}{
+			old: map[string]*SchemaValue{},
+			new: map[string]*SchemaValue{},
+		},
+		DelChangeLog: map[string]*SchemaValue{},
+		dbEntryID:    e.dbEntryID,
 	}
 	for k, v := range e.attributes {
 		clone.attributes[k] = v.Clone()
