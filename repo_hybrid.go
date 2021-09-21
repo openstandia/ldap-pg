@@ -2135,10 +2135,28 @@ func (r *HybridRepository) AddEntryToDBEntry(ctx context.Context, tx *sqlx.Tx, e
 
 	// Creator, Modifiers
 	if session, err := AuthSessionContext(ctx); err == nil {
-		norm["creatorsName"] = []interface{}{session.DN.DNOrigEncodedStrWithoutSuffix(r.server.Suffix)}
-		orig["creatorsName"] = []string{session.DN.DNNormStrWithoutSuffix(r.server.Suffix)}
-		norm["modifiersName"] = norm["creatorsName"]
-		orig["modifiersName"] = orig["creatorsName"]
+		// If migration mode is enabled, we use the specified values
+		if v, ok := orig["creatorsName"]; ok {
+			// Migration mode
+			// It's already normlized
+			creatorsDN, _ := r.server.NormalizeDN(v[0])
+			norm["creatorsName"] = []interface{}{creatorsDN.DNOrigEncodedStrWithoutSuffix(r.server.Suffix)}
+			orig["creatorsName"] = []string{creatorsDN.DNNormStrWithoutSuffix(r.server.Suffix)}
+		} else {
+			norm["creatorsName"] = []interface{}{session.DN.DNOrigEncodedStrWithoutSuffix(r.server.Suffix)}
+			orig["creatorsName"] = []string{session.DN.DNNormStrWithoutSuffix(r.server.Suffix)}
+		}
+		// If migration mode is enabled, we use the specified values
+		if v, ok := orig["modifiersName"]; ok {
+			// Migration mode
+			// It's already normlized
+			modifiersDN, _ := r.server.NormalizeDN(v[0])
+			norm["modifiersName"] = []interface{}{modifiersDN.DNOrigEncodedStrWithoutSuffix(r.server.Suffix)}
+			orig["modifiersName"] = []string{modifiersDN.DNNormStrWithoutSuffix(r.server.Suffix)}
+		} else {
+			norm["modifiersName"] = norm["creatorsName"]
+			orig["modifiersName"] = orig["creatorsName"]
+		}
 	}
 
 	// Timestamp
@@ -2368,14 +2386,27 @@ func (r *HybridRepository) modifyEntryToDBEntry(ctx context.Context, tx *sqlx.Tx
 
 	// Modifiers
 	if session, err := AuthSessionContext(ctx); err == nil {
-		norm["modifiersName"] = []interface{}{session.DN.DNOrigEncodedStrWithoutSuffix(r.server.Suffix)}
-		orig["modifiersName"] = []string{session.DN.DNNormStrWithoutSuffix(r.server.Suffix)}
+		if v, ok := orig["modifiersName"]; ok {
+			// Migration mode
+			// It's already normlized
+			modifiersDN, _ := r.server.NormalizeDN(v[0])
+			norm["modifiersName"] = []interface{}{modifiersDN.DNOrigEncodedStrWithoutSuffix(r.server.Suffix)}
+			orig["modifiersName"] = []string{modifiersDN.DNNormStrWithoutSuffix(r.server.Suffix)}
+		} else {
+			norm["modifiersName"] = []interface{}{session.DN.DNOrigEncodedStrWithoutSuffix(r.server.Suffix)}
+			orig["modifiersName"] = []string{session.DN.DNNormStrWithoutSuffix(r.server.Suffix)}
+		}
 	}
 
 	// Timestamp
-	updated := time.Now()
-	norm["modifyTimestamp"] = []interface{}{updated.Unix()}
-	orig["modifyTimestamp"] = []string{updated.In(time.UTC).Format(TIMESTAMP_FORMAT)}
+	if _, ok := norm["modifyTimestamp"]; ok {
+		// Migration mode
+		// It's already normlized
+	} else {
+		updated := time.Now()
+		norm["modifyTimestamp"] = []interface{}{updated.Unix()}
+		orig["modifyTimestamp"] = []string{updated.In(time.UTC).Format(TIMESTAMP_FORMAT)}
+	}
 
 	bNorm, _ := json.Marshal(norm)
 	bOrig, _ := json.Marshal(orig)
