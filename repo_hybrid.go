@@ -2328,9 +2328,9 @@ func (r *HybridRepository) resolveDNMap(tx *sqlx.Tx, dnMap map[string]StringSet)
 	return rtn, nil
 }
 
-func (r *HybridRepository) replaceAssociation(tx *sqlx.Tx, entry *ModifyEntry, attrName string, addAssociation, delAssociation map[string][]int64) error {
-	if v, ok := entry.ReplaceChangeLog.new[attrName]; ok {
-		add, del := diffDN(entry.ReplaceChangeLog.old[attrName].Norm(), v.Norm())
+func (r *HybridRepository) calcAssociationDiff(tx *sqlx.Tx, entry *ModifyEntry, attrName string, addAssociation, delAssociation map[string][]int64) error {
+	if old, ok := entry.old[attrName]; ok {
+		add, del := diffDN(old.Norm(), entry.attributes[attrName].Norm())
 
 		addMember, err := r.dnArrayToIDArray(tx, map[string][]interface{}{attrName: add}, attrName)
 		if err != nil {
@@ -2340,16 +2340,8 @@ func (r *HybridRepository) replaceAssociation(tx *sqlx.Tx, entry *ModifyEntry, a
 		if err != nil {
 			return err
 		}
-		if addIDs, ok := addAssociation[attrName]; !ok {
-			addAssociation[attrName] = addMember
-		} else {
-			_ = append(addIDs, addMember...)
-		}
-		if delIDs, ok := delAssociation[attrName]; !ok {
-			delAssociation[attrName] = delMember
-		} else {
-			_ = append(delIDs, delMember...)
-		}
+		addAssociation[attrName] = addMember
+		delAssociation[attrName] = delMember
 	}
 	return nil
 }
@@ -2361,77 +2353,14 @@ func (r *HybridRepository) modifyEntryToDBEntry(ctx context.Context, tx *sqlx.Tx
 	addAssociation := map[string][]int64{}
 	delAssociation := map[string][]int64{}
 
-	// Replace
-	if err := r.replaceAssociation(tx, entry, "member", addAssociation, delAssociation); err != nil {
+	if err := r.calcAssociationDiff(tx, entry, "member", addAssociation, delAssociation); err != nil {
 		return nil, nil, nil, err
 	}
-	if err := r.replaceAssociation(tx, entry, "uniqueMember", addAssociation, delAssociation); err != nil {
+	if err := r.calcAssociationDiff(tx, entry, "uniqueMember", addAssociation, delAssociation); err != nil {
 		return nil, nil, nil, err
 	}
-	if err := r.replaceAssociation(tx, entry, "memberOf", addAssociation, delAssociation); err != nil {
+	if err := r.calcAssociationDiff(tx, entry, "memberOf", addAssociation, delAssociation); err != nil {
 		return nil, nil, nil, err
-	}
-
-	// Add
-	member, err := r.schemaValueToIDArray(tx, entry.AddChangeLog, "member")
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	if addIDs, ok := addAssociation["member"]; !ok {
-		addAssociation["member"] = member
-	} else {
-		addIDs = append(addIDs, member...)
-	}
-
-	uniqueMember, err := r.schemaValueToIDArray(tx, entry.AddChangeLog, "uniqueMember")
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	if addIDs, ok := addAssociation["uniqueMember"]; !ok {
-		addAssociation["uniqueMember"] = uniqueMember
-	} else {
-		addIDs = append(addIDs, uniqueMember...)
-	}
-
-	memberOf, err := r.schemaValueToIDArray(tx, entry.AddChangeLog, "memberOf")
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	if addIDs, ok := addAssociation["memberOf"]; !ok {
-		addAssociation["memberOf"] = memberOf
-	} else {
-		addIDs = append(addIDs, memberOf...)
-	}
-
-	// Delete
-	member, err = r.schemaValueToIDArray(tx, entry.DelChangeLog, "member")
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	if delIDs, ok := delAssociation["member"]; !ok {
-		delAssociation["member"] = member
-	} else {
-		delIDs = append(delIDs, member...)
-	}
-
-	uniqueMember, err = r.schemaValueToIDArray(tx, entry.DelChangeLog, "uniqueMember")
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	if delIDs, ok := delAssociation["uniqueMember"]; !ok {
-		delAssociation["uniqueMember"] = uniqueMember
-	} else {
-		delIDs = append(delIDs, uniqueMember...)
-	}
-
-	memberOf, err = r.schemaValueToIDArray(tx, entry.DelChangeLog, "memberOf")
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	if delIDs, ok := delAssociation["memberOf"]; !ok {
-		delAssociation["memberOf"] = memberOf
-	} else {
-		delIDs = append(delIDs, memberOf...)
 	}
 
 	// Remove attributes to reduce attrs_orig column size

@@ -5,36 +5,23 @@ import (
 )
 
 type ModifyEntry struct {
-	schemaMap        *SchemaMap
-	dn               *DN
-	attributes       map[string]*SchemaValue
-	dbEntryID        int64
-	dbParentID       int64
-	hasSub           bool
-	path             string
-	AddChangeLog     map[string]*SchemaValue
-	ReplaceChangeLog struct {
-		old map[string]*SchemaValue
-		new map[string]*SchemaValue
-	}
-	DelChangeLog map[string]*SchemaValue
+	schemaMap  *SchemaMap
+	dn         *DN
+	attributes map[string]*SchemaValue
+	dbEntryID  int64
+	dbParentID int64
+	hasSub     bool
+	path       string
+	old        map[string]*SchemaValue
 }
 
 func NewModifyEntry(schemaMap *SchemaMap, dn *DN, attrsOrig map[string][]string) (*ModifyEntry, error) {
 	// TODO
 	modifyEntry := &ModifyEntry{
-		schemaMap:    schemaMap,
-		dn:           dn,
-		attributes:   map[string]*SchemaValue{},
-		AddChangeLog: map[string]*SchemaValue{},
-		ReplaceChangeLog: struct {
-			old map[string]*SchemaValue
-			new map[string]*SchemaValue
-		}{
-			old: map[string]*SchemaValue{},
-			new: map[string]*SchemaValue{},
-		},
-		DelChangeLog: map[string]*SchemaValue{},
+		schemaMap:  schemaMap,
+		dn:         dn,
+		attributes: map[string]*SchemaValue{},
+		old:        map[string]*SchemaValue{},
 	}
 
 	for k, v := range attrsOrig {
@@ -123,17 +110,25 @@ func (j *ModifyEntry) Add(attrName string, attrValue []string) error {
 		return NewNoUserModificationAllowedConstraintViolation(sv.Name())
 	}
 
+	// Record old value
+	if sv.IsAssociationAttribute() {
+		if _, ok := j.old[sv.Name()]; !ok {
+			if old, ok := j.attributes[sv.Name()]; ok {
+				j.old[sv.Name()] = old.Clone()
+			} else {
+				// Create empty value
+				old, err := NewSchemaValue(j.schemaMap, attrName, []string{})
+				if err != nil {
+					return err
+				}
+				j.old[sv.Name()] = old
+			}
+		}
+	}
+
 	// Apply change
 	if err := j.addsv(sv); err != nil {
 		return err
-	}
-
-	// Record changelog
-	if v, ok := j.AddChangeLog[sv.Name()]; !ok {
-		j.AddChangeLog[sv.Name()] = sv
-	} else {
-		// Need this case?
-		v.Add(sv)
 	}
 
 	return nil
@@ -187,24 +182,26 @@ func (j *ModifyEntry) Replace(attrName string, attrValue []string) error {
 		}
 	}
 
-	// Record old attribute into changelog
-	if old, ok := j.attributes[sv.Name()]; ok {
-		j.ReplaceChangeLog.old[sv.Name()] = old
-	} else {
-		old, err := NewSchemaValue(j.schemaMap, attrName, []string{})
-		if err != nil {
-			return err
+	// Record old value
+	if sv.IsAssociationAttribute() {
+		if _, ok := j.old[sv.Name()]; !ok {
+			if old, ok := j.attributes[sv.Name()]; ok {
+				j.old[sv.Name()] = old.Clone()
+			} else {
+				// Create empty value
+				old, err := NewSchemaValue(j.schemaMap, attrName, []string{})
+				if err != nil {
+					return err
+				}
+				j.old[sv.Name()] = old
+			}
 		}
-		j.ReplaceChangeLog.old[sv.Name()] = old
 	}
 
 	// Apply change
 	if err := j.replacesv(sv); err != nil {
 		return err
 	}
-
-	// Record new attribute into changelog
-	j.ReplaceChangeLog.new[sv.Name()] = sv
 
 	return nil
 }
@@ -256,17 +253,25 @@ func (j *ModifyEntry) Delete(attrName string, attrValue []string) error {
 		}
 	}
 
+	// Record old value
+	if sv.IsAssociationAttribute() {
+		if _, ok := j.old[sv.Name()]; !ok {
+			if old, ok := j.attributes[sv.Name()]; ok {
+				j.old[sv.Name()] = old.Clone()
+			} else {
+				// Create empty value
+				old, err := NewSchemaValue(j.schemaMap, attrName, []string{})
+				if err != nil {
+					return err
+				}
+				j.old[sv.Name()] = old
+			}
+		}
+	}
+
 	// Apply change
 	if err := j.deletesv(sv); err != nil {
 		return err
-	}
-
-	// Record changelog
-	if v, ok := j.DelChangeLog[sv.Name()]; !ok {
-		j.DelChangeLog[sv.Name()] = sv
-	} else {
-		// TODO Need this case?
-		v.Add(sv)
 	}
 
 	return nil
@@ -335,19 +340,11 @@ func (j *ModifyEntry) Attrs() (map[string][]interface{}, map[string][]string) {
 
 func (e *ModifyEntry) Clone() *ModifyEntry {
 	clone := &ModifyEntry{
-		schemaMap:    e.schemaMap,
-		dn:           e.dn,
-		attributes:   map[string]*SchemaValue{},
-		AddChangeLog: map[string]*SchemaValue{},
-		ReplaceChangeLog: struct {
-			old map[string]*SchemaValue
-			new map[string]*SchemaValue
-		}{
-			old: map[string]*SchemaValue{},
-			new: map[string]*SchemaValue{},
-		},
-		DelChangeLog: map[string]*SchemaValue{},
-		dbEntryID:    e.dbEntryID,
+		schemaMap:  e.schemaMap,
+		dn:         e.dn,
+		attributes: map[string]*SchemaValue{},
+		old:        map[string]*SchemaValue{},
+		dbEntryID:  e.dbEntryID,
 	}
 	for k, v := range e.attributes {
 		clone.attributes[k] = v.Clone()
