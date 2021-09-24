@@ -1289,6 +1289,67 @@ func TestAssociation(t *testing.T) {
 				},
 			},
 		},
+		// Test case for encoded DN member
+		Add{
+			"uid=user5\\2Ba@example.com", "ou=Users",
+			M{
+				"objectClass":  A{"inetOrgPerson"},
+				"cn":           A{"user5"},
+				"sn":           A{"user5"},
+				"userPassword": A{SSHA("password1")},
+			},
+			&AssertEntry{},
+		},
+		Add{
+			"uid=user6\\2Ba@example.com", "ou=Users",
+			M{
+				"objectClass":  A{"inetOrgPerson"},
+				"cn":           A{"user6"},
+				"sn":           A{"user6"},
+				"userPassword": A{SSHA("password1")},
+			},
+			&AssertEntry{},
+		},
+		ModifyReplace{
+			"cn=A1", "ou=Groups",
+			M{
+				"member": A{"uid=user5\\2Ba@example.com,ou=Users," + testServer.GetSuffix()},
+			},
+			&AssertEntry{
+				expectAttrs: M{
+					"member": A{
+						"uid=user5\\2Ba@example.com,ou=Users," + testServer.GetSuffix(),
+					},
+				},
+			},
+		},
+		ModifyAdd{
+			"cn=A1", "ou=Groups",
+			M{
+				"member": A{"uid=user6\\2Ba@example.com,ou=Users," + testServer.GetSuffix()},
+			},
+			&AssertEntry{
+				expectAttrs: M{
+					"member": A{
+						"uid=user5\\2Ba@example.com,ou=Users," + testServer.GetSuffix(),
+						"uid=user6\\2Ba@example.com,ou=Users," + testServer.GetSuffix(),
+					},
+				},
+			},
+		},
+		ModifyDelete{
+			"cn=A1", "ou=Groups",
+			M{
+				"member": A{"uid=user5\\2Ba@example.com,ou=Users," + testServer.GetSuffix()},
+			},
+			&AssertEntry{
+				expectAttrs: M{
+					"member": A{
+						"uid=user6\\2Ba@example.com,ou=Users," + testServer.GetSuffix(),
+					},
+				},
+			},
+		},
 		// Test case for duplicate members
 		Add{
 			"cn=A2", "ou=Groups",

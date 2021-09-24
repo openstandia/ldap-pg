@@ -2228,7 +2228,6 @@ func (r *HybridRepository) dnArrayToIDArray(tx *sqlx.Tx, norm map[string][]inter
 		dn, ok := v.(*DN)
 		if !ok {
 			return nil, NewInvalidPerSyntax(attrName, i)
-
 		}
 		indexMap[dn.DNNormStrWithoutSuffix(r.server.Suffix)] = i
 
@@ -2329,6 +2328,32 @@ func (r *HybridRepository) resolveDNMap(tx *sqlx.Tx, dnMap map[string]StringSet)
 	return rtn, nil
 }
 
+func (r *HybridRepository) replaceAssociation(tx *sqlx.Tx, entry *ModifyEntry, attrName string, addAssociation, delAssociation map[string][]int64) error {
+	if v, ok := entry.ReplaceChangeLog.new[attrName]; ok {
+		add, del := diffDN(entry.ReplaceChangeLog.old[attrName].Norm(), v.Norm())
+
+		addMember, err := r.dnArrayToIDArray(tx, map[string][]interface{}{attrName: add}, attrName)
+		if err != nil {
+			return err
+		}
+		delMember, err := r.dnArrayToIDArray(tx, map[string][]interface{}{attrName: del}, attrName)
+		if err != nil {
+			return err
+		}
+		if addIDs, ok := addAssociation[attrName]; !ok {
+			addAssociation[attrName] = addMember
+		} else {
+			_ = append(addIDs, addMember...)
+		}
+		if delIDs, ok := delAssociation[attrName]; !ok {
+			delAssociation[attrName] = delMember
+		} else {
+			_ = append(delIDs, delMember...)
+		}
+	}
+	return nil
+}
+
 func (r *HybridRepository) modifyEntryToDBEntry(ctx context.Context, tx *sqlx.Tx, entry *ModifyEntry) (*HybridDBEntry, map[string][]int64, map[string][]int64, error) {
 	norm, orig := entry.Attrs()
 
@@ -2337,77 +2362,14 @@ func (r *HybridRepository) modifyEntryToDBEntry(ctx context.Context, tx *sqlx.Tx
 	delAssociation := map[string][]int64{}
 
 	// Replace
-	if v, ok := entry.ReplaceChangeLog.new["member"]; ok {
-		add, del := diff(entry.ReplaceChangeLog.old["member"].NormStr(), v.NormStr())
-		addsv, _ := NewSchemaValue(r.server.schemaMap, "member", add)
-		delsv, _ := NewSchemaValue(r.server.schemaMap, "member", del)
-
-		addMember, err := r.dnArrayToIDArray(tx, map[string][]interface{}{"member": addsv.norm}, "member")
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		delMember, err := r.dnArrayToIDArray(tx, map[string][]interface{}{"member": delsv.norm}, "member")
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		if addIDs, ok := addAssociation["member"]; !ok {
-			addAssociation["member"] = addMember
-		} else {
-			addIDs = append(addIDs, addMember...)
-		}
-		if delIDs, ok := delAssociation["member"]; !ok {
-			delAssociation["member"] = delMember
-		} else {
-			delIDs = append(delIDs, delMember...)
-		}
+	if err := r.replaceAssociation(tx, entry, "member", addAssociation, delAssociation); err != nil {
+		return nil, nil, nil, err
 	}
-	if v, ok := entry.ReplaceChangeLog.new["uniqueMember"]; ok {
-		add, del := diff(entry.ReplaceChangeLog.old["uniqueMember"].NormStr(), v.NormStr())
-		addsv, _ := NewSchemaValue(r.server.schemaMap, "uniqueMember", add)
-		delsv, _ := NewSchemaValue(r.server.schemaMap, "uniqueMember", del)
-
-		addMember, err := r.dnArrayToIDArray(tx, map[string][]interface{}{"uniqueMember": addsv.norm}, "uniqueMember")
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		delMember, err := r.dnArrayToIDArray(tx, map[string][]interface{}{"uniqueMember": delsv.norm}, "uniqueMember")
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		if addIDs, ok := addAssociation["uniqueMember"]; !ok {
-			addAssociation["uniqueMember"] = addMember
-		} else {
-			addIDs = append(addIDs, addMember...)
-		}
-		if delIDs, ok := delAssociation["uniqueMember"]; !ok {
-			delAssociation["uniqueMember"] = delMember
-		} else {
-			delIDs = append(delIDs, delMember...)
-		}
+	if err := r.replaceAssociation(tx, entry, "uniqueMember", addAssociation, delAssociation); err != nil {
+		return nil, nil, nil, err
 	}
-	if v, ok := entry.ReplaceChangeLog.new["memberOf"]; ok {
-		add, del := diff(entry.ReplaceChangeLog.old["memberOf"].NormStr(), v.NormStr())
-		addsv, _ := NewSchemaValue(r.server.schemaMap, "memberOf", add)
-		delsv, _ := NewSchemaValue(r.server.schemaMap, "memberOf", del)
-
-		addMember, err := r.dnArrayToIDArray(tx, map[string][]interface{}{"memberOf": addsv.norm}, "memberOf")
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		delMember, err := r.dnArrayToIDArray(tx, map[string][]interface{}{"memberOf": delsv.norm}, "memberOf")
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		if addIDs, ok := addAssociation["memberOf"]; !ok {
-			addAssociation["memberOf"] = addMember
-		} else {
-			addIDs = append(addIDs, addMember...)
-		}
-		if delIDs, ok := delAssociation["memberOf"]; !ok {
-			delAssociation["memberOf"] = delMember
-		} else {
-			delIDs = append(delIDs, delMember...)
-		}
+	if err := r.replaceAssociation(tx, entry, "memberOf", addAssociation, delAssociation); err != nil {
+		return nil, nil, nil, err
 	}
 
 	// Add

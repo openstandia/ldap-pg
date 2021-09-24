@@ -188,7 +188,15 @@ func (j *ModifyEntry) Replace(attrName string, attrValue []string) error {
 	}
 
 	// Record old attribute into changelog
-	j.ReplaceChangeLog.old[sv.Name()] = j.attributes[sv.Name()]
+	if old, ok := j.attributes[sv.Name()]; ok {
+		j.ReplaceChangeLog.old[sv.Name()] = old
+	} else {
+		old, err := NewSchemaValue(j.schemaMap, attrName, []string{})
+		if err != nil {
+			return err
+		}
+		j.ReplaceChangeLog.old[sv.Name()] = old
+	}
 
 	// Apply change
 	if err := j.replacesv(sv); err != nil {
