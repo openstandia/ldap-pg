@@ -653,27 +653,29 @@ func mergeIndex(m1, m2 map[string]struct{}) map[string]struct{} {
 	return m
 }
 
-func diff(a, b []string) ([]string, []string) {
-	ma := make(map[string]struct{}, len(a))
+func diffDN(a, b []interface{}) ([]interface{}, []interface{}) {
+	ma := make(map[string]*DN, len(a))
 	for _, x := range a {
-		ma[x] = struct{}{}
+		dn, _ := x.(*DN)
+		ma[dn.DNNormStr()] = dn
 	}
-	mb := make(map[string]struct{}, len(b))
+	mb := make(map[string]*DN, len(b))
 	for _, x := range b {
-		mb[x] = struct{}{}
+		dn, _ := x.(*DN)
+		mb[dn.DNNormStr()] = dn
 	}
 
-	add := []string{}
-	del := []string{}
+	add := []interface{}{}
+	del := []interface{}{}
 
-	for k, _ := range mb {
+	for k, dn := range mb {
 		if _, ok := ma[k]; !ok {
-			add = append(add, k)
+			add = append(add, dn)
 		}
 	}
-	for k, _ := range ma {
+	for k, dn := range ma {
 		if _, ok := mb[k]; !ok {
-			del = append(del, k)
+			del = append(del, dn)
 		}
 	}
 

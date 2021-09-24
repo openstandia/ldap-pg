@@ -150,47 +150,61 @@ func TestSortObjectClassesAndVerifyChain(t *testing.T) {
 	}
 }
 
-func TestDiff(t *testing.T) {
+func TestDiffDN(t *testing.T) {
+	server := NewServer(&ServerConfig{
+		Suffix: "dc=example,dc=com",
+	})
+	schemaMap := InitSchemaMap(server)
+
+	parseDN := func(s ...string) []interface{} {
+		rtn := make([]interface{}, len(s))
+		for i, v := range s {
+			dn, _ := ParseDN(schemaMap, v)
+			rtn[i] = dn
+		}
+		return rtn
+	}
+
 	testcases := []struct {
-		a           []string
-		b           []string
-		AddExpected []string
-		DelExpected []string
+		a           []interface{}
+		b           []interface{}
+		AddExpected []interface{}
+		DelExpected []interface{}
 	}{
 		{
-			[]string{"a"},
-			[]string{"b"},
-			[]string{"b"},
-			[]string{"a"},
+			parseDN("cn=a," + server.SuffixOrigStr()),
+			parseDN("cn=b," + server.SuffixOrigStr()),
+			parseDN("cn=b," + server.SuffixOrigStr()),
+			parseDN("cn=a," + server.SuffixOrigStr()),
 		},
 		{
-			[]string{"a", "b"},
-			[]string{"c", "d"},
-			[]string{"c", "d"},
-			[]string{"a", "b"},
+			parseDN("cn=a,"+server.SuffixOrigStr(), "cn=b,"+server.SuffixOrigStr()),
+			parseDN("cn=c,"+server.SuffixOrigStr(), "cn=d,"+server.SuffixOrigStr()),
+			parseDN("cn=c,"+server.SuffixOrigStr(), "cn=d,"+server.SuffixOrigStr()),
+			parseDN("cn=a,"+server.SuffixOrigStr(), "cn=b,"+server.SuffixOrigStr()),
 		},
 		{
-			[]string{"a", "b"},
-			[]string{"b", "c"},
-			[]string{"c"},
-			[]string{"a"},
+			parseDN("cn=a,"+server.SuffixOrigStr(), "cn=b,"+server.SuffixOrigStr()),
+			parseDN("cn=b,"+server.SuffixOrigStr(), "cn=c,"+server.SuffixOrigStr()),
+			parseDN("cn=c," + server.SuffixOrigStr()),
+			parseDN("cn=a," + server.SuffixOrigStr()),
 		},
 		{
-			[]string{},
-			[]string{"a"},
-			[]string{"a"},
-			[]string{},
+			[]interface{}{},
+			parseDN("cn=a," + server.SuffixOrigStr()),
+			parseDN("cn=a," + server.SuffixOrigStr()),
+			[]interface{}{},
 		},
 		{
-			[]string{"a"},
-			[]string{},
-			[]string{},
-			[]string{"a"},
+			parseDN("cn=a," + server.SuffixOrigStr()),
+			[]interface{}{},
+			[]interface{}{},
+			parseDN("cn=a," + server.SuffixOrigStr()),
 		},
 	}
 
 	for i, tc := range testcases {
-		add, del := diff(tc.a, tc.b)
+		add, del := diffDN(tc.a, tc.b)
 		if !reflect.DeepEqual(add, tc.AddExpected) {
 			t.Errorf("Unexpected error on %d:\nadd '%v' expected, got '%v'\n", i, tc.AddExpected, add)
 			continue

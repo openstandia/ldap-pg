@@ -668,6 +668,9 @@ docker run --rm -e POSTGRES_DB=ldap -e POSTGRES_USER=dev  -e POSTGRES_PASSWORD=d
 var testPGPort int = 35432
 
 func setupLDAPServer() *Server {
+	// customSchema = []string{
+	// 	"objectClasses: ( 2.5.6.9 NAME 'groupOfNames' DESC 'RFC2256: a group of names (DNs)' SUP top STRUCTURAL MUST cn MAY ( businessCategory $ seeAlso $ owner $ ou $ o $ description $ member $ uniqueMember $ displayName ) )",
+	// }
 	testServer = NewServer(&ServerConfig{
 		DBHostName:      "localhost",
 		DBPort:          testPGPort,
