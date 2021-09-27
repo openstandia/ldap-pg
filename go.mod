@@ -10,7 +10,7 @@ require (
 	github.com/jsimonetti/pwscheme v0.0.0-20160922125227-76804708ecad
 	github.com/lib/pq v1.10.3
 	github.com/openstandia/goldap/message v0.0.0-20191227184744-b5528a3af20f
-	github.com/openstandia/ldapserver v0.0.0-20201119170447-bba3b0e7edad
+	github.com/openstandia/ldapserver v0.0.0-20210927020601-ef76358cbc4f
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1
 	gopkg.in/asn1-ber.v1 v1.0.0-20181015200546-f715ec2f112d
 )
