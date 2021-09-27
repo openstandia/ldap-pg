@@ -1395,6 +1395,106 @@ func TestAssociation(t *testing.T) {
 	runTestCases(t, tcs)
 }
 
+func TestAssociationWithCustomSchema(t *testing.T) {
+	customSchema = []string{
+		"objectClasses: ( 2.5.6.9 NAME 'groupOfNames' DESC 'RFC2256: a group of names (DNs)' SUP top STRUCTURAL MUST cn MAY ( businessCategory $ seeAlso $ owner $ ou $ o $ description $ member $ uniqueMember $ displayName ) )",
+	}
+	testServer.LoadSchema()
+	defer func() {
+		customSchema = []string{}
+		testServer.LoadSchema()
+	}()
+
+	type A []string
+	type M map[string][]string
+
+	tcs := []Command{
+		Conn{},
+		Bind{"cn=Manager", "secret", &AssertResponse{}},
+		AddDC("example", "dc=com"),
+		AddOU("Groups"),
+		AddOU("Users"),
+		Add{
+			"uid=user1", "ou=Users",
+			M{
+				"objectClass":  A{"inetOrgPerson"},
+				"cn":           A{"user1"},
+				"sn":           A{"user1"},
+				"userPassword": A{SSHA("password1")},
+			},
+			&AssertEntry{},
+		},
+		Add{
+			"cn=A1", "ou=Groups",
+			M{
+				"objectClass": A{"groupOfNames"},
+			},
+			&AssertEntry{
+				expectAttrs: M{
+					"member": A{},
+				},
+			},
+		},
+		ModifyAdd{
+			"cn=A1", "ou=Groups",
+			M{
+				"member": A{
+					"uid=user1,ou=Users," + testServer.GetSuffix(),
+				},
+			},
+			&AssertEntry{
+				expectAttrs: M{
+					"member": A{
+						"uid=user1,ou=Users," + testServer.GetSuffix(),
+					},
+				},
+			},
+		},
+		ModifyDelete{
+			"cn=A1", "ou=Groups",
+			M{
+				"member": A{
+					"uid=user1,ou=Users," + testServer.GetSuffix(),
+				},
+			},
+			&AssertEntry{
+				expectAttrs: M{
+					"member": A{},
+				},
+			},
+		},
+		ModifyAdd{
+			"cn=A1", "ou=Groups",
+			M{
+				"member": A{
+					"uid=user1,ou=Users," + testServer.GetSuffix(),
+				},
+			},
+			&AssertEntry{
+				expectAttrs: M{
+					"member": A{
+						"uid=user1,ou=Users," + testServer.GetSuffix(),
+					},
+				},
+			},
+		},
+		// Test case for replacement
+		ModifyReplace{
+			"cn=A1", "ou=Groups",
+			M{
+				"member": A{},
+			},
+			&AssertEntry{
+				expectAttrs: M{
+					"member": A{},
+				},
+			},
+		},
+	}
+
+	runTestCases(t, tcs)
+}
+
 func TestSearchByAssociation(t *testing.T) {
 	type A []string
 	type M map[string][]string

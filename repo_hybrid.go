@@ -2330,7 +2330,11 @@ func (r *HybridRepository) resolveDNMap(tx *sqlx.Tx, dnMap map[string]StringSet)
 
 func (r *HybridRepository) calcAssociationDiff(tx *sqlx.Tx, entry *ModifyEntry, attrName string, addAssociation, delAssociation map[string][]int64) error {
 	if old, ok := entry.old[attrName]; ok {
-		add, del := diffDN(old.Norm(), entry.attributes[attrName].Norm())
+		var newMember []interface{}
+		if newSV, ok := entry.attributes[attrName]; ok {
+			newMember = newSV.Norm()
+		}
+		add, del := diffDN(old.Norm(), newMember)
 
 		addMember, err := r.dnArrayToIDArray(tx, map[string][]interface{}{attrName: add}, attrName)
 		if err != nil {
