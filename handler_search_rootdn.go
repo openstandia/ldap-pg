@@ -94,9 +94,11 @@ func handleSearchRootDN(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	if isOperationalAttributesRequested(r) {
 		for k, v := range searchEntry.GetOperationalAttrsOrig() {
 			if _, ok := sentAttrs[k]; !ok {
-				for _, vv := range v {
-					e.AddAttribute(message.AttributeDescription(k), message.AttributeValue(vv))
+				av := make([]message.AttributeValue, len(v))
+				for i, vv := range v {
+					av[i] = message.AttributeValue(vv)
 				}
+				e.AddAttribute(message.AttributeDescription(k), av...)
 			}
 		}
 	}

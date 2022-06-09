@@ -400,7 +400,7 @@ func (a AssertEntry) AssertEntry(conn *ldap.Conn, err error, rdn, baseDN string,
 	if err != nil {
 		return xerrors.Errorf("Unexpected error response when previous operation. rdn: %s, err: %w", rdn, err)
 	}
-	sr, err := searchEntry(conn, "", baseDN, ldap.ScopeWholeSubtree, fmt.Sprintf("(%s)", rdn), nil)
+	sr, err := searchEntry(conn, "", baseDN, ldap.ScopeWholeSubtree, fmt.Sprintf("(%s)", rdn), []string{"*", "+"})
 	if err != nil {
 		return xerrors.Errorf("Unexpected error when searching the entry. err: %w", err)
 	}
@@ -416,7 +416,7 @@ func (a AssertEntry) AssertEntry(conn *ldap.Conn, err error, rdn, baseDN string,
 	for k, expect := range expectAttrs {
 		actual := sr.Entries[0].GetAttributeValues(k)
 		if !reflect.DeepEqual(expect, actual) {
-			return xerrors.Errorf("Unexpected entry attr [%s]. want = [%v] got = %d", k, expect, actual)
+			return xerrors.Errorf("Unexpected entry attr [%s]. want = [%v] got = %v", k, expect, actual)
 		}
 	}
 	return nil
