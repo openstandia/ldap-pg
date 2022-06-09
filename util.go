@@ -422,7 +422,11 @@ func normalizeGeneralizedTime(s *AttributeType, value string, index int) (int64,
 	if err != nil {
 		return 0, NewInvalidPerSyntax(s.Name, index)
 	}
-	return t.Unix(), nil
+	if s.IsNanoFormat() {
+		return t.UnixNano(), nil
+	} else {
+		return t.Unix(), nil
+	}
 }
 
 func normalizeBoolean(s *AttributeType, value string, index int) (string, error) {

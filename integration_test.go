@@ -1060,6 +1060,48 @@ func TestOperationalAttributesMigration(t *testing.T) {
 	runTestCases(t, tcs)
 }
 
+func TesPwdFailureTimeNano(t *testing.T) {
+	type A []string
+	type M map[string][]string
+
+	testServer.config.MigrationEnabled = true
+	testServer.LoadSchema()
+
+	tcs := []Command{
+		Conn{},
+		Bind{"cn=Manager", "secret", &AssertResponse{}},
+		AddDC("example", "dc=com"),
+		AddOU("Users"),
+		Add{
+			"uid=user1", "ou=Users",
+			M{
+				"objectClass":  A{"inetOrgPerson"},
+				"cn":           A{"user1"},
+				"sn":           A{"user1"},
+				"userPassword": A{SSHA("password1")},
+				"entryUUID":    A{"0b05df74-1219-495d-9d95-dc0c05e00aa9"},
+			},
+			nil,
+		},
+		ModifyReplace{
+			"uid=user1", "ou=Users",
+			M{
+				"pwdFailureTime": A{"20220607064255.621183Z", "20220607064255.742441Z"},
+			},
+			&AssertEntry{
+				expectAttrs: M{
+					"pwdFailureTime": A{
+						"20220607064255.621183Z",
+						"20220607064255.742441Z",
+					},
+				},
+			},
+		},
+	}
+
+	runTestCases(t, tcs)
+}
+
 func TestAssociation(t *testing.T) {
 	type A []string
 	type M map[string][]string

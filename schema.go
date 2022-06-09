@@ -901,3 +901,7 @@ func (s *AttributeType) IsNumberOrdering() bool {
 		s.Ordering == "numericStringOrderingMatch" ||
 		s.Ordering == "UUIDOrderingMatch"
 }
+
+func (s *AttributeType) IsNanoFormat() bool {
+	return s.Name == "pwdFailureTime"
+}
