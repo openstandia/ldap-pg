@@ -1303,6 +1303,8 @@ LEFT JOIN LATERAL (
 	}
 
 	if option.IsMemberOfRequested {
+		names := "'" + strings.Join(getAllMemberAttrs(), "','") + "'"
+
 		proj.WriteString(`, `)
 		join.WriteString("\n")
 
@@ -1323,10 +1325,10 @@ LEFT JOIN LATERAL (
 LEFT JOIN LATERAL (
 	SELECT jsonb_agg(rae.rdn_orig || ',' || rc.dn_orig) AS `)
 		join.WriteString(v)
-		join.WriteString(`
+		join.WriteString(fmt.Sprintf(`
 	FROM ldap_association ra, ldap_entry rae, ldap_container rc
-	WHERE fe.id = ra.member_id AND rae.id = ra.id AND rc.id = rae.parent_id
-) AS `)
+	WHERE fe.id = ra.member_id AND ra.name IN (%s) AND rae.id = ra.id AND rc.id = rae.parent_id
+) AS `, names))
 		join.WriteString(v)
 		join.WriteString(` ON true`)
 	}
