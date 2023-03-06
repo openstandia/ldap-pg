@@ -1393,31 +1393,40 @@ LEFT JOIN LATERAL (
 }
 
 func (r *HybridRepository) collectScopeWhereSQL(baseDN *DN, option *SearchOption, where *strings.Builder, params map[string]interface{}) {
+	// Always return not found for parents of the server suffix
+	if baseDN.IsDC() && !baseDN.Equal(r.server.Suffix) {
+		where.WriteString(`FALSE`)
+		return
+	}
+
 	// Scope handling
 	// 0: base (only base)
 	// 1: one (only one level, not include base)
 	// 2: sub (subtree, include base)
 	// 3: children (subtree, not include base)
-	if option.Scope == 0 || option.Scope == 1 {
-		var col string
-		if option.Scope == 0 {
-			col = "id"
-		} else {
-			col = "parent_id"
-		}
-		where.WriteString(`e.`)
-		where.WriteString(col)
-		where.WriteString(` = (SELECT
-					e.id
-				FROM
-					ldap_entry e
-					LEFT JOIN ldap_container c ON e.parent_id = c.id
-				WHERE
-					e.rdn_norm = :rdn_norm
-					AND c.dn_norm = :parent_dn_norm)`)
+	if option.Scope == 0 {
+		where.WriteString(`e.rdn_norm = :rdn_norm AND dnc.dn_norm = :parent_dn_norm`)
 		params["rdn_norm"] = baseDN.RDNNormStr()
 		params["parent_dn_norm"] = baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
 
+	} else if option.Scope == 1 {
+		if baseDN.Equal(r.server.Suffix) {
+			where.WriteString(`e.parent_id = (SELECT
+					c.id
+				FROM
+					ldap_container c
+				WHERE
+					c.id != 0 AND c.dn_norm = :parent_dn_norm)`)
+			params["parent_dn_norm"] = baseDN.DNNormStrWithoutSuffix(r.server.Suffix)
+		} else {
+			where.WriteString(`e.parent_id = (SELECT
+					c.id
+				FROM
+					ldap_container c
+				WHERE
+					c.dn_norm = :parent_dn_norm)`)
+			params["parent_dn_norm"] = baseDN.DNNormStrWithoutSuffix(r.server.Suffix)
+		}
 	} else {
 		var subWhere string
 		if baseDN.Equal(r.server.Suffix) {
@@ -1434,10 +1443,9 @@ func (r *HybridRepository) collectScopeWhereSQL(baseDN *DN, option *SearchOption
 			if baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix) == "" {
 				subWhere = `
 				e.parent_id IN (SELECT
-						e.parent_id
+						c.id
 					FROM
-						ldap_entry e
-						LEFT JOIN ldap_container c ON e.parent_id = c.id
+						ldap_container c
 					WHERE
 						c.dn_norm = :dn_norm
 						OR
@@ -1446,10 +1454,9 @@ func (r *HybridRepository) collectScopeWhereSQL(baseDN *DN, option *SearchOption
 			} else {
 				subWhere = `
 				e.parent_id IN (SELECT
-						e.parent_id
+						c.id
 					FROM
-						ldap_entry e
-						LEFT JOIN ldap_container c ON e.parent_id = c.id
+						ldap_container c
 					WHERE
 						c.dn_norm = :dn_norm
 						OR
@@ -1459,14 +1466,7 @@ func (r *HybridRepository) collectScopeWhereSQL(baseDN *DN, option *SearchOption
 		}
 
 		if option.Scope == 2 {
-			where.WriteString(`e.id IN (SELECT
-					e.id
-				FROM
-					ldap_entry e
-					LEFT JOIN ldap_container c ON e.parent_id = c.id
-				WHERE
-					e.rdn_norm = :rdn_norm
-					AND c.dn_norm = :parent_dn_norm
+			where.WriteString(`(e.rdn_norm = :rdn_norm AND dnc.dn_norm = :parent_dn_norm
 				OR`)
 			where.WriteString(subWhere)
 			where.WriteString(`
@@ -1475,6 +1475,7 @@ func (r *HybridRepository) collectScopeWhereSQL(baseDN *DN, option *SearchOption
 			params["parent_dn_norm"] = baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
 			params["dn_norm"] = baseDN.DNNormStrWithoutSuffix(r.server.Suffix)
 		} else {
+			// scope == 3
 			where.WriteString(subWhere)
 			params["parent_dn_norm"] = baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
 			params["dn_norm"] = baseDN.DNNormStrWithoutSuffix(r.server.Suffix)
