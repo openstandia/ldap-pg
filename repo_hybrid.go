@@ -108,7 +108,7 @@ func (r *HybridRepository) Init() error {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
-	findCredByDN, err = db.PrepareNamed(`SELECT
+	findCredByDN, err = db.PrepareNamed(fmt.Sprintf(`SELECT
 		e.id,
 		e.attrs_orig->'userPassword' AS credential,
 		e.attrs_orig->'pwdAccountLockedTime' AS locked_time,
@@ -121,7 +121,7 @@ func (r *HybridRepository) Init() error {
 		LEFT JOIN LATERAL (
 			SELECT jsonb_agg(ae.rdn_orig || ',' || ac.dn_orig) AS memberOf
 			FROM ldap_association a, ldap_entry ae, ldap_container ac
-			WHERE e.id = a.member_id AND ae.id = a.id AND ac.id = ae.parent_id
+			WHERE e.id = a.member_id AND a.name IN ('%s') AND ae.id = a.id AND ac.id = ae.parent_id
 		) AS memberOf ON true 
 		LEFT JOIN LATERAL (
 			SELECT dppe.attrs_orig
@@ -132,7 +132,7 @@ func (r *HybridRepository) Init() error {
 		e.rdn_norm = :rdn_norm
 		AND c.dn_norm = :parent_dn_norm
 	FOR UPDATE OF e
-	`)
+	`, strings.Join(getAllMemberAttrs(), "','")))
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
