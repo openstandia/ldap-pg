@@ -2605,16 +2605,28 @@ func (r *HybridRepository) Bind(ctx context.Context, dn *DN, callback func(curre
 		}
 	} else {
 		// Record authTimestamp, also remove pwdAccountLockedTime and pwdFailureTime
-		n, o := nowTimeToJSONAttrs(TIMESTAMP_FORMAT)
+		go func() {
+			tx2, err := r.begin(ctx)
+			if err != nil {
+				log.Printf("error: Failed to begin tx after bind success. id: %d, err: %v", dest.ID, err)
+				return
+			}
+			n, o := nowTimeToJSONAttrs(TIMESTAMP_FORMAT)
 
-		if _, err := r.exec(tx, updateAfterBindSuccessByDN, map[string]interface{}{
-			"id":                  dest.ID,
-			"auth_timestamp_norm": n,
-			"auth_timestamp_orig": o,
-		}); err != nil {
-			rollback(tx)
-			return xerrors.Errorf("Failed to update entry after bind success. id: %d, err: %w", dest.ID, err)
-		}
+			if _, err := r.exec(tx2, updateAfterBindSuccessByDN, map[string]interface{}{
+				"id":                  dest.ID,
+				"auth_timestamp_norm": n,
+				"auth_timestamp_orig": o,
+			}); err != nil {
+				rollback(tx2)
+				log.Printf("error: Failed to update entry after bind success. id: %d, err: %v", dest.ID, err)
+				return
+			}
+			if err := commit(tx2); err != nil {
+				log.Printf("error: Failed to commit tx after bind success. id: %d, err: %v", dest.ID, err)
+				return
+			}
+		}()
 	}
 
 	if err := commit(tx); err != nil {
