@@ -489,6 +489,117 @@ func TestSearch(t *testing.T) {
 	runTestCases(t, tcs)
 }
 
+func TestSearchWithPaging(t *testing.T) {
+	type A []string
+	type M map[string][]string
+
+	tcs := []Command{
+		Conn{},
+		Bind{"cn=Manager", "secret", &AssertResponse{}},
+		AddDC("example", "dc=com"),
+		AddOU("Users"),
+		Add{
+			"uid=user1", "ou=Users",
+			M{
+				"objectClass":    A{"inetOrgPerson"},
+				"cn":             A{"user1"},
+				"sn":             A{"user1"},
+				"userPassword":   A{SSHA("password1")},
+				"employeeNumber": A{"emp1"},
+			},
+			&AssertEntry{},
+		},
+		Add{
+			"uid=user2", "ou=Users",
+			M{
+				"objectClass":    A{"inetOrgPerson"},
+				"cn":             A{"user2"},
+				"sn":             A{"user2"},
+				"userPassword":   A{SSHA("password2")},
+				"employeeNumber": A{"emp2"},
+			},
+			&AssertEntry{},
+		},
+		SearchWithPaging{
+			Search: Search{
+				"ou=Users," + testServer.GetSuffix(),
+				"uid=*",
+				ldap.ScopeWholeSubtree,
+				A{"*"},
+				&AssertEntries{
+					ExpectEntry{
+						"uid=user1",
+						"ou=Users",
+						M{
+							"sn": A{"user1"},
+						},
+					},
+					ExpectEntry{
+						"uid=user2",
+						"ou=Users",
+						M{
+							"sn": A{"user2"},
+						},
+					},
+				},
+			},
+			limit: 1,
+		},
+		SearchWithPaging{
+			Search: Search{
+				"ou=Users," + testServer.GetSuffix(),
+				"uid=*",
+				ldap.ScopeWholeSubtree,
+				A{"*"},
+				&AssertEntries{
+					ExpectEntry{
+						"uid=user1",
+						"ou=Users",
+						M{
+							"sn": A{"user1"},
+						},
+					},
+					ExpectEntry{
+						"uid=user2",
+						"ou=Users",
+						M{
+							"sn": A{"user2"},
+						},
+					},
+				},
+			},
+			limit: 2,
+		},
+		SearchWithPaging{
+			Search: Search{
+				"ou=Users," + testServer.GetSuffix(),
+				"uid=*",
+				ldap.ScopeWholeSubtree,
+				A{"*"},
+				&AssertEntries{
+					ExpectEntry{
+						"uid=user1",
+						"ou=Users",
+						M{
+							"sn": A{"user1"},
+						},
+					},
+					ExpectEntry{
+						"uid=user2",
+						"ou=Users",
+						M{
+							"sn": A{"user2"},
+						},
+					},
+				},
+			},
+			limit: 3,
+		},
+	}
+
+	runTestCases(t, tcs)
+}
+
 func TestScopeSearch(t *testing.T) {
 	type A []string
 	type M map[string][]string

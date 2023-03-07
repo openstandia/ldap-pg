@@ -238,6 +238,38 @@ func (s Search) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
 	return conn, nil
 }
 
+type SearchWithPaging struct {
+	Search
+	limit uint32
+}
+
+func (s SearchWithPaging) Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error) {
+	search := ldap.NewSearchRequest(
+		s.baseDN,
+		s.scope,
+		ldap.NeverDerefAliases,
+		0, // Size Limit
+		0, // Time Limit
+		false,
+		"("+s.filter+")", // The filter to apply
+		s.attrs,          // A list attributes to retrieve
+		nil,
+	)
+	sr, err := conn.SearchWithPaging(search, s.limit)
+	if err != nil {
+		return conn, err
+	}
+
+	if s.assert != nil {
+		err = s.assert.AssertEntries(conn, err, sr)
+		if err != nil {
+			return conn, err
+		}
+	}
+
+	return conn, nil
+}
+
 func resolveDN(rdn, baseDN string) string {
 	dn := rdn
 	if baseDN != "" {

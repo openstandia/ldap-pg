@@ -80,7 +80,7 @@ type Repository interface {
 
 	// Search handles search request by filter.
 	// This is used for SEARCH operation.
-	Search(ctx context.Context, baseDN *DN, option *SearchOption, handler func(entry *SearchEntry) error) (int32, int32, error)
+	Search(ctx context.Context, baseDN *DN, option *SearchOption, handler func(entry *SearchEntry) error) (int32, int64, error)
 
 	// Update modifies the entry by specified change data.
 	// This is used for MOD operation.
@@ -101,7 +101,7 @@ type SearchOption struct {
 	Scope                      int
 	Filter                     message.Filter
 	PageSize                   int32
-	Offset                     int32
+	Cursor                     *int64
 	RequestedAssocation        []string
 	IsMemberOfRequested        bool
 	IsHasSubordinatesRequested bool

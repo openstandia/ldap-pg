@@ -1139,7 +1139,7 @@ func (e *HybridFetchedDBEntry) AttrsOrig() map[string][]string {
 	return jsonMap
 }
 
-func (r *HybridRepository) Search(ctx context.Context, baseDN *DN, option *SearchOption, handler func(entry *SearchEntry) error) (int32, int32, error) {
+func (r *HybridRepository) Search(ctx context.Context, baseDN *DN, option *SearchOption, handler func(entry *SearchEntry) error) (int32, int64, error) {
 	tx, err := r.beginReadonly(ctx)
 	if err != nil {
 		return 0, 0, nil
@@ -1153,8 +1153,7 @@ func (r *HybridRepository) Search(ctx context.Context, baseDN *DN, option *Searc
 	filterJoin := []string{}
 	filterWhere := []string{}
 	params := map[string]interface{}{
-		"pageSize": option.PageSize,
-		"offset":   option.Offset,
+		"pageSize": option.PageSize + 1,
 	}
 	r.collectScopeWhereSQL(baseDN, option, &scopeWhere, params)
 	r.collectFilterWhereSQL(baseDN, option, &filterJoin, &filterWhere, params)
@@ -1166,14 +1165,20 @@ func (r *HybridRepository) Search(ctx context.Context, baseDN *DN, option *Searc
 	// r.collectAssociationSQLPlanB(option, &proj, &join, params)
 	r.collectHasSubordinatesSQL(option, &proj, &join)
 
+	pagingFilter := ""
+	if option.Cursor != nil {
+		pagingFilter = `-- paging
+			AND e. id >= :cursor`
+		params["cursor"] = *option.Cursor
+	}
+
 	q := fmt.Sprintf(`WITH
 	filtered_entry AS NOT MATERIALIZED (
 		SELECT
 			e.id,
 			e.parent_id,
 			e.rdn_orig || ',' || dnc.dn_orig AS dn_orig,
-			e.attrs_orig,
-			count(e.id) over() AS count
+			e.attrs_orig
 		FROM
 			ldap_entry e
 		-- DN join
@@ -1185,24 +1190,26 @@ func (r *HybridRepository) Search(ctx context.Context, baseDN *DN, option *Searc
 			AND
 			-- ldap filter
 			(%s)
-		ORDER BY e.id
-		LIMIT :pageSize OFFSET :offset
+			%s
+		ORDER BY e.id ASC
+		LIMIT :pageSize
 	)
 SELECT
 	fe.id,
 	fe.parent_id,
 	fe.dn_orig,
-	fe.attrs_orig,
-	fe.count
+	fe.attrs_orig
 	%s
 FROM
 	filtered_entry fe
 %s
-	`, strings.Join(filterJoin, ""), scopeWhere.String(), strings.Join(filterWhere, " AND "), proj.String(), join.String())
+	`, strings.Join(filterJoin, ""), scopeWhere.String(), strings.Join(filterWhere, " AND "), pagingFilter, proj.String(), join.String())
 
 	start := time.Now()
 	rows, err := r.namedQuery(tx, q, params)
 	end := time.Now()
+
+	log.Printf("info: Executed DB search: %d [ms], limit: %d, cursor: %d", end.Sub(start).Milliseconds(), option.PageSize, *option.Cursor)
 
 	if err != nil {
 		if isNoResult(err) {
@@ -1212,8 +1219,8 @@ FROM
 		return 0, 0, xerrors.Errorf("Unexpected search query error. err: %w", err)
 	}
 
-	var maxCount int32 = 0
 	var count int32 = 0
+	var nextId int64 = 0
 	var dbEntry HybridFetchedDBEntry
 
 	for rows.Next() {
@@ -1221,9 +1228,12 @@ FROM
 		if err != nil {
 			return 0, 0, xerrors.Errorf("Unexpected struct scan error. err: %w", err)
 		}
-		if maxCount == 0 {
-			maxCount = dbEntry.Count
-			log.Printf("info: Executed DB search: %d [ms], count: %d", end.Sub(start).Milliseconds(), maxCount)
+
+		// Detected remaining next page
+		if option.PageSize == count {
+			nextId = dbEntry.ID
+			count++
+			break
 		}
 
 		readEntry := r.toSearchEntry(&dbEntry)
@@ -1238,7 +1248,7 @@ FROM
 		dbEntry.Clear()
 	}
 
-	return maxCount, count, nil
+	return count, nextId, nil
 }
 
 func (r *HybridRepository) toSearchEntry(dbEntry *HybridFetchedDBEntry) *SearchEntry {

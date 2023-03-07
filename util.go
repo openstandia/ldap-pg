@@ -55,12 +55,12 @@ func getAuthSession(m *ldap.Message) *AuthSession {
 	}
 }
 
-func getPageSession(m *ldap.Message) map[string]int32 {
+func getPageSession(m *ldap.Message) map[string]int64 {
 	session := getSession(m)
 	if pageSession, ok := session["page"]; ok {
-		return pageSession.(map[string]int32)
+		return pageSession.(map[string]int64)
 	} else {
-		pageSession := map[string]int32{}
+		pageSession := map[string]int64{}
 		session["page"] = pageSession
 		return pageSession
 	}
