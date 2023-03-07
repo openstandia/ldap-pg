@@ -101,14 +101,14 @@ func (r *HybridRepository) Init() error {
 			REFERENCES ldap_entry (id)
 			ON DELETE RESTRICT ON UPDATE RESTRICT
 	);
-	CREATE INDEX IF NOT EXISTS idx_ldap_association_id ON ldap_association(name, id);
-	CREATE INDEX IF NOT EXISTS idx_ldap_association_member_id ON ldap_association(name, member_id);
+	CREATE INDEX IF NOT EXISTS idx_ldap_association_id ON ldap_association(id, name);
+	CREATE INDEX IF NOT EXISTS idx_ldap_association_member_id ON ldap_association(member_id, name);
 	`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
 
-	findCredByDN, err = db.PrepareNamed(fmt.Sprintf(`SELECT
+	findCredByDN, err = db.PrepareNamed(`SELECT
 		e.id,
 		e.attrs_orig->'userPassword' AS credential,
 		e.attrs_orig->'pwdAccountLockedTime' AS locked_time,
@@ -121,7 +121,7 @@ func (r *HybridRepository) Init() error {
 		LEFT JOIN LATERAL (
 			SELECT jsonb_agg(ae.rdn_orig || ',' || ac.dn_orig) AS memberOf
 			FROM ldap_association a, ldap_entry ae, ldap_container ac
-			WHERE e.id = a.member_id AND a.name IN ('%s') AND ae.id = a.id AND ac.id = ae.parent_id
+			WHERE e.id = a.member_id AND ae.id = a.id AND ac.id = ae.parent_id
 		) AS memberOf ON true 
 		LEFT JOIN LATERAL (
 			SELECT dppe.attrs_orig
@@ -132,7 +132,7 @@ func (r *HybridRepository) Init() error {
 		e.rdn_norm = :rdn_norm
 		AND c.dn_norm = :parent_dn_norm
 	FOR UPDATE OF e
-	`, strings.Join(getAllMemberAttrs(), "','")))
+	`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
 	}
@@ -1303,8 +1303,6 @@ LEFT JOIN LATERAL (
 	}
 
 	if option.IsMemberOfRequested {
-		names := "'" + strings.Join(getAllMemberAttrs(), "','") + "'"
-
 		proj.WriteString(`, `)
 		join.WriteString("\n")
 
@@ -1325,10 +1323,10 @@ LEFT JOIN LATERAL (
 LEFT JOIN LATERAL (
 	SELECT jsonb_agg(rae.rdn_orig || ',' || rc.dn_orig) AS `)
 		join.WriteString(v)
-		join.WriteString(fmt.Sprintf(`
+		join.WriteString(`
 	FROM ldap_association ra, ldap_entry rae, ldap_container rc
-	WHERE fe.id = ra.member_id AND ra.name IN (%s) AND rae.id = ra.id AND rc.id = rae.parent_id
-) AS `, names))
+	WHERE fe.id = ra.member_id AND rae.id = ra.id AND rc.id = rae.parent_id
+) AS `)
 		join.WriteString(v)
 		join.WriteString(` ON true`)
 	}
