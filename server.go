@@ -46,6 +46,7 @@ type ServerConfig struct {
 	QueryTranslator   string
 	SimpleACL         []string
 	DefaultPPolicyDN  string
+	DefaultPageSize   int32
 }
 
 type Server struct {

@@ -55,12 +55,12 @@ func getAuthSession(m *ldap.Message) *AuthSession {
 	}
 }
 
-func getPageSession(m *ldap.Message) map[string]int32 {
+func getPageSession(m *ldap.Message) map[string]int64 {
 	session := getSession(m)
 	if pageSession, ok := session["page"]; ok {
-		return pageSession.(map[string]int32)
+		return pageSession.(map[string]int64)
 	} else {
-		pageSession := map[string]int32{}
+		pageSession := map[string]int64{}
 		session["page"] = pageSession
 		return pageSession
 	}
@@ -107,13 +107,13 @@ func isHasSubOrdinatesRequested(r message.SearchRequest) bool {
 
 func getRequestedMemberAttrs(r message.SearchRequest) []string {
 	if len(r.Attributes()) == 0 {
-		return []string{"member", "uniqueMember"}
+		return getAllMemberAttrs()
 	}
 	list := []string{}
 	for _, attr := range r.Attributes() {
 		if string(attr) == "*" {
 			// TODO move to schema
-			return []string{"member", "uniqueMember"}
+			return getAllMemberAttrs()
 		}
 		a := string(attr)
 
@@ -126,6 +126,10 @@ func getRequestedMemberAttrs(r message.SearchRequest) []string {
 		}
 	}
 	return list
+}
+
+func getAllMemberAttrs() []string {
+	return []string{"member", "uniqueMember"}
 }
 
 func responseUnsupportedSearch(w ldap.ResponseWriter, r message.SearchRequest) {

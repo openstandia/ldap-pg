@@ -143,6 +143,11 @@ var (
 		"",
 		"DN of the default password policy entry (e.g. cn=standard-policy,ou=Policies,dc=example,dc=com)",
 	)
+	defaultPageSize = fs.Int(
+		"default-page-size",
+		500,
+		"Default page size for search (default 500)",
+	)
 )
 
 type arrayFlags []string
@@ -226,6 +231,7 @@ func main() {
 		QueryTranslator:   "default",
 		SimpleACL:         acl,
 		DefaultPPolicyDN:  *defaultPPolicyDN,
+		DefaultPageSize:   int32(*defaultPageSize),
 	})
 
 	go server.Start()

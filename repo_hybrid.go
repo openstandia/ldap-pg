@@ -101,8 +101,8 @@ func (r *HybridRepository) Init() error {
 			REFERENCES ldap_entry (id)
 			ON DELETE RESTRICT ON UPDATE RESTRICT
 	);
-	CREATE INDEX IF NOT EXISTS idx_ldap_association_id ON ldap_association(name, id);
-	CREATE INDEX IF NOT EXISTS idx_ldap_association_member_id ON ldap_association(name, member_id);
+	CREATE INDEX IF NOT EXISTS idx_ldap_association_id ON ldap_association(id, name);
+	CREATE INDEX IF NOT EXISTS idx_ldap_association_member_id ON ldap_association(member_id, name);
 	`)
 	if err != nil {
 		return xerrors.Errorf("Failed to initialize prepared statement: %w", err)
@@ -1139,7 +1139,7 @@ func (e *HybridFetchedDBEntry) AttrsOrig() map[string][]string {
 	return jsonMap
 }
 
-func (r *HybridRepository) Search(ctx context.Context, baseDN *DN, option *SearchOption, handler func(entry *SearchEntry) error) (int32, int32, error) {
+func (r *HybridRepository) Search(ctx context.Context, baseDN *DN, option *SearchOption, handler func(entry *SearchEntry) error) (int32, int64, error) {
 	tx, err := r.beginReadonly(ctx)
 	if err != nil {
 		return 0, 0, nil
@@ -1153,8 +1153,7 @@ func (r *HybridRepository) Search(ctx context.Context, baseDN *DN, option *Searc
 	filterJoin := []string{}
 	filterWhere := []string{}
 	params := map[string]interface{}{
-		"pageSize": option.PageSize,
-		"offset":   option.Offset,
+		"pageSize": option.PageSize + 1,
 	}
 	r.collectScopeWhereSQL(baseDN, option, &scopeWhere, params)
 	r.collectFilterWhereSQL(baseDN, option, &filterJoin, &filterWhere, params)
@@ -1166,14 +1165,20 @@ func (r *HybridRepository) Search(ctx context.Context, baseDN *DN, option *Searc
 	// r.collectAssociationSQLPlanB(option, &proj, &join, params)
 	r.collectHasSubordinatesSQL(option, &proj, &join)
 
+	pagingFilter := ""
+	if option.Cursor != nil {
+		pagingFilter = `-- paging
+			AND e. id >= :cursor`
+		params["cursor"] = *option.Cursor
+	}
+
 	q := fmt.Sprintf(`WITH
 	filtered_entry AS NOT MATERIALIZED (
 		SELECT
 			e.id,
 			e.parent_id,
 			e.rdn_orig || ',' || dnc.dn_orig AS dn_orig,
-			e.attrs_orig,
-			count(e.id) over() AS count
+			e.attrs_orig
 		FROM
 			ldap_entry e
 		-- DN join
@@ -1185,24 +1190,26 @@ func (r *HybridRepository) Search(ctx context.Context, baseDN *DN, option *Searc
 			AND
 			-- ldap filter
 			(%s)
-		ORDER BY e.id
-		LIMIT :pageSize OFFSET :offset
+			%s
+		ORDER BY e.id ASC
+		LIMIT :pageSize
 	)
 SELECT
 	fe.id,
 	fe.parent_id,
 	fe.dn_orig,
-	fe.attrs_orig,
-	fe.count
+	fe.attrs_orig
 	%s
 FROM
 	filtered_entry fe
 %s
-	`, strings.Join(filterJoin, ""), scopeWhere.String(), strings.Join(filterWhere, " AND "), proj.String(), join.String())
+	`, strings.Join(filterJoin, ""), scopeWhere.String(), strings.Join(filterWhere, " AND "), pagingFilter, proj.String(), join.String())
 
 	start := time.Now()
 	rows, err := r.namedQuery(tx, q, params)
 	end := time.Now()
+
+	log.Printf("info: Executed DB search: %d [ms], limit: %d, cursor: %d", end.Sub(start).Milliseconds(), option.PageSize, *option.Cursor)
 
 	if err != nil {
 		if isNoResult(err) {
@@ -1212,8 +1219,8 @@ FROM
 		return 0, 0, xerrors.Errorf("Unexpected search query error. err: %w", err)
 	}
 
-	var maxCount int32 = 0
 	var count int32 = 0
+	var nextId int64 = 0
 	var dbEntry HybridFetchedDBEntry
 
 	for rows.Next() {
@@ -1221,9 +1228,12 @@ FROM
 		if err != nil {
 			return 0, 0, xerrors.Errorf("Unexpected struct scan error. err: %w", err)
 		}
-		if maxCount == 0 {
-			maxCount = dbEntry.Count
-			log.Printf("info: Executed DB search: %d [ms], count: %d", end.Sub(start).Milliseconds(), maxCount)
+
+		// Detected remaining next page
+		if option.PageSize == count {
+			nextId = dbEntry.ID
+			count++
+			break
 		}
 
 		readEntry := r.toSearchEntry(&dbEntry)
@@ -1238,7 +1248,7 @@ FROM
 		dbEntry.Clear()
 	}
 
-	return maxCount, count, nil
+	return count, nextId, nil
 }
 
 func (r *HybridRepository) toSearchEntry(dbEntry *HybridFetchedDBEntry) *SearchEntry {
@@ -1391,31 +1401,40 @@ LEFT JOIN LATERAL (
 }
 
 func (r *HybridRepository) collectScopeWhereSQL(baseDN *DN, option *SearchOption, where *strings.Builder, params map[string]interface{}) {
+	// Always return not found for parents of the server suffix
+	if baseDN.IsDC() && !baseDN.Equal(r.server.Suffix) {
+		where.WriteString(`FALSE`)
+		return
+	}
+
 	// Scope handling
 	// 0: base (only base)
 	// 1: one (only one level, not include base)
 	// 2: sub (subtree, include base)
 	// 3: children (subtree, not include base)
-	if option.Scope == 0 || option.Scope == 1 {
-		var col string
-		if option.Scope == 0 {
-			col = "id"
-		} else {
-			col = "parent_id"
-		}
-		where.WriteString(`e.`)
-		where.WriteString(col)
-		where.WriteString(` = (SELECT
-					e.id
-				FROM
-					ldap_entry e
-					LEFT JOIN ldap_container c ON e.parent_id = c.id
-				WHERE
-					e.rdn_norm = :rdn_norm
-					AND c.dn_norm = :parent_dn_norm)`)
+	if option.Scope == 0 {
+		where.WriteString(`e.rdn_norm = :rdn_norm AND dnc.dn_norm = :parent_dn_norm`)
 		params["rdn_norm"] = baseDN.RDNNormStr()
 		params["parent_dn_norm"] = baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
 
+	} else if option.Scope == 1 {
+		if baseDN.Equal(r.server.Suffix) {
+			where.WriteString(`e.parent_id = (SELECT
+					c.id
+				FROM
+					ldap_container c
+				WHERE
+					c.id != 0 AND c.dn_norm = :parent_dn_norm)`)
+			params["parent_dn_norm"] = baseDN.DNNormStrWithoutSuffix(r.server.Suffix)
+		} else {
+			where.WriteString(`e.parent_id = (SELECT
+					c.id
+				FROM
+					ldap_container c
+				WHERE
+					c.dn_norm = :parent_dn_norm)`)
+			params["parent_dn_norm"] = baseDN.DNNormStrWithoutSuffix(r.server.Suffix)
+		}
 	} else {
 		var subWhere string
 		if baseDN.Equal(r.server.Suffix) {
@@ -1432,10 +1451,9 @@ func (r *HybridRepository) collectScopeWhereSQL(baseDN *DN, option *SearchOption
 			if baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix) == "" {
 				subWhere = `
 				e.parent_id IN (SELECT
-						e.parent_id
+						c.id
 					FROM
-						ldap_entry e
-						LEFT JOIN ldap_container c ON e.parent_id = c.id
+						ldap_container c
 					WHERE
 						c.dn_norm = :dn_norm
 						OR
@@ -1444,10 +1462,9 @@ func (r *HybridRepository) collectScopeWhereSQL(baseDN *DN, option *SearchOption
 			} else {
 				subWhere = `
 				e.parent_id IN (SELECT
-						e.parent_id
+						c.id
 					FROM
-						ldap_entry e
-						LEFT JOIN ldap_container c ON e.parent_id = c.id
+						ldap_container c
 					WHERE
 						c.dn_norm = :dn_norm
 						OR
@@ -1457,14 +1474,7 @@ func (r *HybridRepository) collectScopeWhereSQL(baseDN *DN, option *SearchOption
 		}
 
 		if option.Scope == 2 {
-			where.WriteString(`e.id IN (SELECT
-					e.id
-				FROM
-					ldap_entry e
-					LEFT JOIN ldap_container c ON e.parent_id = c.id
-				WHERE
-					e.rdn_norm = :rdn_norm
-					AND c.dn_norm = :parent_dn_norm
+			where.WriteString(`(e.rdn_norm = :rdn_norm AND dnc.dn_norm = :parent_dn_norm
 				OR`)
 			where.WriteString(subWhere)
 			where.WriteString(`
@@ -1473,6 +1483,7 @@ func (r *HybridRepository) collectScopeWhereSQL(baseDN *DN, option *SearchOption
 			params["parent_dn_norm"] = baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
 			params["dn_norm"] = baseDN.DNNormStrWithoutSuffix(r.server.Suffix)
 		} else {
+			// scope == 3
 			where.WriteString(subWhere)
 			params["parent_dn_norm"] = baseDN.ParentDN().DNNormStrWithoutSuffix(r.server.Suffix)
 			params["dn_norm"] = baseDN.DNNormStrWithoutSuffix(r.server.Suffix)
@@ -2602,16 +2613,28 @@ func (r *HybridRepository) Bind(ctx context.Context, dn *DN, callback func(curre
 		}
 	} else {
 		// Record authTimestamp, also remove pwdAccountLockedTime and pwdFailureTime
-		n, o := nowTimeToJSONAttrs(TIMESTAMP_FORMAT)
+		go func() {
+			tx2, err := r.begin(ctx)
+			if err != nil {
+				log.Printf("error: Failed to begin tx after bind success. id: %d, err: %v", dest.ID, err)
+				return
+			}
+			n, o := nowTimeToJSONAttrs(TIMESTAMP_FORMAT)
 
-		if _, err := r.exec(tx, updateAfterBindSuccessByDN, map[string]interface{}{
-			"id":                  dest.ID,
-			"auth_timestamp_norm": n,
-			"auth_timestamp_orig": o,
-		}); err != nil {
-			rollback(tx)
-			return xerrors.Errorf("Failed to update entry after bind success. id: %d, err: %w", dest.ID, err)
-		}
+			if _, err := r.exec(tx2, updateAfterBindSuccessByDN, map[string]interface{}{
+				"id":                  dest.ID,
+				"auth_timestamp_norm": n,
+				"auth_timestamp_orig": o,
+			}); err != nil {
+				rollback(tx2)
+				log.Printf("error: Failed to update entry after bind success. id: %d, err: %v", dest.ID, err)
+				return
+			}
+			if err := commit(tx2); err != nil {
+				log.Printf("error: Failed to commit tx after bind success. id: %d, err: %v", dest.ID, err)
+				return
+			}
+		}()
 	}
 
 	if err := commit(tx); err != nil {

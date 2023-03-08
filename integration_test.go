@@ -5,6 +5,7 @@ package main
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/go-ldap/ldap/v3"
 )
@@ -58,6 +59,94 @@ func TestParallel(t *testing.T) {
 				{
 					Conn{},
 					Bind{"cn=Manager", "secret", &AssertResponse{}},
+					Add{
+						"uid=user2", "ou=Users",
+						M{
+							"objectClass": A{"inetOrgPerson"},
+							"cn":          A{"user2"},
+							"sn":          A{"user2"},
+						},
+						&AssertEntry{},
+					},
+					ModifyAdd{
+						"uid=user2", "ou=Users",
+						M{
+							"givenName": A{"user2"},
+						},
+						&AssertEntry{},
+					},
+					Delete{
+						"uid=user2", "ou=Users",
+						&AssertNoEntry{},
+					},
+				},
+			},
+		},
+	}
+
+	runTestCases(t, tcs)
+}
+
+func TestParallelByNonRootUsers(t *testing.T) {
+	type A []string
+	type M map[string][]string
+
+	tcs := []Command{
+		Conn{},
+		Bind{"cn=Manager", "secret", &AssertResponse{}},
+		AddDC("com").SetAssert(&AssertResponse{53}),
+		AddDC("example", "dc=com"),
+		AddOU("Users"),
+		Add{
+			"uid=op1", "ou=Users",
+			M{
+				"objectClass":  A{"inetOrgPerson"},
+				"cn":           A{"op1"},
+				"sn":           A{"op1"},
+				"userPassword": A{SSHA("password1")},
+			},
+			&AssertEntry{},
+		},
+		Add{
+			"uid=op2", "ou=Users",
+			M{
+				"objectClass":  A{"inetOrgPerson"},
+				"cn":           A{"op2"},
+				"sn":           A{"op2"},
+				"userPassword": A{SSHA256("password2")},
+			},
+			&AssertEntry{},
+		},
+		Parallel{
+			100,
+			[][]Command{
+				{
+					Conn{},
+					Bind{"uid=op1,ou=Users", "password1", &AssertResponse{}},
+					Add{
+						"uid=user1", "ou=Users",
+						M{
+							"objectClass": A{"inetOrgPerson"},
+							"cn":          A{"user1"},
+							"sn":          A{"user1"},
+						},
+						&AssertEntry{},
+					},
+					ModifyAdd{
+						"uid=user1", "ou=Users",
+						M{
+							"givenName": A{"user1"},
+						},
+						&AssertEntry{},
+					},
+					Delete{
+						"uid=user1", "ou=Users",
+						&AssertNoEntry{},
+					},
+				},
+				{
+					Conn{},
+					Bind{"uid=op2,ou=Users", "password2", &AssertResponse{}},
 					Add{
 						"uid=user2", "ou=Users",
 						M{
@@ -323,6 +412,70 @@ func TestBind(t *testing.T) {
 	runTestCases(t, tcs)
 }
 
+func TestBindWithAccountLock(t *testing.T) {
+	type A []string
+	type M map[string][]string
+
+	testServer.config.MigrationEnabled = true
+	testServer.LoadSchema()
+
+	tcs := []Command{
+		Conn{},
+		Bind{"cn=Manager", "secret", &AssertResponse{}},
+		AddDC("example", "dc=com"),
+		AddOU("Users"),
+		AddOU("Policies"),
+		Add{
+			"uid=op1", "ou=Users",
+			M{
+				"objectClass":  A{"inetOrgPerson"},
+				"cn":           A{"op1"},
+				"sn":           A{"op1"},
+				"userPassword": A{SSHA("password1")},
+			},
+			&AssertEntry{},
+		},
+		Add{
+			"cn=standard-policy", "ou=Policies",
+			M{
+				"objectClass":        A{"top", "device", "pwdPolicy"},
+				"pwdAttribute":       A{"userPassword"},
+				"pwdLockout":         A{"TRUE"},
+				"pwdMaxFailure":      A{"2"},
+				"pwdlockoutDuration": A{"10"},
+			},
+			nil,
+		},
+		Bind{"uid=op1,ou=users", "password1", &AssertResponse{}},
+		Bind{
+			"uid=op1,ou=Users",
+			"invalid",
+			&AssertResponse{49},
+		},
+		Bind{"uid=op1,ou=users", "password1", &AssertResponse{}},
+		Bind{
+			"uid=op1,ou=Users",
+			"invalid",
+			&AssertResponse{49},
+		},
+		Bind{
+			"uid=op1,ou=Users",
+			"invalid",
+			&AssertResponse{49},
+		},
+		// Account Locked
+		Bind{"uid=op1,ou=users", "password1", &AssertResponse{49}},
+		// still locked
+		Wait{time.Second * 5},
+		Bind{"uid=op1,ou=users", "password1", &AssertResponse{49}},
+		// Unlocked
+		Wait{time.Second * 5},
+		Bind{"uid=op1,ou=users", "password1", &AssertResponse{}},
+	}
+
+	runTestCases(t, tcs)
+}
+
 func TestSearchSpecialCharacters(t *testing.T) {
 	type A []string
 	type M map[string][]string
@@ -489,6 +642,117 @@ func TestSearch(t *testing.T) {
 	runTestCases(t, tcs)
 }
 
+func TestSearchWithPaging(t *testing.T) {
+	type A []string
+	type M map[string][]string
+
+	tcs := []Command{
+		Conn{},
+		Bind{"cn=Manager", "secret", &AssertResponse{}},
+		AddDC("example", "dc=com"),
+		AddOU("Users"),
+		Add{
+			"uid=user1", "ou=Users",
+			M{
+				"objectClass":    A{"inetOrgPerson"},
+				"cn":             A{"user1"},
+				"sn":             A{"user1"},
+				"userPassword":   A{SSHA("password1")},
+				"employeeNumber": A{"emp1"},
+			},
+			&AssertEntry{},
+		},
+		Add{
+			"uid=user2", "ou=Users",
+			M{
+				"objectClass":    A{"inetOrgPerson"},
+				"cn":             A{"user2"},
+				"sn":             A{"user2"},
+				"userPassword":   A{SSHA("password2")},
+				"employeeNumber": A{"emp2"},
+			},
+			&AssertEntry{},
+		},
+		SearchWithPaging{
+			Search: Search{
+				"ou=Users," + testServer.GetSuffix(),
+				"uid=*",
+				ldap.ScopeWholeSubtree,
+				A{"*"},
+				&AssertEntries{
+					ExpectEntry{
+						"uid=user1",
+						"ou=Users",
+						M{
+							"sn": A{"user1"},
+						},
+					},
+					ExpectEntry{
+						"uid=user2",
+						"ou=Users",
+						M{
+							"sn": A{"user2"},
+						},
+					},
+				},
+			},
+			limit: 1,
+		},
+		SearchWithPaging{
+			Search: Search{
+				"ou=Users," + testServer.GetSuffix(),
+				"uid=*",
+				ldap.ScopeWholeSubtree,
+				A{"*"},
+				&AssertEntries{
+					ExpectEntry{
+						"uid=user1",
+						"ou=Users",
+						M{
+							"sn": A{"user1"},
+						},
+					},
+					ExpectEntry{
+						"uid=user2",
+						"ou=Users",
+						M{
+							"sn": A{"user2"},
+						},
+					},
+				},
+			},
+			limit: 2,
+		},
+		SearchWithPaging{
+			Search: Search{
+				"ou=Users," + testServer.GetSuffix(),
+				"uid=*",
+				ldap.ScopeWholeSubtree,
+				A{"*"},
+				&AssertEntries{
+					ExpectEntry{
+						"uid=user1",
+						"ou=Users",
+						M{
+							"sn": A{"user1"},
+						},
+					},
+					ExpectEntry{
+						"uid=user2",
+						"ou=Users",
+						M{
+							"sn": A{"user2"},
+						},
+					},
+				},
+			},
+			limit: 3,
+		},
+	}
+
+	runTestCases(t, tcs)
+}
+
 func TestScopeSearch(t *testing.T) {
 	type A []string
 	type M map[string][]string
@@ -545,6 +809,21 @@ func TestScopeSearch(t *testing.T) {
 		},
 		// base for container
 		Search{
+			testServer.GetSuffix(),
+			"objectclass=*",
+			ldap.ScopeBaseObject,
+			A{"*", "+"},
+			&AssertEntries{
+				ExpectEntry{
+					"",
+					testServer.GetSuffix(),
+					M{
+						"hasSubordinates": A{"TRUE"},
+					},
+				},
+			},
+		},
+		Search{
 			"ou=Users," + testServer.GetSuffix(),
 			"objectclass=*",
 			ldap.ScopeBaseObject,
@@ -559,7 +838,79 @@ func TestScopeSearch(t *testing.T) {
 				},
 			},
 		},
+		Search{
+			"ou=SubUsers,ou=Users," + testServer.GetSuffix(),
+			"objectclass=*",
+			ldap.ScopeBaseObject,
+			A{"*", "+"},
+			&AssertEntries{
+				ExpectEntry{
+					"ou=SubUsers,ou=Users",
+					"",
+					M{
+						"hasSubordinates": A{"TRUE"},
+					},
+				},
+			},
+		},
 		// sub for container
+		Search{
+			testServer.GetSuffix(),
+			"objectclass=*",
+			ldap.ScopeWholeSubtree,
+			A{"*", "+"},
+			&AssertEntries{
+				ExpectEntry{
+					"",
+					testServer.GetSuffix(),
+					M{
+						"hasSubordinates": A{"TRUE"},
+					},
+				},
+				ExpectEntry{
+					"ou=Users",
+					"",
+					M{
+						"hasSubordinates": A{"TRUE"},
+					},
+				},
+				ExpectEntry{
+					"ou=SubUsers",
+					"ou=Users",
+					M{
+						"hasSubordinates": A{"TRUE"},
+					},
+				},
+				ExpectEntry{
+					"uid=user1",
+					"ou=Users",
+					M{
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+				ExpectEntry{
+					"uid=user2",
+					"ou=Users",
+					M{
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+				ExpectEntry{
+					"uid=user3",
+					"ou=SubUsers,ou=Users",
+					M{
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+				ExpectEntry{
+					"uid=user4",
+					"ou=SubUsers,ou=Users",
+					M{
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+			},
+		},
 		Search{
 			"ou=Users," + testServer.GetSuffix(),
 			"objectclass=*",
@@ -610,7 +961,51 @@ func TestScopeSearch(t *testing.T) {
 				},
 			},
 		},
+		Search{
+			"ou=SubUsers,ou=Users," + testServer.GetSuffix(),
+			"objectclass=*",
+			ldap.ScopeWholeSubtree,
+			A{"*", "+"},
+			&AssertEntries{
+				ExpectEntry{
+					"ou=SubUsers",
+					"ou=Users",
+					M{
+						"hasSubordinates": A{"TRUE"},
+					},
+				},
+				ExpectEntry{
+					"uid=user3",
+					"ou=SubUsers,ou=Users",
+					M{
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+				ExpectEntry{
+					"uid=user4",
+					"ou=SubUsers,ou=Users",
+					M{
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+			},
+		},
 		// one for container
+		Search{
+			testServer.GetSuffix(),
+			"objectclass=*",
+			ldap.ScopeSingleLevel,
+			A{"*", "+"},
+			&AssertEntries{
+				ExpectEntry{
+					"ou=Users",
+					"",
+					M{
+						"hasSubordinates": A{"TRUE"},
+					},
+				},
+			},
+		},
 		Search{
 			"ou=Users," + testServer.GetSuffix(),
 			"objectclass=*",
@@ -640,7 +1035,79 @@ func TestScopeSearch(t *testing.T) {
 				},
 			},
 		},
+		Search{
+			"ou=SubUsers,ou=Users," + testServer.GetSuffix(),
+			"objectclass=*",
+			ldap.ScopeSingleLevel,
+			A{"*", "+"},
+			&AssertEntries{
+				ExpectEntry{
+					"uid=user3",
+					"ou=SubUsers,ou=Users",
+					M{
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+				ExpectEntry{
+					"uid=user4",
+					"ou=SubUsers,ou=Users",
+					M{
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+			},
+		},
 		// children for container
+		Search{
+			testServer.GetSuffix(),
+			"objectclass=*",
+			3,
+			A{"*", "+"},
+			&AssertEntries{
+				ExpectEntry{
+					"ou=Users",
+					"",
+					M{
+						"hasSubordinates": A{"TRUE"},
+					},
+				},
+				ExpectEntry{
+					"ou=SubUsers",
+					"ou=Users",
+					M{
+						"hasSubordinates": A{"TRUE"},
+					},
+				},
+				ExpectEntry{
+					"uid=user1",
+					"ou=Users",
+					M{
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+				ExpectEntry{
+					"uid=user2",
+					"ou=Users",
+					M{
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+				ExpectEntry{
+					"uid=user3",
+					"ou=SubUsers,ou=Users",
+					M{
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+				ExpectEntry{
+					"uid=user4",
+					"ou=SubUsers,ou=Users",
+					M{
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+			},
+		},
 		Search{
 			"ou=Users," + testServer.GetSuffix(),
 			"objectclass=*",
@@ -668,6 +1135,28 @@ func TestScopeSearch(t *testing.T) {
 						"hasSubordinates": A{"FALSE"},
 					},
 				},
+				ExpectEntry{
+					"uid=user3",
+					"ou=SubUsers,ou=Users",
+					M{
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+				ExpectEntry{
+					"uid=user4",
+					"ou=SubUsers,ou=Users",
+					M{
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+			},
+		},
+		Search{
+			"ou=SubUsers,ou=Users," + testServer.GetSuffix(),
+			"objectclass=*",
+			3,
+			A{"*", "+"},
+			&AssertEntries{
 				ExpectEntry{
 					"uid=user3",
 					"ou=SubUsers,ou=Users",
@@ -735,6 +1224,22 @@ func TestScopeSearch(t *testing.T) {
 				},
 			},
 		},
+		Search{
+			"uid=user3,ou=SubUsers,ou=Users," + testServer.GetSuffix(),
+			"uid=user3",
+			ldap.ScopeWholeSubtree,
+			A{"*", "+"},
+			&AssertEntries{
+				ExpectEntry{
+					"uid=user3",
+					"ou=SubUsers,ou=Users",
+					M{
+						"sn":              A{"user3"},
+						"hasSubordinates": A{"FALSE"},
+					},
+				},
+			},
+		},
 		// one for not container
 		Search{
 			"uid=user1,ou=Users," + testServer.GetSuffix(),
@@ -743,10 +1248,53 @@ func TestScopeSearch(t *testing.T) {
 			A{"*", "+"},
 			&AssertEntries{},
 		},
+		Search{
+			"uid=user3,ou=SubUsers,ou=Users," + testServer.GetSuffix(),
+			"uid=user3",
+			ldap.ScopeSingleLevel,
+			A{"*", "+"},
+			&AssertEntries{},
+		},
 		// children for not container
 		Search{
 			"uid=user1,ou=Users," + testServer.GetSuffix(),
 			"uid=user1",
+			3,
+			A{"*", "+"},
+			&AssertEntries{},
+		},
+		Search{
+			"uid=user3,ou=SubUsers,ou=Users," + testServer.GetSuffix(),
+			"uid=user3",
+			3,
+			A{"*", "+"},
+			&AssertEntries{},
+		},
+		// search for parent dc of the server suffix
+		Search{
+			"dc=com",
+			"objectclass=*",
+			ldap.ScopeBaseObject,
+			A{"*", "+"},
+			&AssertEntries{},
+		},
+		Search{
+			"dc=com",
+			"objectclass=*",
+			ldap.ScopeSingleLevel,
+			A{"*", "+"},
+			&AssertEntries{},
+		},
+		Search{
+			"dc=com",
+			"objectclass=*",
+			ldap.ScopeWholeSubtree,
+			A{"*", "+"},
+			&AssertEntries{},
+		},
+		Search{
+			"dc=com",
+			"objectclass=*",
 			3,
 			A{"*", "+"},
 			&AssertEntries{},
@@ -1060,7 +1608,7 @@ func TestOperationalAttributesMigration(t *testing.T) {
 	runTestCases(t, tcs)
 }
 
-func TesPwdFailureTimeNano(t *testing.T) {
+func TestPwdFailureTimeNano(t *testing.T) {
 	type A []string
 	type M map[string][]string
 

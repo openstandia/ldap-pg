@@ -81,19 +81,18 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	}
 
 	// Phase 4: execute SQL and return entries
-	// TODO configurable default pageSize
-	var pageSize int32 = 500
+	var pageSize int32 = s.config.DefaultPageSize
 	if pageControl != nil {
 		pageSize = pageControl.Size()
 	}
 
 	sessionMap := getPageSession(m)
-	var offset int32
+	var cusor int64
 	if pageControl != nil {
 		reqCookie := pageControl.Cookie()
 		if reqCookie != "" {
 			var ok bool
-			if offset, ok = sessionMap[reqCookie]; ok {
+			if cusor, ok = sessionMap[reqCookie]; ok {
 				log.Printf("debug: paged results cookie is ok")
 
 				// clear cookie
@@ -114,13 +113,13 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		Scope:                      scope,
 		Filter:                     r.Filter(),
 		PageSize:                   pageSize,
-		Offset:                     offset,
+		Cursor:                     &cusor,
 		RequestedAssocation:        getRequestedMemberAttrs(r),
 		IsMemberOfRequested:        isMemberOfRequested(r),
 		IsHasSubordinatesRequested: isHasSubOrdinatesRequested(r),
 	}
 
-	maxCount, limittedCount, err := s.Repo().Search(ctx, baseDN, option, func(searchEntry *SearchEntry) error {
+	count, nextId, err := s.Repo().Search(ctx, baseDN, option, func(searchEntry *SearchEntry) error {
 		responseEntry(s, w, m, r, searchEntry)
 		return nil
 	})
@@ -129,7 +128,7 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	if maxCount == 0 {
+	if count == 0 {
 		log.Printf("debug: Not found")
 
 		// Must return success if no hit
@@ -140,19 +139,19 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 
 	var nextCookie string
 
-	if limittedCount+offset < maxCount {
+	if count == option.PageSize+1 {
 		uuid, _ := uuid.NewRandom()
 		nextCookie = uuid.String()
 
 		sessionMap := getPageSession(m)
-		sessionMap[nextCookie] = offset + pageSize
+		sessionMap[nextCookie] = nextId
 	}
 
 	res := ldap.NewSearchResultDoneResponse(ldap.LDAPResultSuccess)
 
 	if pageControl != nil {
 		// https://www.ietf.org/rfc/rfc2696.txt
-		control := message.NewSimplePagedResultsControl(maxCount, false, nextCookie)
+		control := message.NewSimplePagedResultsControl(0, false, nextCookie)
 		var controls message.Controls = []message.Control{control}
 
 		w.WriteControls(res, &controls)
