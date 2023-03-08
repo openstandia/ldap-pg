@@ -81,8 +81,7 @@ func handleSearch(s *Server, w ldap.ResponseWriter, m *ldap.Message) {
 	}
 
 	// Phase 4: execute SQL and return entries
-	// TODO configurable default pageSize
-	var pageSize int32 = 500
+	var pageSize int32 = s.config.DefaultPageSize
 	if pageControl != nil {
 		pageSize = pageControl.Size()
 	}

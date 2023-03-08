@@ -720,6 +720,7 @@ func setupLDAPServer() *Server {
 		PProfServer:     "127.0.0.1:10000",
 		GoMaxProcs:      0,
 		QueryTranslator: "default",
+		DefaultPageSize: 500,
 	})
 	go testServer.Start()
 
