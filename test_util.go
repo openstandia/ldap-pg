@@ -56,6 +56,15 @@ type Command interface {
 	Run(t *testing.T, conn *ldap.Conn) (*ldap.Conn, error)
 }
 
+type Wait struct {
+	duration time.Duration
+}
+
+func (w Wait) Run(t *testing.T, unused *ldap.Conn) (*ldap.Conn, error) {
+	time.Sleep(w.duration)
+	return unused, nil
+}
+
 type Parallel struct {
 	count int
 	ops   [][]Command
@@ -704,23 +713,25 @@ func setupLDAPServer() *Server {
 	// 	"objectClasses: ( 2.5.6.9 NAME 'groupOfNames' DESC 'RFC2256: a group of names (DNs)' SUP top STRUCTURAL MUST cn MAY ( businessCategory $ seeAlso $ owner $ ou $ o $ description $ member $ uniqueMember $ displayName ) )",
 	// }
 	testServer = NewServer(&ServerConfig{
-		DBHostName:      "localhost",
-		DBPort:          testPGPort,
-		DBName:          "ldap",
-		DBSchema:        "public",
-		DBUser:          "dev",
-		DBPassword:      "dev",
-		DBMaxOpenConns:  2,
-		DBMaxIdleConns:  1,
-		Suffix:          "dc=example,dc=com",
-		RootDN:          "cn=Manager,dc=example,dc=com",
-		RootPW:          "secret",
-		BindAddress:     "127.0.0.1:8389",
-		LogLevel:        "warn",
-		PProfServer:     "127.0.0.1:10000",
-		GoMaxProcs:      0,
-		QueryTranslator: "default",
-		DefaultPageSize: 500,
+		DBHostName:       "localhost",
+		DBPort:           testPGPort,
+		DBName:           "ldap",
+		DBSchema:         "public",
+		DBUser:           "dev",
+		DBPassword:       "dev",
+		DBMaxOpenConns:   2,
+		DBMaxIdleConns:   1,
+		Suffix:           "dc=example,dc=com",
+		RootDN:           "cn=Manager,dc=example,dc=com",
+		RootPW:           "secret",
+		BindAddress:      "127.0.0.1:8389",
+		LogLevel:         "warn",
+		PProfServer:      "127.0.0.1:10000",
+		GoMaxProcs:       0,
+		QueryTranslator:  "default",
+		DefaultPPolicyDN: "cn=standard-policy,ou=Policies,dc=examle,dc=com",
+		DefaultPageSize:  500,
+		SimpleACL:        []string{"uid=op1,ou=users,dc=example,dc=com:RW:", "uid=op2,ou=users,dc=example,dc=com:RW:"},
 	})
 	go testServer.Start()
 
