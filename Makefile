@@ -6,7 +6,7 @@ SRCS    := $(shell find . -type f -name '*.go')
 
 VERSION_OPTS := -X 'main.version=$(VERSION)' -X 'main.revision=$(REVISION)'
 WINDOWS_OPTS := -tags netgo -ldflags '-extldflags "-static" $(VERSION_OPTS)'
-LINUX_OPTS := -tags netgo -installsuffix netgo -ldflags '-extldflags "-static" $(VERSION_OPTS)'
+LINUX_OPTS := -ldflags '$(VERSION_OPTS)'
 DARWIN_OPTS := -ldflags '-s -extldflags "-sectcreate __TEXT __info_plist Info.plist" $(VERSION_OPTS)'
 
 GOIMPORTS ?= goimports
@@ -23,7 +23,7 @@ ifeq ($(GOOS),darwin)
 	go build -o bin $(DARWIN_OPTS)
 endif
 ifeq ($(GOOS),linux)
-	go build -o bin $(LINUX_OPTS)
+	CGO_ENABLED=0 go build -o bin $(LINUX_OPTS)
 endif
 ifeq ($(GOOS),windows)
 	go build -o bin $(WINDOWS_OPTS)
